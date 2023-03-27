@@ -7,7 +7,7 @@
 #define __NM_SETTING_DCB_H__
 
 #if !defined(__NETWORKMANAGER_H_INSIDE__) && !defined(NETWORKMANAGER_COMPILATION)
-    #error "Only <NetworkManager.h> can be included directly."
+#error "Only <NetworkManager.h> can be included directly."
 #endif
 
 #include "nm-setting.h"
@@ -35,11 +35,11 @@ G_BEGIN_DECLS
  *
  * DCB feature flags.
  **/
-typedef enum { /*< flags >*/
-               NM_SETTING_DCB_FLAG_NONE      = 0x00000000,
-               NM_SETTING_DCB_FLAG_ENABLE    = 0x00000001,
-               NM_SETTING_DCB_FLAG_ADVERTISE = 0x00000002,
-               NM_SETTING_DCB_FLAG_WILLING   = 0x00000004
+typedef enum /*< flags >*/ {
+    NM_SETTING_DCB_FLAG_NONE      = 0x00000000,
+    NM_SETTING_DCB_FLAG_ENABLE    = 0x00000001,
+    NM_SETTING_DCB_FLAG_ADVERTISE = 0x00000002,
+    NM_SETTING_DCB_FLAG_WILLING   = 0x00000004
 } NMSettingDcbFlags;
 
 /**
@@ -85,7 +85,7 @@ NMSetting *nm_setting_dcb_new(void);
 
 NMSettingDcbFlags nm_setting_dcb_get_app_fcoe_flags(NMSettingDcb *setting);
 int               nm_setting_dcb_get_app_fcoe_priority(NMSettingDcb *setting);
-const char *      nm_setting_dcb_get_app_fcoe_mode(NMSettingDcb *setting);
+const char       *nm_setting_dcb_get_app_fcoe_mode(NMSettingDcb *setting);
 
 NMSettingDcbFlags nm_setting_dcb_get_app_iscsi_flags(NMSettingDcb *setting);
 int               nm_setting_dcb_get_app_iscsi_priority(NMSettingDcb *setting);

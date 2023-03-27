@@ -8,7 +8,7 @@
 <link rel="up" href="ref-dbus-devices.html" title="The /org/freedesktop/NetworkManager/Devices/* objects">
 <link rel="prev" href="gdbus-org.freedesktop.NetworkManager.Device.Vxlan.html" title="org.freedesktop.NetworkManager.Device.Vxlan">
 <link rel="next" href="gdbus-org.freedesktop.NetworkManager.Device.WireGuard.html" title="org.freedesktop.NetworkManager.Device.WireGuard">
-<meta name="generator" content="GTK-Doc V1.33.0 (XML mode)">
+<meta name="generator" content="GTK-Doc V1.33.1 (XML mode)">
 <link rel="stylesheet" href="style.css" type="text/css">
 </head>
 <body bgcolor="white" text="black" link="#0000FF" vlink="#840084" alink="#0000FF">
@@ -29,7 +29,7 @@
 <div class="refnamediv"><table width="100%"><tr>
 <td valign="top">
 <h2><span class="refentrytitle"><a name="gdbus-interface-org-freedesktop-NetworkManager-Device-WifiP2P.top_of_page"></a>org.freedesktop.NetworkManager.Device.WifiP2P</span></h2>
-<p>org.freedesktop.NetworkManager.Device.WifiP2P — Wi-Fi P2P Device</p>
+<p>org.freedesktop.NetworkManager.Device.WifiP2P — Wi-Fi P2P Device.</p>
 </td>
 <td class="gallery_image" valign="top" align="right"></td>
 </tr></table></div>
@@ -41,14 +41,14 @@
 </pre>
 </div>
 <div class="refsect1">
-<a name="id-1.4.8.27.4"></a><h2>Signals</h2>
+<a name="id-1.4.8.28.4"></a><h2>Signals</h2>
 <pre class="synopsis">
 <a class="link" href="gdbus-org.freedesktop.NetworkManager.Device.WifiP2P.html#gdbus-signal-org-freedesktop-NetworkManager-Device-WifiP2P.PeerAdded" title='The "PeerAdded" signal'>PeerAdded</a>   (o peer);
 <a class="link" href="gdbus-org.freedesktop.NetworkManager.Device.WifiP2P.html#gdbus-signal-org-freedesktop-NetworkManager-Device-WifiP2P.PeerRemoved" title='The "PeerRemoved" signal'>PeerRemoved</a> (o peer);
 </pre>
 </div>
 <div class="refsect1">
-<a name="id-1.4.8.27.5"></a><h2>Properties</h2>
+<a name="id-1.4.8.28.5"></a><h2>Properties</h2>
 <pre class="synopsis">
 <a class="link" href="gdbus-org.freedesktop.NetworkManager.Device.WifiP2P.html#gdbus-property-org-freedesktop-NetworkManager-Device-WifiP2P.HwAddress" title='The "HwAddress" property'>HwAddress</a>  readable   s
 <a class="link" href="gdbus-org.freedesktop.NetworkManager.Device.WifiP2P.html#gdbus-property-org-freedesktop-NetworkManager-Device-WifiP2P.Peers" title='The "Peers" property'>Peers</a>      readable   ao
@@ -56,8 +56,11 @@
 </div>
 <div class="refsect1">
 <a name="gdbus-interface-org-freedesktop-NetworkManager-Device-WifiP2P"></a><h2>Description</h2>
-<p>      Since: 1.16
+<p>
 </p>
+<p>
+</p>
+<p class="since">Since 1.16</p>
 </div>
 <div class="refsect1">
 <a name="gdbus-methods-org.freedesktop.NetworkManager.Device.WifiP2P"></a><h2>Method Details</h2>
@@ -66,12 +69,28 @@
 <pre class="programlisting">
 StartFind (IN  a{sv} options);
 </pre>
-<p>                  in the range of 1-600 seconds is supported. The default is
-                  30 seconds.
+<p>
+Start a find operation for Wi-Fi P2P peers.
 </p>
-<p>        Start a find operation for Wi-Fi P2P peers.
+<p>
+The <code class="constant">options</code> argument accepts the following keys:
 </p>
-<p>        Since: 1.16
+<p>
+</p>
+<div class="variablelist"><table border="0" class="variablelist">
+<colgroup>
+<col align="left" valign="top">
+<col>
+</colgroup>
+<tbody><tr>
+<td><p><span class="term"><code class="literal">i timeout</code>:</span></p></td>
+<td>
+<p>Timeout value in the range of 1-600 seconds.</p>
+<p>The default is 30 seconds.</p>
+</td>
+</tr></tbody>
+</table></div>
+<p>
 </p>
 <div class="variablelist"><table border="0" class="variablelist">
 <colgroup>
@@ -80,9 +99,12 @@ StartFind (IN  a{sv} options);
 </colgroup>
 <tbody><tr>
 <td><p><span class="term"><code class="literal">IN a{sv} <em class="parameter"><code>options</code></em></code>:</span></p></td>
-<td><p>Options of find. Currently, 'timeout' option with value of "i"</p></td>
+<td><p>
+Options of find.
+</p></td>
 </tr></tbody>
 </table></div>
+<p class="since">Since 1.16</p>
 </div>
 <hr>
 <div class="refsect2">
@@ -90,10 +112,10 @@ StartFind (IN  a{sv} options);
 <pre class="programlisting">
 StopFind ();
 </pre>
-<p>        Stop an ongoing find operation again.
+<p>
+Stop an ongoing find operation again.
 </p>
-<p>        Since: 1.16
-</p>
+<p class="since">Since 1.16</p>
 </div>
 </div>
 <div class="refsect1">
@@ -103,9 +125,8 @@ StopFind ();
 <pre class="programlisting">
 PeerAdded (o peer);
 </pre>
-<p>        Emitted when a new Wi-Fi P2P peer is found by the device.
-</p>
-<p>        Since: 1.16
+<p>
+Emitted when a new Wi-Fi P2P peer is found by the device.
 </p>
 <div class="variablelist"><table border="0" class="variablelist">
 <colgroup>
@@ -114,9 +135,12 @@ PeerAdded (o peer);
 </colgroup>
 <tbody><tr>
 <td><p><span class="term"><code class="literal">o <em class="parameter"><code>peer</code></em></code>:</span></p></td>
-<td><p>The object path of the newly found access point.</p></td>
+<td><p>
+The object path of the newly found access point.
+</p></td>
 </tr></tbody>
 </table></div>
+<p class="since">Since 1.16</p>
 </div>
 <hr>
 <div class="refsect2">
@@ -124,9 +148,8 @@ PeerAdded (o peer);
 <pre class="programlisting">
 PeerRemoved (o peer);
 </pre>
-<p>        Emitted when a Wi-Fi P2P peer disappears from view of the device.
-</p>
-<p>        Since: 1.16
+<p>
+Emitted when a Wi-Fi P2P peer disappears from view of the device.
 </p>
 <div class="variablelist"><table border="0" class="variablelist">
 <colgroup>
@@ -135,9 +158,12 @@ PeerRemoved (o peer);
 </colgroup>
 <tbody><tr>
 <td><p><span class="term"><code class="literal">o <em class="parameter"><code>peer</code></em></code>:</span></p></td>
-<td><p>The object path of the Wi-Fi P2P peer that has disappeared.</p></td>
+<td><p>
+The object path of the Wi-Fi P2P peer that has disappeared.
+</p></td>
 </tr></tbody>
 </table></div>
+<p class="since">Since 1.16</p>
 </div>
 </div>
 <div class="refsect1">
@@ -147,12 +173,13 @@ PeerRemoved (o peer);
 <pre class="programlisting">
 HwAddress  readable   s
 </pre>
-<p>        The active hardware address of the device.
+<p>
+The active hardware address of the device.
 </p>
-<p>        DEPRECATED. Use the "HwAddress" property in "org.freedesktop.NetworkManager.Device" instead which exists since version NetworkManager 1.24.0.
+<p>
+DEPRECATED. Use the "HwAddress" property in "org.freedesktop.NetworkManager.Device" instead which exists since version NetworkManager 1.24.0.
 </p>
-<p>        Since: 1.16
-</p>
+<p class="since">Since 1.16</p>
 </div>
 <hr>
 <div class="refsect2">
@@ -160,14 +187,14 @@ HwAddress  readable   s
 <pre class="programlisting">
 Peers  readable   ao
 </pre>
-<p>        List of object paths of peers visible to this Wi-Fi P2P device.
+<p>
+List of object paths of peers visible to this Wi-Fi P2P device.
 </p>
-<p>        Since: 1.16
-</p>
+<p class="since">Since 1.16</p>
 </div>
 </div>
 </div>
 <div class="footer">
-<hr>Generated by GTK-Doc V1.33.0</div>
+<hr>Generated by GTK-Doc V1.33.1</div>
 </body>
 </html>

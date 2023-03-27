@@ -9,7 +9,7 @@
 
 #define NM_TYPE_PACRUNNER_MANAGER (nm_pacrunner_manager_get_type())
 #define NM_PACRUNNER_MANAGER(obj) \
-    (G_TYPE_CHECK_INSTANCE_CAST((obj), NM_TYPE_PACRUNNER_MANAGER, NMPacrunnerManager))
+    (_NM_G_TYPE_CHECK_INSTANCE_CAST((obj), NM_TYPE_PACRUNNER_MANAGER, NMPacrunnerManager))
 #define NM_PACRUNNER_MANAGER_CLASS(klass) \
     (G_TYPE_CHECK_CLASS_CAST((klass), NM_TYPE_PACRUNNER_MANAGER, NMPacrunnerManagerClass))
 #define NM_IS_PACRUNNER_MANAGER(obj) (G_TYPE_CHECK_INSTANCE_TYPE((obj), NM_TYPE_PACRUNNER_MANAGER))
@@ -26,11 +26,8 @@ GType nm_pacrunner_manager_get_type(void);
 
 NMPacrunnerManager *nm_pacrunner_manager_get(void);
 
-NMPacrunnerConfId *nm_pacrunner_manager_add(NMPacrunnerManager *self,
-                                            NMProxyConfig *     proxy_config,
-                                            const char *        iface,
-                                            NMIP4Config *       ip4_config,
-                                            NMIP6Config *       ip6_config);
+NMPacrunnerConfId *
+nm_pacrunner_manager_add(NMPacrunnerManager *self, const char *iface, const NML3ConfigData *l3cd);
 
 void nm_pacrunner_manager_remove(NMPacrunnerConfId *conf_id);
 

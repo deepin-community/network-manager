@@ -32,7 +32,7 @@ nm_connectivity_state_cmp(NMConnectivityState a, NMConnectivityState b)
 
 #define NM_TYPE_CONNECTIVITY (nm_connectivity_get_type())
 #define NM_CONNECTIVITY(obj) \
-    (G_TYPE_CHECK_INSTANCE_CAST((obj), NM_TYPE_CONNECTIVITY, NMConnectivity))
+    (_NM_G_TYPE_CHECK_INSTANCE_CAST((obj), NM_TYPE_CONNECTIVITY, NMConnectivity))
 #define NM_CONNECTIVITY_CLASS(klass) \
     (G_TYPE_CHECK_CLASS_CAST((klass), NM_TYPE_CONNECTIVITY, NMConnectivityClass))
 #define NM_IS_CONNECTIVITY(obj)         (G_TYPE_CHECK_INSTANCE_TYPE((obj), NM_TYPE_CONNECTIVITY))
@@ -56,16 +56,16 @@ guint nm_connectivity_get_interval(NMConnectivity *self);
 
 typedef struct _NMConnectivityCheckHandle NMConnectivityCheckHandle;
 
-typedef void (*NMConnectivityCheckCallback)(NMConnectivity *           self,
+typedef void (*NMConnectivityCheckCallback)(NMConnectivity            *self,
                                             NMConnectivityCheckHandle *handle,
                                             NMConnectivityState        state,
                                             gpointer                   user_data);
 
-NMConnectivityCheckHandle *nm_connectivity_check_start(NMConnectivity *            self,
+NMConnectivityCheckHandle *nm_connectivity_check_start(NMConnectivity             *self,
                                                        int                         family,
-                                                       NMPlatform *                platform,
+                                                       NMPlatform                 *platform,
                                                        int                         ifindex,
-                                                       const char *                iface,
+                                                       const char                 *iface,
                                                        NMConnectivityCheckCallback callback,
                                                        gpointer                    user_data);
 

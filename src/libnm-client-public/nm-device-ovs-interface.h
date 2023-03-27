@@ -7,7 +7,7 @@
 #define __NM_DEVICE_OVS_INTERFACE_H__
 
 #if !defined(__NETWORKMANAGER_H_INSIDE__) && !defined(NETWORKMANAGER_COMPILATION)
-    #error "Only <NetworkManager.h> can be included directly."
+#error "Only <NetworkManager.h> can be included directly."
 #endif
 
 #include "nm-device.h"
@@ -28,7 +28,10 @@ G_BEGIN_DECLS
 
 /**
  * NMDeviceOvsInterface:
+ *
+ * Since: 1.10
  */
+typedef struct _NMDeviceOvsInterface      NMDeviceOvsInterface;
 typedef struct _NMDeviceOvsInterfaceClass NMDeviceOvsInterfaceClass;
 
 NM_AVAILABLE_IN_1_10

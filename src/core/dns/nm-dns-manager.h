@@ -8,38 +8,24 @@
 #ifndef __NETWORKMANAGER_DNS_MANAGER_H__
 #define __NETWORKMANAGER_DNS_MANAGER_H__
 
-#include "nm-ip4-config.h"
-#include "nm-ip6-config.h"
+#include "c-list/src/c-list.h"
 #include "nm-setting-connection.h"
 #include "nm-dns-plugin.h"
-
-typedef enum {
-    NM_DNS_IP_CONFIG_TYPE_REMOVED = -1,
-
-    NM_DNS_IP_CONFIG_TYPE_DEFAULT = 0,
-    NM_DNS_IP_CONFIG_TYPE_BEST_DEVICE,
-    NM_DNS_IP_CONFIG_TYPE_VPN,
-} NMDnsIPConfigType;
-
-enum {
-    NM_DNS_PRIORITY_DEFAULT_NORMAL = 100,
-    NM_DNS_PRIORITY_DEFAULT_VPN    = 50,
-};
-
-/*****************************************************************************/
 
 struct _NMDnsConfigData;
 struct _NMDnsManager;
 
 typedef struct {
     struct _NMDnsConfigData *data;
-    NMIPConfig *             ip_config;
+    gconstpointer            source_tag;
+    const NML3ConfigData    *l3cd;
     CList                    data_lst;
-    CList                    ip_config_lst;
+    CList                    ip_data_lst;
     NMDnsIPConfigType        ip_config_type;
+    int                      addr_family;
     struct {
         const char **search;
-        char **      reverse;
+        char       **reverse;
 
         /* Whether "search" explicitly contains a default route "~"
          * or "". It is redundant information, but for faster lookup. */
@@ -75,7 +61,7 @@ typedef struct _NMDnsConfigData {
 /*****************************************************************************/
 
 #define NM_TYPE_DNS_MANAGER (nm_dns_manager_get_type())
-#define NM_DNS_MANAGER(o)   (G_TYPE_CHECK_INSTANCE_CAST((o), NM_TYPE_DNS_MANAGER, NMDnsManager))
+#define NM_DNS_MANAGER(o)   (_NM_G_TYPE_CHECK_INSTANCE_CAST((o), NM_TYPE_DNS_MANAGER, NMDnsManager))
 #define NM_DNS_MANAGER_CLASS(k) \
     (G_TYPE_CHECK_CLASS_CAST((k), NM_TYPE_DNS_MANAGER, NMDnsManagerClass))
 #define NM_IS_DNS_MANAGER(o)       (G_TYPE_CHECK_INSTANCE_TYPE((o), NM_TYPE_DNS_MANAGER))
@@ -84,9 +70,10 @@ typedef struct _NMDnsConfigData {
     (G_TYPE_INSTANCE_GET_CLASS((o), NM_TYPE_DNS_MANAGER, NMDnsManagerClass))
 
 /* properties */
-#define NM_DNS_MANAGER_MODE          "mode"
-#define NM_DNS_MANAGER_RC_MANAGER    "rc-manager"
-#define NM_DNS_MANAGER_CONFIGURATION "configuration"
+#define NM_DNS_MANAGER_MODE           "mode"
+#define NM_DNS_MANAGER_RC_MANAGER     "rc-manager"
+#define NM_DNS_MANAGER_CONFIGURATION  "configuration"
+#define NM_DNS_MANAGER_UPDATE_PENDING "update-pending"
 
 /* internal signals */
 #define NM_DNS_MANAGER_CONFIG_CHANGED "config-changed"
@@ -102,11 +89,13 @@ NMDnsManager *nm_dns_manager_get(void);
 void nm_dns_manager_begin_updates(NMDnsManager *self, const char *func);
 void nm_dns_manager_end_updates(NMDnsManager *self, const char *func);
 
-gboolean nm_dns_manager_set_ip_config(NMDnsManager *    self,
-                                      NMIPConfig *      ip_config,
-                                      NMDnsIPConfigType ip_config_type);
+gboolean nm_dns_manager_set_ip_config(NMDnsManager         *self,
+                                      int                   addr_family,
+                                      gconstpointer         source_tag,
+                                      const NML3ConfigData *l3cd,
+                                      NMDnsIPConfigType     ip_config_type,
+                                      gboolean              replace_all);
 
-void nm_dns_manager_set_initial_hostname(NMDnsManager *self, const char *hostname);
 void nm_dns_manager_set_hostname(NMDnsManager *self, const char *hostname, gboolean skip_update);
 
 /**
@@ -150,6 +139,8 @@ typedef enum {
 void nm_dns_manager_stop(NMDnsManager *self);
 
 NMDnsPlugin *nm_dns_manager_get_systemd_resolved(NMDnsManager *self);
+
+gboolean nm_dns_manager_get_update_pending(NMDnsManager *self);
 
 /*****************************************************************************/
 

@@ -7,7 +7,7 @@
 #define __NM_SETTING_OVS_BRIDGE_H__
 
 #if !defined(__NETWORKMANAGER_H_INSIDE__) && !defined(NETWORKMANAGER_COMPILATION)
-    #error "Only <NetworkManager.h> can be included directly."
+#error "Only <NetworkManager.h> can be included directly."
 #endif
 
 #include "nm-setting.h"
@@ -49,7 +49,7 @@ NM_AVAILABLE_IN_1_10
 gboolean nm_setting_ovs_bridge_get_rstp_enable(NMSettingOvsBridge *self);
 NM_AVAILABLE_IN_1_10
 gboolean nm_setting_ovs_bridge_get_stp_enable(NMSettingOvsBridge *self);
-NM_AVAILABLE_IN_1_20
+NM_AVAILABLE_IN_1_42
 const char *nm_setting_ovs_bridge_get_datapath_type(NMSettingOvsBridge *self);
 
 G_END_DECLS

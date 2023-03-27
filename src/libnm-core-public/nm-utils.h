@@ -7,7 +7,7 @@
 #define __NM_UTILS_H__
 
 #if !defined(__NETWORKMANAGER_H_INSIDE__) && !defined(NETWORKMANAGER_COMPILATION)
-    #error "Only <NetworkManager.h> can be included directly."
+#error "Only <NetworkManager.h> can be included directly."
 #endif
 
 #include <glib.h>
@@ -31,7 +31,7 @@ gboolean    nm_utils_same_ssid(const guint8 *ssid1,
                                const guint8 *ssid2,
                                gsize         len2,
                                gboolean      ignore_trailing_null);
-char *      nm_utils_ssid_to_utf8(const guint8 *ssid, gsize len);
+char       *nm_utils_ssid_to_utf8(const guint8 *ssid, gsize len);
 
 /**
  * NMUtilsSecurityType:
@@ -86,51 +86,51 @@ gboolean nm_utils_wpa_psk_valid(const char *psk);
 NM_AVAILABLE_IN_1_6
 gboolean nm_utils_is_json_object(const char *str, GError **error);
 
-GVariant * nm_utils_ip4_dns_to_variant(char **dns);
-char **    nm_utils_ip4_dns_from_variant(GVariant *value);
-GVariant * nm_utils_ip4_addresses_to_variant(GPtrArray *addresses, const char *gateway);
+GVariant  *nm_utils_ip4_dns_to_variant(char **dns);
+char     **nm_utils_ip4_dns_from_variant(GVariant *value);
+GVariant  *nm_utils_ip4_addresses_to_variant(GPtrArray *addresses, const char *gateway);
 GPtrArray *nm_utils_ip4_addresses_from_variant(GVariant *value, char **out_gateway);
-GVariant * nm_utils_ip4_routes_to_variant(GPtrArray *routes);
+GVariant  *nm_utils_ip4_routes_to_variant(GPtrArray *routes);
 GPtrArray *nm_utils_ip4_routes_from_variant(GVariant *value);
 
 guint32 nm_utils_ip4_netmask_to_prefix(guint32 netmask);
 guint32 nm_utils_ip4_prefix_to_netmask(guint32 prefix);
 guint32 nm_utils_ip4_get_default_prefix(guint32 ip);
 
-GVariant * nm_utils_ip6_dns_to_variant(char **dns);
-char **    nm_utils_ip6_dns_from_variant(GVariant *value);
-GVariant * nm_utils_ip6_addresses_to_variant(GPtrArray *addresses, const char *gateway);
+GVariant  *nm_utils_ip6_dns_to_variant(char **dns);
+char     **nm_utils_ip6_dns_from_variant(GVariant *value);
+GVariant  *nm_utils_ip6_addresses_to_variant(GPtrArray *addresses, const char *gateway);
 GPtrArray *nm_utils_ip6_addresses_from_variant(GVariant *value, char **out_gateway);
-GVariant * nm_utils_ip6_routes_to_variant(GPtrArray *routes);
+GVariant  *nm_utils_ip6_routes_to_variant(GPtrArray *routes);
 GPtrArray *nm_utils_ip6_routes_from_variant(GVariant *value);
 
-GVariant * nm_utils_ip_addresses_to_variant(GPtrArray *addresses);
+NM_AVAILABLE_IN_1_42
+GVariant *nm_utils_ip_addresses_to_variant(GPtrArray *addresses);
+NM_AVAILABLE_IN_1_42
 GPtrArray *nm_utils_ip_addresses_from_variant(GVariant *value, int family);
-GVariant * nm_utils_ip_routes_to_variant(GPtrArray *routes);
+NM_AVAILABLE_IN_1_42
+GVariant *nm_utils_ip_routes_to_variant(GPtrArray *routes);
+NM_AVAILABLE_IN_1_42
 GPtrArray *nm_utils_ip_routes_from_variant(GVariant *value, int family);
 
 char *nm_utils_uuid_generate(void);
-
-gboolean nm_utils_file_is_certificate(const char *filename);
-gboolean nm_utils_file_is_private_key(const char *filename, gboolean *out_encrypted);
-gboolean nm_utils_file_is_pkcs12(const char *filename);
 
 typedef gboolean (*NMUtilsFileSearchInPathsPredicate)(const char *filename, gpointer user_data);
 
 struct stat;
 
-typedef gboolean (*NMUtilsCheckFilePredicate)(const char *       filename,
+typedef gboolean (*NMUtilsCheckFilePredicate)(const char        *filename,
                                               const struct stat *stat,
                                               gpointer           user_data,
-                                              GError **          error);
+                                              GError           **error);
 
-const char *nm_utils_file_search_in_paths(const char *                      progname,
-                                          const char *                      try_first,
-                                          const char *const *               paths,
+const char *nm_utils_file_search_in_paths(const char                       *progname,
+                                          const char                       *try_first,
+                                          const char *const                *paths,
                                           GFileTest                         file_test_flags,
                                           NMUtilsFileSearchInPathsPredicate predicate,
                                           gpointer                          user_data,
-                                          GError **                         error);
+                                          GError                          **error);
 
 guint32  nm_utils_wifi_freq_to_channel(guint32 freq);
 guint32  nm_utils_wifi_channel_to_freq(guint32 channel, const char *band);
@@ -153,18 +153,18 @@ const char *nm_utils_wifi_strength_bars(guint8 strength);
 
 gsize nm_utils_hwaddr_len(int type) G_GNUC_PURE;
 
-char *      nm_utils_hwaddr_ntoa(gconstpointer addr, gsize length);
+char       *nm_utils_hwaddr_ntoa(gconstpointer addr, gsize length);
 GByteArray *nm_utils_hwaddr_atoba(const char *asc, gsize length);
-guint8 *    nm_utils_hwaddr_aton(const char *asc, gpointer buffer, gsize length);
+guint8     *nm_utils_hwaddr_aton(const char *asc, gpointer buffer, gsize length);
 
 gboolean nm_utils_hwaddr_valid(const char *asc, gssize length);
-char *   nm_utils_hwaddr_canonical(const char *asc, gssize length);
+char    *nm_utils_hwaddr_canonical(const char *asc, gssize length);
 gboolean nm_utils_hwaddr_matches(gconstpointer hwaddr1,
                                  gssize        hwaddr1_len,
                                  gconstpointer hwaddr2,
                                  gssize        hwaddr2_len);
 
-char *  nm_utils_bin2hexstr(gconstpointer src, gsize len, int final_len);
+char   *nm_utils_bin2hexstr(gconstpointer src, gsize len, int final_len);
 GBytes *nm_utils_hexstr2bin(const char *hex);
 
 NM_DEPRECATED_IN_1_6_FOR(nm_utils_is_valid_iface_name)
@@ -172,6 +172,7 @@ gboolean nm_utils_iface_valid_name(const char *name);
 NM_AVAILABLE_IN_1_6
 gboolean nm_utils_is_valid_iface_name(const char *name, GError **error);
 
+NM_DEPRECATED_IN_1_32
 gboolean nm_utils_is_uuid(const char *str);
 
 /**
@@ -214,7 +215,7 @@ GHashTable *nm_utils_parse_variant_attributes(const char *string,
                                               char        key_value_separator,
                                               gboolean    ignore_unknown,
                                               const NMVariantAttributeSpec *const *spec,
-                                              GError **                            error);
+                                              GError                             **error);
 
 NM_AVAILABLE_IN_1_8
 char *nm_utils_format_variant_attributes(GHashTable *attributes,
@@ -253,6 +254,9 @@ gint64 nm_utils_get_timestamp_msec(void);
 NM_AVAILABLE_IN_1_16
 gboolean
 nm_utils_base64secret_decode(const char *base64_key, gsize required_key_len, guint8 *out_key);
+
+NM_AVAILABLE_IN_1_42
+void nm_utils_ensure_gtypes(void);
 
 G_END_DECLS
 

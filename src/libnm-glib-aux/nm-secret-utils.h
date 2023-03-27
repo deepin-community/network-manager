@@ -20,6 +20,22 @@ char *nm_secret_strchomp(char *secret);
 
 void nm_free_secret(char *secret);
 
+static inline gboolean
+nm_strdup_reset_secret(char **dst, const char *src)
+{
+    char *old;
+
+    nm_assert(dst);
+
+    if (nm_streq0(*dst, src))
+        return FALSE;
+    old  = *dst;
+    *dst = src ? g_strdup(src) : NULL;
+    if (old)
+        nm_free_secret(old);
+    return TRUE;
+}
+
 NM_AUTO_DEFINE_FCN0(char *, _nm_auto_free_secret, nm_free_secret);
 /**
  * nm_auto_free_secret:
@@ -46,8 +62,8 @@ typedef struct {
     /* the data pointer. This pointer must be allocated with malloc (at least
      * when used with nm_secret_ptr_clear()). */
     union {
-        char *  str;
-        void *  ptr;
+        char   *str;
+        void   *ptr;
         guint8 *bin;
     };
 } NMSecretPtr;
@@ -269,5 +285,9 @@ nm_secret_mem_try_realloc_take(gpointer m_old, gboolean do_bzero_mem, gsize cur_
 }
 
 /*****************************************************************************/
+
+gboolean nm_utils_read_crypto_file(const char *filename, NMSecretPtr *out_contents, GError **error);
+
+GBytes *nm_utils_read_crypto_file_to_bytes(const char *filename, GError **error);
 
 #endif /* __NM_SECRET_UTILS_H__ */

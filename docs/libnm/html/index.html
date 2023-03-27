@@ -6,7 +6,7 @@
 <meta name="generator" content="DocBook XSL Stylesheets Vsnapshot">
 <link rel="home" href="index.html" title="libnm Reference Manual">
 <link rel="next" href="ref-overview.html" title="Overview">
-<meta name="generator" content="GTK-Doc V1.33.0 (XML mode)">
+<meta name="generator" content="GTK-Doc V1.33.1 (XML mode)">
 <link rel="stylesheet" href="style.css" type="text/css">
 </head>
 <body bgcolor="white" text="black" link="#0000FF" vlink="#840084" alink="#0000FF">
@@ -15,10 +15,10 @@
 <div>
 <div><table class="navigation" id="top" width="100%" cellpadding="2" cellspacing="0"><tr><th valign="middle"><p class="title">libnm Reference Manual</p></th></tr></table></div>
 <div><p class="releaseinfo">
-      for libnm 1.32.12
+      for libnm 1.42.4
 
       The latest version of this documentation can be found on-line at
-      <a class="ulink" href="https://developer.gnome.org/libnm/stable/" target="_top">https://developer.gnome.org/libnm/stable/</a>.
+      <a class="ulink" href="https://networkmanager.dev/docs/libnm/latest/" target="_top">https://networkmanager.dev/docs/libnm/latest/</a>.
     </p></div>
 <div><p class="copyright">Copyright © 2012, 2013, 2014, 2015, 2016, 2017, 2018 The NetworkManager Authors</p></div>
 <div><div class="legalnotice">
@@ -69,6 +69,9 @@
 <dt>
 <span class="refentrytitle"><a href="libnm-nm-dbus-interface.html">nm-dbus-interface</a></span><span class="refpurpose"></span>
 </dt>
+<dt>
+<span class="refentrytitle"><a href="libnm-nm-vpn-dbus-interface.html">nm-vpn-dbus-interface</a></span><span class="refpurpose"></span>
+</dt>
 </dl></dd>
 <dt><span class="chapter"><a href="ch03.html">Connection and Setting API Reference</a></span></dt>
 <dd><dl>
@@ -98,6 +101,9 @@
 </dt>
 <dt>
 <span class="refentrytitle"><a href="NMSettingBluetooth.html">NMSettingBluetooth</a></span><span class="refpurpose"> — Describes Bluetooth connection properties</span>
+</dt>
+<dt>
+<span class="refentrytitle"><a href="NMSettingBondPort.html">NMSettingBondPort</a></span><span class="refpurpose"> — Describes connection properties for bond ports</span>
 </dt>
 <dt>
 <span class="refentrytitle"><a href="NMSettingBond.html">NMSettingBond</a></span><span class="refpurpose"> — Describes connection properties for bonds</span>
@@ -133,17 +139,20 @@
 <span class="refentrytitle"><a href="NMSettingInfiniband.html">NMSettingInfiniband</a></span><span class="refpurpose"> — Describes connection properties for IP-over-InfiniBand networks</span>
 </dt>
 <dt>
+<span class="refentrytitle"><a href="NMSettingIPConfig.html">NMSettingIPConfig</a></span><span class="refpurpose"> — Abstract base class for IPv4 and IPv6
+addressing, routing, and name service properties</span>
+</dt>
+<dt>
+<span class="refentrytitle"><a href="NMSettingIPTunnel.html">NMSettingIPTunnel</a></span><span class="refpurpose"> — Describes connection properties for IP tunnel devices</span>
+</dt>
+<dt>
 <span class="refentrytitle"><a href="NMSettingIP4Config.html">NMSettingIP4Config</a></span><span class="refpurpose"> — Describes IPv4 addressing, routing, and name service properties</span>
 </dt>
 <dt>
 <span class="refentrytitle"><a href="NMSettingIP6Config.html">NMSettingIP6Config</a></span><span class="refpurpose"> — Describes IPv6 addressing, routing, and name service properties</span>
 </dt>
 <dt>
-<span class="refentrytitle"><a href="NMSettingIPConfig.html">NMSettingIPConfig</a></span><span class="refpurpose"> — Abstract base class for IPv4 and IPv6
-addressing, routing, and name service properties</span>
-</dt>
-<dt>
-<span class="refentrytitle"><a href="NMSettingIPTunnel.html">NMSettingIPTunnel</a></span><span class="refpurpose"> — Describes connection properties for IP tunnel devices</span>
+<span class="refentrytitle"><a href="NMSettingLoopback.html">NMSettingLoopback</a></span><span class="refpurpose"> — Describes connection properties for loopback interfaces</span>
 </dt>
 <dt>
 <span class="refentrytitle"><a href="NMSettingMacsec.html">NMSettingMacsec</a></span><span class="refpurpose"> — Describes connection properties for MACSEC interfaces</span>
@@ -161,19 +170,22 @@ addressing, routing, and name service properties</span>
 <span class="refentrytitle"><a href="NMSettingOvsBridge.html">NMSettingOvsBridge</a></span><span class="refpurpose"> — Describes connection properties for Open vSwitch bridges.</span>
 </dt>
 <dt>
+<span class="refentrytitle"><a href="NMSettingOvsDpdk.html">NMSettingOvsDpdk</a></span><span class="refpurpose"> — Describes connection properties for Open vSwitch DPDK interfaces.</span>
+</dt>
+<dt>
+<span class="refentrytitle"><a href="NMSettingOvsExternalIDs.html">NMSettingOvsExternalIDs</a></span><span class="refpurpose"> — External-IDs for OVS database</span>
+</dt>
+<dt>
 <span class="refentrytitle"><a href="NMSettingOvsInterface.html">NMSettingOvsInterface</a></span><span class="refpurpose"> — Describes connection properties for Open vSwitch interfaces.</span>
 </dt>
 <dt>
-<span class="refentrytitle"><a href="NMSettingOvsDpdk.html">NMSettingOvsDpdk</a></span><span class="refpurpose"> — Describes connection properties for Open vSwitch DPDK interfaces.</span>
+<span class="refentrytitle"><a href="NMSettingOvsOtherConfig.html">NMSettingOvsOtherConfig</a></span><span class="refpurpose"> — Other-config settings for OVS</span>
 </dt>
 <dt>
 <span class="refentrytitle"><a href="NMSettingOvsPatch.html">NMSettingOvsPatch</a></span><span class="refpurpose"> — Describes connection properties for Open vSwitch patch interfaces.</span>
 </dt>
 <dt>
 <span class="refentrytitle"><a href="NMSettingOvsPort.html">NMSettingOvsPort</a></span><span class="refpurpose"> — Describes connection properties for Open vSwitch ports.</span>
-</dt>
-<dt>
-<span class="refentrytitle"><a href="NMSettingOvsExternalIDs.html">NMSettingOvsExternalIDs</a></span><span class="refpurpose"> — External-IDs for OVS database</span>
 </dt>
 <dt>
 <span class="refentrytitle"><a href="NMSettingPpp.html">NMSettingPpp</a></span><span class="refpurpose"> — Describes connection properties for devices/networks
@@ -281,6 +293,9 @@ use WEP, LEAP, WPA or WPA2/RSN security</span>
 <span class="refentrytitle"><a href="NMDeviceIPTunnel.html">NMDeviceIPTunnel</a></span><span class="refpurpose"></span>
 </dt>
 <dt>
+<span class="refentrytitle"><a href="NMDeviceLoopback.html">NMDeviceLoopback</a></span><span class="refpurpose"></span>
+</dt>
+<dt>
 <span class="refentrytitle"><a href="NMDeviceMacsec.html">NMDeviceMacsec</a></span><span class="refpurpose"></span>
 </dt>
 <dt>
@@ -371,7 +386,16 @@ use WEP, LEAP, WPA or WPA2/RSN security</span>
 <span class="refentrytitle"><a href="libnm-nm-utils.html">nm-utils</a></span><span class="refpurpose"> — Utility functions</span>
 </dt>
 <dt>
+<span class="refentrytitle"><a href="libnm-nm-conn-utils.html">nm-conn-utils</a></span><span class="refpurpose"> — Connection utilities</span>
+</dt>
+<dt>
+<span class="refentrytitle"><a href="libnm-nm-ethtool-utils.html">nm-ethtool-utils</a></span><span class="refpurpose"></span>
+</dt>
+<dt>
 <span class="refentrytitle"><a href="libnm-nm-version.html">nm-version</a></span><span class="refpurpose"></span>
+</dt>
+<dt>
+<span class="refentrytitle"><a href="libnm-nm-version-macros.html">nm-version-macros</a></span><span class="refpurpose"></span>
 </dt>
 </dl></dd>
 <dt><span class="chapter"><a href="ch06.html">VPN Plugin API Reference</a></span></dt>
@@ -399,6 +423,6 @@ use WEP, LEAP, WPA or WPA2/RSN security</span>
 </dl></div>
 </div>
 <div class="footer">
-<hr>Generated by GTK-Doc V1.33.0</div>
+<hr>Generated by GTK-Doc V1.33.1</div>
 </body>
 </html>

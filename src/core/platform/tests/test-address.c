@@ -20,12 +20,12 @@
 /*****************************************************************************/
 
 static void
-ip4_address_callback(NMPlatform *               platform,
+ip4_address_callback(NMPlatform                *platform,
                      NMPObjectType              obj_type,
                      int                        ifindex,
-                     NMPlatformIP4Address *     received,
+                     NMPlatformIP4Address      *received,
                      NMPlatformSignalChangeType change_type,
-                     SignalData *               data)
+                     SignalData                *data)
 {
     g_assert(received);
     g_assert_cmpint(received->ifindex, ==, ifindex);
@@ -45,12 +45,12 @@ ip4_address_callback(NMPlatform *               platform,
 }
 
 static void
-ip6_address_callback(NMPlatform *               platform,
+ip6_address_callback(NMPlatform                *platform,
                      NMPObjectType              obj_type,
                      int                        ifindex,
-                     NMPlatformIP6Address *     received,
+                     NMPlatformIP6Address      *received,
                      NMPlatformSignalChangeType change_type,
-                     SignalData *               data)
+                     SignalData                *data)
 {
     g_assert(received);
     g_assert_cmpint(received->ifindex, ==, ifindex);
@@ -87,7 +87,7 @@ test_ip4_address_general(void)
                                                      NM_PLATFORM_SIGNAL_REMOVED,
                                                      ip4_address_callback,
                                                      ifindex);
-    GArray *    addresses;
+    GArray     *addresses;
     NMPlatformIP4Address *address;
     in_addr_t             addr;
     guint32               lifetime  = 2000;
@@ -118,7 +118,7 @@ test_ip4_address_general(void)
     addresses = nmtstp_platform_ip4_address_get_all(NM_PLATFORM_GET, ifindex);
     g_assert(addresses);
     g_assert_cmpint(addresses->len, ==, 1);
-    address = &g_array_index(addresses, NMPlatformIP4Address, 0);
+    address = &nm_g_array_first(addresses, NMPlatformIP4Address);
     g_assert_cmpint(address->ifindex, ==, ifindex);
     g_assert_cmphex(address->address, ==, addr);
     g_assert_cmphex(address->peer_address, ==, addr);
@@ -154,7 +154,7 @@ test_ip6_address_general(void)
                                                      NM_PLATFORM_SIGNAL_REMOVED,
                                                      ip6_address_callback,
                                                      ifindex);
-    GArray *    addresses;
+    GArray     *addresses;
     NMPlatformIP6Address *address;
     struct in6_addr       addr;
     guint32               lifetime  = 2000;
@@ -193,7 +193,7 @@ test_ip6_address_general(void)
     addresses = nmtstp_platform_ip6_address_get_all(NM_PLATFORM_GET, ifindex);
     g_assert(addresses);
     g_assert_cmpint(addresses->len, ==, 1);
-    address = &g_array_index(addresses, NMPlatformIP6Address, 0);
+    address = &nm_g_array_first(addresses, NMPlatformIP6Address);
     g_assert_cmpint(address->ifindex, ==, ifindex);
     g_assert(!memcmp(&address->address, &addr, sizeof(addr)));
     g_assert_cmpint(address->plen, ==, IP6_PLEN);
@@ -258,10 +258,10 @@ static void
 test_ip6_address_general_2(void)
 {
     const int       ifindex         = DEVICE_IFINDEX;
-    SignalData *    address_added   = add_signal(NM_PLATFORM_SIGNAL_IP6_ADDRESS_CHANGED,
+    SignalData     *address_added   = add_signal(NM_PLATFORM_SIGNAL_IP6_ADDRESS_CHANGED,
                                            NM_PLATFORM_SIGNAL_ADDED,
                                            ip6_address_callback);
-    SignalData *    address_removed = add_signal(NM_PLATFORM_SIGNAL_IP6_ADDRESS_CHANGED,
+    SignalData     *address_removed = add_signal(NM_PLATFORM_SIGNAL_IP6_ADDRESS_CHANGED,
                                              NM_PLATFORM_SIGNAL_REMOVED,
                                              ip6_address_callback);
     struct in6_addr addr;
@@ -307,10 +307,10 @@ static void
 test_ip4_address_peer(void)
 {
     const int                   ifindex         = DEVICE_IFINDEX;
-    SignalData *                address_added   = add_signal(NM_PLATFORM_SIGNAL_IP4_ADDRESS_CHANGED,
+    SignalData                 *address_added   = add_signal(NM_PLATFORM_SIGNAL_IP4_ADDRESS_CHANGED,
                                            NM_PLATFORM_SIGNAL_ADDED,
                                            ip4_address_callback);
-    SignalData *                address_removed = add_signal(NM_PLATFORM_SIGNAL_IP4_ADDRESS_CHANGED,
+    SignalData                 *address_removed = add_signal(NM_PLATFORM_SIGNAL_IP4_ADDRESS_CHANGED,
                                              NM_PLATFORM_SIGNAL_REMOVED,
                                              ip4_address_callback);
     in_addr_t                   addr, addr_peer, addr_peer2;
@@ -387,7 +387,7 @@ test_ip4_address_peer_zero(void)
     const char *label     = NULL;
     in_addr_t   peers[3], r_peers[3];
     int         i;
-    GArray *    addrs;
+    GArray     *addrs;
 
     g_assert(ifindex > 0);
 
@@ -453,7 +453,7 @@ _nmtstp_init_tests(int *argc, char ***argv)
 void
 _nmtstp_setup_tests(void)
 {
-#define add_test_func(testpath, test_func) nmtstp_env1_add_test_func(testpath, test_func, FALSE)
+#define add_test_func(testpath, test_func) nmtstp_env1_add_test_func(testpath, test_func, 1, FALSE)
     add_test_func("/address/ipv4/general", test_ip4_address_general);
     add_test_func("/address/ipv6/general", test_ip6_address_general);
 

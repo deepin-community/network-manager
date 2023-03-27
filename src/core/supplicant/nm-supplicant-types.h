@@ -14,9 +14,9 @@
 #define NM_WPAS_DBUS_INTERFACE "fi.w1.wpa_supplicant1"
 
 #if HAVE_WEXT
-    #define NM_WPAS_DEFAULT_WIFI_DRIVER "nl80211,wext"
+#define NM_WPAS_DEFAULT_WIFI_DRIVER "nl80211,wext"
 #else
-    #define NM_WPAS_DEFAULT_WIFI_DRIVER "nl80211"
+#define NM_WPAS_DEFAULT_WIFI_DRIVER "nl80211"
 #endif
 
 #define NM_WPAS_DBUS_IFACE_INTERFACE            NM_WPAS_DBUS_INTERFACE ".Interface"
@@ -48,6 +48,10 @@ typedef enum {
     NM_SUPPL_CAP_TYPE_FAST,
     NM_SUPPL_CAP_TYPE_WFD,
     NM_SUPPL_CAP_TYPE_SUITEB192,
+    NM_SUPPL_CAP_TYPE_WEP,
+    NM_SUPPL_CAP_TYPE_BIP,
+    /* Note: if you're adding a capability here, log its presence at the
+     * bottom of _dbus_get_capabilities_cb(). */
     _NM_SUPPL_CAP_TYPE_NUM,
 } NMSupplCapType;
 
@@ -75,6 +79,8 @@ typedef enum {
     _NM_SUPPL_CAP_MASK_DEFINE(FT),
     _NM_SUPPL_CAP_MASK_DEFINE(SAE),
     _NM_SUPPL_CAP_MASK_DEFINE(SHA384),
+    _NM_SUPPL_CAP_MASK_DEFINE(WEP),
+    _NM_SUPPL_CAP_MASK_DEFINE(BIP),
 #undef _NM_SUPPL_CAP_MASK_DEFINE
 } NMSupplCapMask;
 
@@ -160,7 +166,7 @@ typedef struct _NMSupplicantBssInfo {
 
     NMSupplicantInterface *_self;
     CList                  _bss_lst;
-    GCancellable *         _init_cancellable;
+    GCancellable          *_init_cancellable;
 
     GBytes *ssid;
 
@@ -194,7 +200,7 @@ typedef struct _NMSupplicantPeerInfo {
 
     CList                  _peer_lst;
     NMSupplicantInterface *_self;
-    GCancellable *         _init_cancellable;
+    GCancellable          *_init_cancellable;
 
     char *device_name;
     char *manufacturer;

@@ -8,7 +8,7 @@
 #define __NM_DEVICE_ETHERNET_H__
 
 #if !defined(__NETWORKMANAGER_H_INSIDE__) && !defined(NETWORKMANAGER_COMPILATION)
-    #error "Only <NetworkManager.h> can be included directly."
+#error "Only <NetworkManager.h> can be included directly."
 #endif
 
 #include "nm-device.h"
@@ -35,6 +35,7 @@ G_BEGIN_DECLS
 /**
  * NMDeviceEthernet:
  */
+typedef struct _NMDeviceEthernet      NMDeviceEthernet;
 typedef struct _NMDeviceEthernetClass NMDeviceEthernetClass;
 
 GType nm_device_ethernet_get_type(void);

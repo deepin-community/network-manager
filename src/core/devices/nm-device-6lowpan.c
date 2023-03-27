@@ -9,6 +9,7 @@
 
 #include "nm-device-private.h"
 #include "settings/nm-settings.h"
+#include "libnm-core-aux-intern/nm-libnm-core-utils.h"
 #include "libnm-platform/nm-platform.h"
 #include "nm-device-factory.h"
 #include "nm-setting-6lowpan.h"
@@ -20,7 +21,6 @@
 /*****************************************************************************/
 
 typedef struct {
-    gulong parent_state_id;
 } NMDevice6LowpanPrivate;
 
 struct _NMDevice6Lowpan {
@@ -40,50 +40,14 @@ G_DEFINE_TYPE(NMDevice6Lowpan, nm_device_6lowpan, NM_TYPE_DEVICE)
 /*****************************************************************************/
 
 static void
-parent_state_changed(NMDevice *          parent,
-                     NMDeviceState       new_state,
-                     NMDeviceState       old_state,
-                     NMDeviceStateReason reason,
-                     gpointer            user_data)
-{
-    NMDevice6Lowpan *self = NM_DEVICE_6LOWPAN(user_data);
-
-    nm_device_set_unmanaged_by_flags(NM_DEVICE(self),
-                                     NM_UNMANAGED_PARENT,
-                                     !nm_device_get_managed(parent, FALSE),
-                                     reason);
-}
-
-static void
 parent_changed_notify(NMDevice *device,
                       int       old_ifindex,
                       NMDevice *old_parent,
                       int       new_ifindex,
                       NMDevice *new_parent)
 {
-    NMDevice6Lowpan *       self = NM_DEVICE_6LOWPAN(device);
-    NMDevice6LowpanPrivate *priv = NM_DEVICE_6LOWPAN_GET_PRIVATE(self);
-
     NM_DEVICE_CLASS(nm_device_6lowpan_parent_class)
         ->parent_changed_notify(device, old_ifindex, old_parent, new_ifindex, new_parent);
-
-    /*  note that @self doesn't have to clear @parent_state_id on dispose,
-     *  because NMDevice's dispose() will unset the parent, which in turn calls
-     *  parent_changed_notify(). */
-    nm_clear_g_signal_handler(old_parent, &priv->parent_state_id);
-
-    if (new_parent) {
-        priv->parent_state_id = g_signal_connect(new_parent,
-                                                 NM_DEVICE_STATE_CHANGED,
-                                                 G_CALLBACK(parent_state_changed),
-                                                 device);
-
-        /* Set parent-dependent unmanaged flag */
-        nm_device_set_unmanaged_by_flags(device,
-                                         NM_UNMANAGED_PARENT,
-                                         !nm_device_get_managed(new_parent, FALSE),
-                                         NM_DEVICE_STATE_REASON_PARENT_MANAGED_CHANGED);
-    }
 
     if (new_ifindex > 0) {
         /* Recheck availability now that the parent has changed */
@@ -94,13 +58,13 @@ parent_changed_notify(NMDevice *device,
 }
 
 static gboolean
-create_and_realize(NMDevice *             device,
-                   NMConnection *         connection,
-                   NMDevice *             parent,
+create_and_realize(NMDevice              *device,
+                   NMConnection          *connection,
+                   NMDevice              *parent,
                    const NMPlatformLink **out_plink,
-                   GError **              error)
+                   GError               **error)
 {
-    const char *      iface = nm_device_get_iface(device);
+    const char       *iface = nm_device_get_iface(device);
     NMSetting6Lowpan *s_6lowpan;
     int               parent_ifindex;
     int               r;
@@ -174,11 +138,11 @@ is_available(NMDevice *device, NMDeviceCheckDevAvailableFlags flags)
 }
 
 static gboolean
-complete_connection(NMDevice *           device,
-                    NMConnection *       connection,
-                    const char *         specific_object,
+complete_connection(NMDevice            *device,
+                    NMConnection        *connection,
+                    const char          *specific_object,
                     NMConnection *const *existing_connections,
-                    GError **            error)
+                    GError             **error)
 {
     NMSetting6Lowpan *s_6lowpan;
 
@@ -221,12 +185,7 @@ static void
 update_connection(NMDevice *device, NMConnection *connection)
 {
     NMSetting6Lowpan *s_6lowpan =
-        NM_SETTING_6LOWPAN(nm_connection_get_setting(connection, NM_TYPE_SETTING_6LOWPAN));
-
-    if (!s_6lowpan) {
-        s_6lowpan = (NMSetting6Lowpan *) nm_setting_6lowpan_new();
-        nm_connection_add_setting(connection, (NMSetting *) s_6lowpan);
-    }
+        _nm_connection_ensure_setting(connection, NM_TYPE_SETTING_6LOWPAN);
 
     g_object_set(
         s_6lowpan,
@@ -253,7 +212,7 @@ static void
 nm_device_6lowpan_class_init(NMDevice6LowpanClass *klass)
 {
     NMDBusObjectClass *dbus_object_class = NM_DBUS_OBJECT_CLASS(klass);
-    NMDeviceClass *    device_class      = NM_DEVICE_CLASS(klass);
+    NMDeviceClass     *device_class      = NM_DEVICE_CLASS(klass);
 
     dbus_object_class->interface_infos = NM_DBUS_INTERFACE_INFOS(&interface_info_device_6lowpan);
 
@@ -276,14 +235,14 @@ nm_device_6lowpan_class_init(NMDevice6LowpanClass *klass)
 
 #define NM_TYPE_6LOWPAN_DEVICE_FACTORY (nm_6lowpan_device_factory_get_type())
 #define NM_6LOWPAN_DEVICE_FACTORY(obj) \
-    (G_TYPE_CHECK_INSTANCE_CAST((obj), NM_TYPE_6LOWPAN_DEVICE_FACTORY, NM6LowpanDeviceFactory))
+    (_NM_G_TYPE_CHECK_INSTANCE_CAST((obj), NM_TYPE_6LOWPAN_DEVICE_FACTORY, NM6LowpanDeviceFactory))
 
 static NMDevice *
-create_device(NMDeviceFactory *     factory,
-              const char *          iface,
+create_device(NMDeviceFactory      *factory,
+              const char           *iface,
               const NMPlatformLink *plink,
-              NMConnection *        connection,
-              gboolean *            out_ignore)
+              NMConnection         *connection,
+              gboolean             *out_ignore)
 {
     return g_object_new(NM_TYPE_DEVICE_6LOWPAN,
                         NM_DEVICE_IFACE,
@@ -314,7 +273,7 @@ static char *
 get_connection_iface(NMDeviceFactory *factory, NMConnection *connection, const char *parent_iface)
 {
     NMSetting6Lowpan *s_6lowpan;
-    const char *      ifname;
+    const char       *ifname;
 
     g_return_val_if_fail(nm_connection_is_type(connection, NM_SETTING_6LOWPAN_SETTING_NAME), NULL);
 

@@ -9,7 +9,8 @@
 #include "nmt-newt-component.h"
 
 #define NMT_TYPE_NEWT_ENTRY (nmt_newt_entry_get_type())
-#define NMT_NEWT_ENTRY(obj) (G_TYPE_CHECK_INSTANCE_CAST((obj), NMT_TYPE_NEWT_ENTRY, NmtNewtEntry))
+#define NMT_NEWT_ENTRY(obj) \
+    (_NM_G_TYPE_CHECK_INSTANCE_CAST((obj), NMT_TYPE_NEWT_ENTRY, NmtNewtEntry))
 #define NMT_NEWT_ENTRY_CLASS(klass) \
     (G_TYPE_CHECK_CLASS_CAST((klass), NMT_TYPE_NEWT_ENTRY, NmtNewtEntryClass))
 #define NMT_IS_NEWT_ENTRY(obj)         (G_TYPE_CHECK_INSTANCE_TYPE((obj), NMT_TYPE_NEWT_ENTRY))
@@ -41,7 +42,7 @@ typedef enum {
 NmtNewtWidget *nmt_newt_entry_new(int width, NmtNewtEntryFlags flags);
 
 void nmt_newt_entry_set_filter(NmtNewtEntry *entry, NmtNewtEntryFilter filter, gpointer user_data);
-void nmt_newt_entry_set_validator(NmtNewtEntry *        entry,
+void nmt_newt_entry_set_validator(NmtNewtEntry         *entry,
                                   NmtNewtEntryValidator validator,
                                   gpointer              user_data);
 

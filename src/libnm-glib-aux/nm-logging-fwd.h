@@ -9,74 +9,84 @@
 
 /* Log domains */
 
-typedef enum { /*< skip >*/
-               LOGD_NONE       = 0LL,
-               LOGD_PLATFORM   = (1LL << 0), /* Platform services */
-               LOGD_RFKILL     = (1LL << 1),
-               LOGD_ETHER      = (1LL << 2),
-               LOGD_WIFI       = (1LL << 3),
-               LOGD_BT         = (1LL << 4),
-               LOGD_MB         = (1LL << 5), /* mobile broadband */
-               LOGD_DHCP4      = (1LL << 6),
-               LOGD_DHCP6      = (1LL << 7),
-               LOGD_PPP        = (1LL << 8),
-               LOGD_WIFI_SCAN  = (1LL << 9),
-               LOGD_IP4        = (1LL << 10),
-               LOGD_IP6        = (1LL << 11),
-               LOGD_AUTOIP4    = (1LL << 12),
-               LOGD_DNS        = (1LL << 13),
-               LOGD_VPN        = (1LL << 14),
-               LOGD_SHARING    = (1LL << 15), /* Connection sharing/dnsmasq */
-               LOGD_SUPPLICANT = (1LL << 16), /* Wi-Fi and 802.1x */
-               LOGD_AGENTS     = (1LL << 17), /* Secret agents */
-               LOGD_SETTINGS   = (1LL << 18), /* Settings */
-               LOGD_SUSPEND    = (1LL << 19), /* Suspend/Resume */
-               LOGD_CORE       = (1LL << 20), /* Core daemon and policy stuff */
-               LOGD_DEVICE     = (1LL << 21), /* Device state and activation */
-               LOGD_OLPC       = (1LL << 22),
-               LOGD_INFINIBAND = (1LL << 23),
-               LOGD_FIREWALL   = (1LL << 24),
-               LOGD_ADSL       = (1LL << 25),
-               LOGD_BOND       = (1LL << 26),
-               LOGD_VLAN       = (1LL << 27),
-               LOGD_BRIDGE     = (1LL << 28),
-               LOGD_DBUS_PROPS = (1LL << 29),
-               LOGD_TEAM       = (1LL << 30),
-               LOGD_CONCHECK   = (1LL << 31),
-               LOGD_DCB        = (1LL << 32), /* Data Center Bridging */
-               LOGD_DISPATCH   = (1LL << 33),
-               LOGD_AUDIT      = (1LL << 34),
-               LOGD_SYSTEMD    = (1LL << 35),
-               LOGD_VPN_PLUGIN = (1LL << 36),
-               LOGD_PROXY      = (1LL << 37),
+typedef enum {
+    LOGD_NONE       = 0LL,
+    LOGD_PLATFORM   = (1LL << 0), /* Platform services */
+    LOGD_RFKILL     = (1LL << 1),
+    LOGD_ETHER      = (1LL << 2),
+    LOGD_WIFI       = (1LL << 3),
+    LOGD_BT         = (1LL << 4),
+    LOGD_MB         = (1LL << 5), /* mobile broadband */
+    LOGD_DHCP4      = (1LL << 6),
+    LOGD_DHCP6      = (1LL << 7),
+    LOGD_PPP        = (1LL << 8),
+    LOGD_WIFI_SCAN  = (1LL << 9),
+    LOGD_IP4        = (1LL << 10),
+    LOGD_IP6        = (1LL << 11),
+    LOGD_AUTOIP4    = (1LL << 12),
+    LOGD_DNS        = (1LL << 13),
+    LOGD_VPN        = (1LL << 14),
+    LOGD_SHARING    = (1LL << 15), /* Connection sharing/dnsmasq */
+    LOGD_SUPPLICANT = (1LL << 16), /* Wi-Fi and 802.1x */
+    LOGD_AGENTS     = (1LL << 17), /* Secret agents */
+    LOGD_SETTINGS   = (1LL << 18), /* Settings */
+    LOGD_SUSPEND    = (1LL << 19), /* Suspend/Resume */
+    LOGD_CORE       = (1LL << 20), /* Core daemon and policy stuff */
+    LOGD_DEVICE     = (1LL << 21), /* Device state and activation */
+    LOGD_OLPC       = (1LL << 22),
+    LOGD_INFINIBAND = (1LL << 23),
+    LOGD_FIREWALL   = (1LL << 24),
+    LOGD_ADSL       = (1LL << 25),
+    LOGD_BOND       = (1LL << 26),
+    LOGD_VLAN       = (1LL << 27),
+    LOGD_BRIDGE     = (1LL << 28),
+    LOGD_DBUS_PROPS = (1LL << 29),
+    LOGD_TEAM       = (1LL << 30),
+    LOGD_CONCHECK   = (1LL << 31),
+    LOGD_DCB        = (1LL << 32), /* Data Center Bridging */
+    LOGD_DISPATCH   = (1LL << 33),
+    LOGD_AUDIT      = (1LL << 34),
+    LOGD_SYSTEMD    = (1LL << 35),
+    LOGD_VPN_PLUGIN = (1LL << 36),
+    LOGD_PROXY      = (1LL << 37),
 
-               __LOGD_MAX,
-               LOGD_ALL     = (((__LOGD_MAX - 1LL) << 1) - 1LL),
-               LOGD_DEFAULT = LOGD_ALL & ~(LOGD_DBUS_PROPS | LOGD_WIFI_SCAN | LOGD_VPN_PLUGIN | 0),
+    __LOGD_MAX,
+    LOGD_ALL     = (((__LOGD_MAX - 1LL) << 1) - 1LL),
+    LOGD_DEFAULT = LOGD_ALL & ~(LOGD_DBUS_PROPS | LOGD_WIFI_SCAN | LOGD_VPN_PLUGIN | 0),
 
-               /* aliases: */
-               LOGD_DHCP = LOGD_DHCP4 | LOGD_DHCP6,
-               LOGD_IP   = LOGD_IP4 | LOGD_IP6,
+    /* aliases: */
+    LOGD_DHCP = LOGD_DHCP4 | LOGD_DHCP6,
+    LOGD_IP   = LOGD_IP4 | LOGD_IP6,
 
 #define LOGD_DHCPX(is_ipv4) ((is_ipv4) ? LOGD_DHCP4 : LOGD_DHCP6)
-#define LOGD_IPX(is_ipv4)   ((is_ipv4) ? LOGD_IP4 : LOGD_IP6)
+
+#define LOGD_DHCP_af(addr_family)                                                               \
+    ({                                                                                          \
+        const int _addr_family_1 = (addr_family);                                               \
+                                                                                                \
+        (_addr_family_1 == AF_UNSPEC ? LOGD_DHCP                                                \
+                                     : (NM_IS_IPv4(_addr_family_1) ? LOGD_DHCP4 : LOGD_DHCP6)); \
+    })
+
+#define LOGD_IPX(is_ipv4) ((is_ipv4) ? LOGD_IP4 : LOGD_IP6)
 
 } NMLogDomain;
 
 /* Log levels */
-typedef enum { /*< skip >*/
-               LOGL_TRACE,
-               LOGL_DEBUG,
-               LOGL_INFO,
-               LOGL_WARN,
-               LOGL_ERR,
+typedef enum {
 
-               _LOGL_N_REAL, /* the number of actual logging levels */
+    LOGL_TRACE,
+    LOGL_DEBUG,
+    LOGL_INFO,
+    LOGL_WARN,
+    LOGL_ERR,
 
-               _LOGL_OFF = _LOGL_N_REAL, /* special logging level that is always disabled. */
-               _LOGL_KEEP, /* special logging level to indicate that the logging level should not be changed. */
+    _LOGL_N_REAL, /* the number of actual logging levels */
 
-               _LOGL_N, /* the number of logging levels including "OFF" */
+    _LOGL_OFF = _LOGL_N_REAL, /* special logging level that is always disabled. */
+    _LOGL_KEEP, /* special logging level to indicate that the logging level should not be changed. */
+
+    _LOGL_N, /* the number of logging levels including "OFF" */
 } NMLogLevel;
 
 gboolean _nm_log_enabled_impl(gboolean mt_require_locking, NMLogLevel level, NMLogDomain domain);
@@ -182,28 +192,28 @@ extern void _nm_utils_monotonic_timestamp_initialized(const struct timespec *tp,
 /* _LOGT() and _LOGt() both log with level TRACE, but the latter is disabled by default,
  * unless building with --with-more-logging. */
 #if NM_MORE_LOGGING
-    #define _LOGt_ENABLED(...)    _NMLOG_ENABLED(_LOGL_TRACE, ##__VA_ARGS__)
-    #define _LOGt(...)            _NMLOG(_LOGL_TRACE, __VA_ARGS__)
-    #define _LOGt_err(errsv, ...) _NMLOG_err(errsv, _LOGL_TRACE, __VA_ARGS__)
+#define _LOGt_ENABLED(...)    _NMLOG_ENABLED(_LOGL_TRACE, ##__VA_ARGS__)
+#define _LOGt(...)            _NMLOG(_LOGL_TRACE, __VA_ARGS__)
+#define _LOGt_err(errsv, ...) _NMLOG_err(errsv, _LOGL_TRACE, __VA_ARGS__)
 #else
-    /* still call the logging macros to get compile time checks, but they will be optimized out. */
-    #define _LOGt_ENABLED(...) (FALSE && (_NMLOG_ENABLED(_LOGL_TRACE, ##__VA_ARGS__)))
-    #define _LOGt(...)                            \
-        G_STMT_START                              \
-        {                                         \
-            if (FALSE) {                          \
-                _NMLOG(_LOGL_TRACE, __VA_ARGS__); \
-            }                                     \
-        }                                         \
-        G_STMT_END
-    #define _LOGt_err(errsv, ...)                            \
-        G_STMT_START                                         \
-        {                                                    \
-            if (FALSE) {                                     \
-                _NMLOG_err(errsv, _LOGL_TRACE, __VA_ARGS__); \
-            }                                                \
-        }                                                    \
-        G_STMT_END
+/* still call the logging macros to get compile time checks, but they will be optimized out. */
+#define _LOGt_ENABLED(...) (FALSE && (_NMLOG_ENABLED(_LOGL_TRACE, ##__VA_ARGS__)))
+#define _LOGt(...)                            \
+    G_STMT_START                              \
+    {                                         \
+        if (FALSE) {                          \
+            _NMLOG(_LOGL_TRACE, __VA_ARGS__); \
+        }                                     \
+    }                                         \
+    G_STMT_END
+#define _LOGt_err(errsv, ...)                            \
+    G_STMT_START                                         \
+    {                                                    \
+        if (FALSE) {                                     \
+            _NMLOG_err(errsv, _LOGL_TRACE, __VA_ARGS__); \
+        }                                                \
+    }                                                    \
+    G_STMT_END
 #endif
 
 /*****************************************************************************/
@@ -236,28 +246,28 @@ extern void _nm_utils_monotonic_timestamp_initialized(const struct timespec *tp,
 #define _LOG2E_err(errsv, ...) _NMLOG2_err(errsv, _LOGL_ERR, __VA_ARGS__)
 
 #if NM_MORE_LOGGING
-    #define _LOG2t_ENABLED(...)    _NMLOG2_ENABLED(_LOGL_TRACE, ##__VA_ARGS__)
-    #define _LOG2t(...)            _NMLOG2(_LOGL_TRACE, __VA_ARGS__)
-    #define _LOG2t_err(errsv, ...) _NMLOG2_err(errsv, _LOGL_TRACE, __VA_ARGS__)
+#define _LOG2t_ENABLED(...)    _NMLOG2_ENABLED(_LOGL_TRACE, ##__VA_ARGS__)
+#define _LOG2t(...)            _NMLOG2(_LOGL_TRACE, __VA_ARGS__)
+#define _LOG2t_err(errsv, ...) _NMLOG2_err(errsv, _LOGL_TRACE, __VA_ARGS__)
 #else
-    /* still call the logging macros to get compile time checks, but they will be optimized out. */
-    #define _LOG2t_ENABLED(...) (FALSE && (_NMLOG2_ENABLED(_LOGL_TRACE, ##__VA_ARGS__)))
-    #define _LOG2t(...)                            \
-        G_STMT_START                               \
-        {                                          \
-            if (FALSE) {                           \
-                _NMLOG2(_LOGL_TRACE, __VA_ARGS__); \
-            }                                      \
-        }                                          \
-        G_STMT_END
-    #define _LOG2t_err(errsv, ...)                            \
-        G_STMT_START                                          \
-        {                                                     \
-            if (FALSE) {                                      \
-                _NMLOG2_err(errsv, _LOGL_TRACE, __VA_ARGS__); \
-            }                                                 \
-        }                                                     \
-        G_STMT_END
+/* still call the logging macros to get compile time checks, but they will be optimized out. */
+#define _LOG2t_ENABLED(...) (FALSE && (_NMLOG2_ENABLED(_LOGL_TRACE, ##__VA_ARGS__)))
+#define _LOG2t(...)                            \
+    G_STMT_START                               \
+    {                                          \
+        if (FALSE) {                           \
+            _NMLOG2(_LOGL_TRACE, __VA_ARGS__); \
+        }                                      \
+    }                                          \
+    G_STMT_END
+#define _LOG2t_err(errsv, ...)                            \
+    G_STMT_START                                          \
+    {                                                     \
+        if (FALSE) {                                      \
+            _NMLOG2_err(errsv, _LOGL_TRACE, __VA_ARGS__); \
+        }                                                 \
+    }                                                     \
+    G_STMT_END
 #endif
 
 #define _NMLOG3_ENABLED(level) (nm_logging_enabled((level), (_NMLOG3_DOMAIN)))
@@ -281,28 +291,28 @@ extern void _nm_utils_monotonic_timestamp_initialized(const struct timespec *tp,
 #define _LOG3E_err(errsv, ...) _NMLOG3_err(errsv, _LOGL_ERR, __VA_ARGS__)
 
 #if NM_MORE_LOGGING
-    #define _LOG3t_ENABLED(...)    _NMLOG3_ENABLED(_LOGL_TRACE, ##__VA_ARGS__)
-    #define _LOG3t(...)            _NMLOG3(_LOGL_TRACE, __VA_ARGS__)
-    #define _LOG3t_err(errsv, ...) _NMLOG3_err(errsv, _LOGL_TRACE, __VA_ARGS__)
+#define _LOG3t_ENABLED(...)    _NMLOG3_ENABLED(_LOGL_TRACE, ##__VA_ARGS__)
+#define _LOG3t(...)            _NMLOG3(_LOGL_TRACE, __VA_ARGS__)
+#define _LOG3t_err(errsv, ...) _NMLOG3_err(errsv, _LOGL_TRACE, __VA_ARGS__)
 #else
-    /* still call the logging macros to get compile time checks, but they will be optimized out. */
-    #define _LOG3t_ENABLED(...) (FALSE && (_NMLOG3_ENABLED(_LOGL_TRACE, ##__VA_ARGS__)))
-    #define _LOG3t(...)                            \
-        G_STMT_START                               \
-        {                                          \
-            if (FALSE) {                           \
-                _NMLOG3(_LOGL_TRACE, __VA_ARGS__); \
-            }                                      \
-        }                                          \
-        G_STMT_END
-    #define _LOG3t_err(errsv, ...)                            \
-        G_STMT_START                                          \
-        {                                                     \
-            if (FALSE) {                                      \
-                _NMLOG3_err(errsv, _LOGL_TRACE, __VA_ARGS__); \
-            }                                                 \
-        }                                                     \
-        G_STMT_END
+/* still call the logging macros to get compile time checks, but they will be optimized out. */
+#define _LOG3t_ENABLED(...) (FALSE && (_NMLOG3_ENABLED(_LOGL_TRACE, ##__VA_ARGS__)))
+#define _LOG3t(...)                            \
+    G_STMT_START                               \
+    {                                          \
+        if (FALSE) {                           \
+            _NMLOG3(_LOGL_TRACE, __VA_ARGS__); \
+        }                                      \
+    }                                          \
+    G_STMT_END
+#define _LOG3t_err(errsv, ...)                            \
+    G_STMT_START                                          \
+    {                                                     \
+        if (FALSE) {                                      \
+            _NMLOG3_err(errsv, _LOGL_TRACE, __VA_ARGS__); \
+        }                                                 \
+    }                                                     \
+    G_STMT_END
 #endif
 
 /*****************************************************************************/

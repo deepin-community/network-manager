@@ -36,7 +36,7 @@ NM_GOBJECT_PROPERTIES_DEFINE(NMRemoteConnection,
 typedef struct {
     GCancellable *get_settings_cancellable;
 
-    char *  filename;
+    char   *filename;
     guint32 flags;
     bool    unsaved;
 
@@ -81,11 +81,11 @@ G_DEFINE_TYPE_WITH_CODE(NMRemoteConnection,
  * Since: 1.12
  **/
 void
-nm_remote_connection_update2(NMRemoteConnection *   connection,
-                             GVariant *             settings,
+nm_remote_connection_update2(NMRemoteConnection    *connection,
+                             GVariant              *settings,
                              NMSettingsUpdate2Flags flags,
-                             GVariant *             args,
-                             GCancellable *         cancellable,
+                             GVariant              *args,
+                             GCancellable          *cancellable,
                              GAsyncReadyCallback    callback,
                              gpointer               user_data)
 {
@@ -125,14 +125,16 @@ nm_remote_connection_update2(NMRemoteConnection *   connection,
  *
  * Returns: (transfer full): on success, a #GVariant of type "a{sv}" with the result. On failure,
  *   %NULL.
+ *
+ * Since: 1.12
  **/
 GVariant *
 nm_remote_connection_update2_finish(NMRemoteConnection *connection,
-                                    GAsyncResult *      result,
-                                    GError **           error)
+                                    GAsyncResult       *result,
+                                    GError            **error)
 {
     gs_unref_variant GVariant *ret = NULL;
-    GVariant *                 v_result;
+    GVariant                  *v_result;
 
     g_return_val_if_fail(NM_IS_REMOTE_CONNECTION(connection), NULL);
     g_return_val_if_fail(nm_g_task_is_valid(result, connection, nm_remote_connection_update2),
@@ -167,8 +169,8 @@ nm_remote_connection_update2_finish(NMRemoteConnection *connection,
 gboolean
 nm_remote_connection_commit_changes(NMRemoteConnection *connection,
                                     gboolean            save_to_disk,
-                                    GCancellable *      cancellable,
-                                    GError **           error)
+                                    GCancellable       *cancellable,
+                                    GError            **error)
 {
     gs_unref_variant GVariant *ret = NULL;
 
@@ -213,7 +215,7 @@ nm_remote_connection_commit_changes(NMRemoteConnection *connection,
 void
 nm_remote_connection_commit_changes_async(NMRemoteConnection *connection,
                                           gboolean            save_to_disk,
-                                          GCancellable *      cancellable,
+                                          GCancellable       *cancellable,
                                           GAsyncReadyCallback callback,
                                           gpointer            user_data)
 {
@@ -242,8 +244,8 @@ nm_remote_connection_commit_changes_async(NMRemoteConnection *connection,
  **/
 gboolean
 nm_remote_connection_commit_changes_finish(NMRemoteConnection *connection,
-                                           GAsyncResult *      result,
-                                           GError **           error)
+                                           GAsyncResult       *result,
+                                           GError            **error)
 {
     gs_unref_variant GVariant *v_result = NULL;
 
@@ -296,7 +298,7 @@ nm_remote_connection_save(NMRemoteConnection *connection, GCancellable *cancella
  **/
 void
 nm_remote_connection_save_async(NMRemoteConnection *connection,
-                                GCancellable *      cancellable,
+                                GCancellable       *cancellable,
                                 GAsyncReadyCallback callback,
                                 gpointer            user_data)
 {
@@ -331,8 +333,8 @@ nm_remote_connection_save_async(NMRemoteConnection *connection,
  **/
 gboolean
 nm_remote_connection_save_finish(NMRemoteConnection *connection,
-                                 GAsyncResult *      result,
-                                 GError **           error)
+                                 GAsyncResult       *result,
+                                 GError            **error)
 {
     g_return_val_if_fail(NM_IS_REMOTE_CONNECTION(connection), FALSE);
     g_return_val_if_fail(nm_g_task_is_valid(result, connection, nm_remote_connection_save_async),
@@ -357,8 +359,8 @@ nm_remote_connection_save_finish(NMRemoteConnection *connection,
  **/
 gboolean
 nm_remote_connection_delete(NMRemoteConnection *connection,
-                            GCancellable *      cancellable,
-                            GError **           error)
+                            GCancellable       *cancellable,
+                            GError            **error)
 {
     g_return_val_if_fail(NM_IS_REMOTE_CONNECTION(connection), FALSE);
 
@@ -385,7 +387,7 @@ nm_remote_connection_delete(NMRemoteConnection *connection,
  **/
 void
 nm_remote_connection_delete_async(NMRemoteConnection *connection,
-                                  GCancellable *      cancellable,
+                                  GCancellable       *cancellable,
                                   GAsyncReadyCallback callback,
                                   gpointer            user_data)
 {
@@ -420,8 +422,8 @@ nm_remote_connection_delete_async(NMRemoteConnection *connection,
  **/
 gboolean
 nm_remote_connection_delete_finish(NMRemoteConnection *connection,
-                                   GAsyncResult *      result,
-                                   GError **           error)
+                                   GAsyncResult       *result,
+                                   GError            **error)
 {
     g_return_val_if_fail(NM_IS_REMOTE_CONNECTION(connection), FALSE);
     g_return_val_if_fail(nm_g_task_is_valid(result, connection, nm_remote_connection_delete_async),
@@ -443,16 +445,20 @@ nm_remote_connection_delete_finish(NMRemoteConnection *connection,
  * Returns: (transfer full): a #GVariant of type %NM_VARIANT_TYPE_CONNECTION containing
  * @connection's secrets, or %NULL on error.
  *
- * Deprecated: 1.22: Use nm_remote_connection_get_secrets_async() or GDBusConnection.
+ * Warning: NMClient contains a cache of objects on D-Bus. This cache gets updated
+ *   with D-Bus signals when iterating the GMainContext. This function performs a
+ *   (pseudo) blocking D-Bus call. Aside blocking, the result will not be in sync
+ *   and not be ordered with the content of the NMClient cache.
+ *   This function used to be deprecated between 1.22 and 1.38 releases.
  **/
 GVariant *
 nm_remote_connection_get_secrets(NMRemoteConnection *connection,
-                                 const char *        setting_name,
-                                 GCancellable *      cancellable,
-                                 GError **           error)
+                                 const char         *setting_name,
+                                 GCancellable       *cancellable,
+                                 GError            **error)
 {
     gs_unref_variant GVariant *ret = NULL;
-    GVariant *                 secrets;
+    GVariant                  *secrets;
 
     g_return_val_if_fail(NM_IS_REMOTE_CONNECTION(connection), NULL);
     g_return_val_if_fail(setting_name, NULL);
@@ -489,8 +495,8 @@ nm_remote_connection_get_secrets(NMRemoteConnection *connection,
  **/
 void
 nm_remote_connection_get_secrets_async(NMRemoteConnection *connection,
-                                       const char *        setting_name,
-                                       GCancellable *      cancellable,
+                                       const char         *setting_name,
+                                       GCancellable       *cancellable,
                                        GAsyncReadyCallback callback,
                                        gpointer            user_data)
 {
@@ -527,11 +533,11 @@ nm_remote_connection_get_secrets_async(NMRemoteConnection *connection,
  **/
 GVariant *
 nm_remote_connection_get_secrets_finish(NMRemoteConnection *connection,
-                                        GAsyncResult *      result,
-                                        GError **           error)
+                                        GAsyncResult       *result,
+                                        GError            **error)
 {
     gs_unref_variant GVariant *ret = NULL;
-    GVariant *                 secrets;
+    GVariant                  *secrets;
 
     g_return_val_if_fail(NM_IS_REMOTE_CONNECTION(connection), NULL);
     g_return_val_if_fail(
@@ -635,7 +641,7 @@ void
 _nm_remote_settings_get_settings_commit(NMRemoteConnection *self, GVariant *settings)
 {
     NMRemoteConnectionPrivate *priv    = NM_REMOTE_CONNECTION_GET_PRIVATE(self);
-    GError *                   error   = NULL;
+    GError                    *error   = NULL;
     gboolean                   visible = FALSE;
     gboolean                   changed = FALSE;
 
@@ -692,7 +698,7 @@ static void
 register_client(NMObject *nmobj, NMClient *client, NMLDBusObject *dbobj)
 {
     NM_OBJECT_CLASS(nm_remote_connection_parent_class)->register_client(nmobj, client, dbobj);
-    nm_connection_set_path(NM_CONNECTION(nmobj), dbobj->dbus_path->str);
+    _nm_connection_set_path_rstr(NM_CONNECTION(nmobj), dbobj->dbus_path);
     _nm_client_get_settings_call(client, dbobj);
 }
 
@@ -761,7 +767,7 @@ const NMLDBusMetaIface _nml_dbus_meta_iface_nm_settings_connection = NML_DBUS_ME
 static void
 nm_remote_connection_class_init(NMRemoteConnectionClass *klass)
 {
-    GObjectClass * object_class    = G_OBJECT_CLASS(klass);
+    GObjectClass  *object_class    = G_OBJECT_CLASS(klass);
     NMObjectClass *nm_object_class = NM_OBJECT_CLASS(klass);
 
     object_class->get_property = get_property;

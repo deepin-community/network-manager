@@ -32,7 +32,7 @@ G_BEGIN_DECLS
 typedef struct {
     NM_DEPRECATED_IN_1_2
     GObject parent;
-} NMVpnPluginOld NM_DEPRECATED_IN_1_2;
+} NMVpnPluginOld;
 
 typedef struct {
     NM_DEPRECATED_IN_1_2
@@ -66,9 +66,9 @@ typedef struct {
 
     NM_DEPRECATED_IN_1_2
     gboolean (*need_secrets)(NMVpnPluginOld *plugin,
-                             NMConnection *  connection,
-                             const char **   setting_name,
-                             GError **       error);
+                             NMConnection   *connection,
+                             const char    **setting_name,
+                             GError        **error);
 
     NM_DEPRECATED_IN_1_2
     gboolean (*disconnect)(NMVpnPluginOld *plugin, GError **err);
@@ -78,14 +78,14 @@ typedef struct {
 
     NM_DEPRECATED_IN_1_2
     gboolean (*connect_interactive)(NMVpnPluginOld *plugin,
-                                    NMConnection *  connection,
-                                    GVariant *      details,
-                                    GError **       error);
+                                    NMConnection   *connection,
+                                    GVariant       *details,
+                                    GError        **error);
 
     /*< private >*/
     NM_DEPRECATED_IN_1_2
     gpointer padding[8];
-} NMVpnPluginOldClass NM_DEPRECATED_IN_1_2;
+} NMVpnPluginOldClass;
 
 NM_DEPRECATED_IN_1_2
 GType nm_vpn_plugin_old_get_type(void);
@@ -108,13 +108,7 @@ NM_DEPRECATED_IN_1_2
 void nm_vpn_plugin_old_failure(NMVpnPluginOld *plugin, NMVpnPluginFailure reason);
 
 NM_DEPRECATED_IN_1_2
-void nm_vpn_plugin_old_set_config(NMVpnPluginOld *plugin, GVariant *config);
-
-NM_DEPRECATED_IN_1_2
 void nm_vpn_plugin_old_set_ip4_config(NMVpnPluginOld *plugin, GVariant *ip4_config);
-
-NM_DEPRECATED_IN_1_2
-void nm_vpn_plugin_old_set_ip6_config(NMVpnPluginOld *plugin, GVariant *ip6_config);
 
 NM_DEPRECATED_IN_1_2
 gboolean nm_vpn_plugin_old_disconnect(NMVpnPluginOld *plugin, GError **err);
@@ -126,8 +120,8 @@ gboolean
 nm_vpn_plugin_old_read_vpn_details(int fd, GHashTable **out_data, GHashTable **out_secrets);
 
 NM_DEPRECATED_IN_1_2
-gboolean nm_vpn_plugin_old_get_secret_flags(GHashTable *          data,
-                                            const char *          secret_name,
+gboolean nm_vpn_plugin_old_get_secret_flags(GHashTable           *data,
+                                            const char           *secret_name,
                                             NMSettingSecretFlags *out_flags);
 
 G_END_DECLS

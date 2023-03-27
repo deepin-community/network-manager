@@ -5,13 +5,13 @@
 
 #include "libnm-client-impl/nm-default-libnm.h"
 
+#include "nm-wifi-p2p-peer.h"
 #include "nm-device-wifi-p2p.h"
 
 #include "libnm-glib-aux/nm-dbus-aux.h"
 #include "nm-setting-connection.h"
 #include "nm-setting-wifi-p2p.h"
 #include "nm-utils.h"
-#include "nm-wifi-p2p-peer.h"
 #include "nm-object-private.h"
 #include "libnm-core-intern/nm-core-internal.h"
 #include "nm-dbus-helpers.h"
@@ -100,14 +100,14 @@ nm_device_wifi_p2p_get_peers(NMDeviceWifiP2P *device)
  *
  * Returns: (transfer none): the peer or %NULL if none is found.
  *
- * Since: 1.16
+ * Since: 1.42
  **/
 NMWifiP2PPeer *
 nm_device_wifi_p2p_get_peer_by_path(NMDeviceWifiP2P *device, const char *path)
 {
     const GPtrArray *peers;
     int              i;
-    NMWifiP2PPeer *  peer = NULL;
+    NMWifiP2PPeer   *peer = NULL;
 
     g_return_val_if_fail(NM_IS_DEVICE_WIFI_P2P(device), NULL);
     g_return_val_if_fail(path != NULL, NULL);
@@ -145,9 +145,9 @@ nm_device_wifi_p2p_get_peer_by_path(NMDeviceWifiP2P *device, const char *path)
  * Since: 1.16
  **/
 void
-nm_device_wifi_p2p_start_find(NMDeviceWifiP2P *   device,
-                              GVariant *          options,
-                              GCancellable *      cancellable,
+nm_device_wifi_p2p_start_find(NMDeviceWifiP2P    *device,
+                              GVariant           *options,
+                              GCancellable       *cancellable,
                               GAsyncReadyCallback callback,
                               gpointer            user_data)
 {
@@ -207,8 +207,8 @@ nm_device_wifi_p2p_start_find_finish(NMDeviceWifiP2P *device, GAsyncResult *resu
  * Since: 1.16
  **/
 void
-nm_device_wifi_p2p_stop_find(NMDeviceWifiP2P *   device,
-                             GCancellable *      cancellable,
+nm_device_wifi_p2p_stop_find(NMDeviceWifiP2P    *device,
+                             GCancellable       *cancellable,
                              GAsyncReadyCallback callback,
                              gpointer            user_data)
 {
@@ -286,8 +286,8 @@ get_type_description(NMDevice *device)
 
 static void
 _property_ao_notify_changed_peers_cb(NMLDBusPropertyAO *pr_ao,
-                                     NMClient *         client,
-                                     NMObject *         nmobj,
+                                     NMClient          *client,
+                                     NMObject          *nmobj,
                                      gboolean           is_added /* or else removed */)
 {
     _nm_client_notify_event_queue_emit_obj_signal(client,
@@ -342,7 +342,7 @@ const NMLDBusMetaIface _nml_dbus_meta_iface_nm_device_wifip2p = NML_DBUS_META_IF
 static void
 nm_device_wifi_p2p_class_init(NMDeviceWifiP2PClass *klass)
 {
-    GObjectClass * object_class    = G_OBJECT_CLASS(klass);
+    GObjectClass  *object_class    = G_OBJECT_CLASS(klass);
     NMObjectClass *nm_object_class = NM_OBJECT_CLASS(klass);
     NMDeviceClass *device_class    = NM_DEVICE_CLASS(klass);
 

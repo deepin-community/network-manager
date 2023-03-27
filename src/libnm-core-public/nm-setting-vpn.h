@@ -8,7 +8,7 @@
 #define __NM_SETTING_VPN_H__
 
 #if !defined(__NETWORKMANAGER_H_INSIDE__) && !defined(NETWORKMANAGER_COMPILATION)
-    #error "Only <NetworkManager.h> can be included directly."
+#error "Only <NetworkManager.h> can be included directly."
 #endif
 
 #include "nm-setting.h"
@@ -46,10 +46,12 @@ typedef void (*NMVpnIterFunc)(const char *key, const char *value, gpointer user_
 
 GType nm_setting_vpn_get_type(void);
 
-NMSetting * nm_setting_vpn_new(void);
+NMSetting  *nm_setting_vpn_new(void);
 const char *nm_setting_vpn_get_service_type(NMSettingVpn *setting);
 const char *nm_setting_vpn_get_user_name(NMSettingVpn *setting);
-gboolean    nm_setting_vpn_get_persistent(NMSettingVpn *setting);
+
+NM_AVAILABLE_IN_1_42
+gboolean nm_setting_vpn_get_persistent(NMSettingVpn *setting);
 
 guint32     nm_setting_vpn_get_num_data_items(NMSettingVpn *setting);
 void        nm_setting_vpn_add_data_item(NMSettingVpn *setting, const char *key, const char *item);

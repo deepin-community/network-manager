@@ -34,7 +34,7 @@
 NM_GOBJECT_PROPERTIES_DEFINE(NMSettingBond, PROP_OPTIONS, );
 
 typedef struct {
-    GHashTable *       options;
+    GHashTable        *options;
     NMUtilsNamedValue *options_idx_cache;
 } NMSettingBondPrivate;
 
@@ -70,6 +70,7 @@ static const char *const valid_options_lst[] = {
     NM_SETTING_BOND_OPTION_ARP_INTERVAL,
     NM_SETTING_BOND_OPTION_ARP_IP_TARGET,
     NM_SETTING_BOND_OPTION_ARP_VALIDATE,
+    NM_SETTING_BOND_OPTION_BALANCE_SLB,
     NM_SETTING_BOND_OPTION_PRIMARY,
     NM_SETTING_BOND_OPTION_PRIMARY_RESELECT,
     NM_SETTING_BOND_OPTION_FAIL_OVER_MAC,
@@ -95,7 +96,7 @@ static const char *const valid_options_lst[] = {
 };
 
 typedef struct {
-    const char *       val;
+    const char        *val;
     NMBondOptionType   opt_type;
     guint              min;
     guint              max;
@@ -195,6 +196,7 @@ static NM_UTILS_STRING_TABLE_LOOKUP_STRUCT_DEFINE(
     {NM_SETTING_BOND_OPTION_ARP_IP_TARGET, {"", NM_BOND_OPTION_TYPE_IP}},
     {NM_SETTING_BOND_OPTION_ARP_VALIDATE,
      {"none", NM_BOND_OPTION_TYPE_BOTH, 0, 6, _option_default_strv_arp_validate}},
+    {NM_SETTING_BOND_OPTION_BALANCE_SLB, {"0", NM_BOND_OPTION_TYPE_INT, 0, 1}},
     {NM_SETTING_BOND_OPTION_DOWNDELAY, {"0", NM_BOND_OPTION_TYPE_INT, 0, G_MAXINT}},
     {NM_SETTING_BOND_OPTION_FAIL_OVER_MAC,
      {"none", NM_BOND_OPTION_TYPE_BOTH, 0, 2, _option_default_strv_fail_over_mac}},
@@ -344,6 +346,17 @@ _bond_get_option_normalized(NMSettingBond *self, const char *option, gboolean ge
             value = _bond_get_option(self, NM_SETTING_BOND_OPTION_PRIMARY);
             if (!value)
                 value = _bond_get_option(self, NM_SETTING_BOND_OPTION_ACTIVE_SLAVE);
+        } else if (nm_streq(option, NM_SETTING_BOND_OPTION_XMIT_HASH_POLICY)) {
+            if (_nm_utils_ascii_str_to_int64(
+                    _bond_get_option(self, NM_SETTING_BOND_OPTION_BALANCE_SLB),
+                    10,
+                    0,
+                    1,
+                    -1)
+                == 1) {
+                /* balance-slb implies vlan+srcmac */
+                return "5";
+            }
         } else
             value = _bond_get_option(self, option);
 
@@ -360,15 +373,6 @@ _bond_get_option_normalized(NMSettingBond *self, const char *option, gboolean ge
     }
 
     return _bond_get_option_or_default(self, option);
-}
-
-const char *
-nm_setting_bond_get_option_or_default(NMSettingBond *self, const char *option)
-{
-    g_return_val_if_fail(NM_IS_SETTING_BOND(self), NULL);
-    g_return_val_if_fail(option, NULL);
-
-    return _bond_get_option_normalized(self, option, FALSE);
 }
 
 static int
@@ -449,8 +453,8 @@ _ensure_options_idx_cache(NMSettingBondPrivate *priv)
 gboolean
 nm_setting_bond_get_option(NMSettingBond *setting,
                            guint32        idx,
-                           const char **  out_name,
-                           const char **  out_value)
+                           const char   **out_name,
+                           const char   **out_value)
 {
     NMSettingBondPrivate *priv;
     guint                 len;
@@ -515,7 +519,7 @@ validate_ip(const char *name, const char *value, GError **error)
         return FALSE;
     }
     for (i = 0; addrs[i]; i++) {
-        if (!nm_utils_parse_inaddr_bin(AF_INET, addrs[i], NULL, NULL)) {
+        if (!nm_inet_parse_bin(AF_INET, addrs[i], NULL, NULL)) {
             g_set_error(error,
                         NM_CONNECTION_ERROR,
                         NM_CONNECTION_ERROR_INVALID_PROPERTY,
@@ -597,7 +601,7 @@ handle_error:
 /**
  * nm_setting_bond_validate_option:
  * @name: the name of the option to validate
- * @value (allow-none): the value of the option to validate.
+ * @value: (allow-none): the value of the option to validate.
  *
  * Checks whether @name is a valid bond option and @value is a valid value for
  * the @name. If @value is %NULL, the function only validates the option name.
@@ -773,22 +777,83 @@ _nm_setting_bond_get_option_type(NMSettingBond *setting, const char *name)
     return option_meta->opt_type;
 }
 
+#define _opt_value_as_u64(s_bond, opt, v_max)                                            \
+    ({                                                                                   \
+        const OptionMeta *_meta;                                                         \
+        NMSettingBond    *_s_bond = (s_bond);                                            \
+        const char       *_opt    = (opt);                                               \
+        const guint64     _v_max  = (v_max);                                             \
+        const char       *_s;                                                            \
+        guint64           _val;                                                          \
+                                                                                         \
+        nm_assert(NM_IS_SETTING_BOND(_s_bond));                                          \
+        nm_assert(_opt);                                                                 \
+                                                                                         \
+        _meta = _get_option_meta(_opt);                                                  \
+                                                                                         \
+        nm_assert(_meta);                                                                \
+        nm_assert(_meta->opt_type == NM_BOND_OPTION_TYPE_INT);                           \
+        nm_assert(_meta->min < _meta->max);                                              \
+        nm_assert(_meta->max <= _v_max);                                                 \
+        nm_assert(_meta->val);                                                           \
+                                                                                         \
+        _s = nm_setting_bond_get_option_normalized(_s_bond, _opt);                       \
+        if (_s) {                                                                        \
+            _val = _nm_utils_ascii_str_to_uint64(_s, 10, _meta->min, _meta->max, 0);     \
+            /* Note that _s is only a valid integer, if the profile verifies. We require
+             * that the caller only calls these functions on valid profile. */ \
+            nm_assert(errno == 0);                                                       \
+        } else {                                                                         \
+            _val  = 0;                                                                   \
+            errno = EINVAL;                                                              \
+        }                                                                                \
+                                                                                         \
+        _val;                                                                            \
+    })
+
+guint8
+_nm_setting_bond_opt_value_as_u8(NMSettingBond *s_bond, const char *opt)
+{
+    return _opt_value_as_u64(s_bond, opt, G_MAXUINT8);
+}
+
+guint16
+_nm_setting_bond_opt_value_as_u16(NMSettingBond *s_bond, const char *opt)
+{
+    return _opt_value_as_u64(s_bond, opt, G_MAXUINT16);
+}
+
+guint32
+_nm_setting_bond_opt_value_as_u32(NMSettingBond *s_bond, const char *opt)
+{
+    return _opt_value_as_u64(s_bond, opt, G_MAXUINT32);
+}
+
+bool
+_nm_setting_bond_opt_value_as_intbool(NMSettingBond *s_bond, const char *opt)
+{
+    /* This does not parse the value as a boolean string, instead, it requires
+     * that it's a number, either "0" or "1". */
+    return _opt_value_as_u64(s_bond, opt, 1);
+}
+
 /*****************************************************************************/
 
 static gboolean
 verify(NMSetting *setting, NMConnection *connection, GError **error)
 {
-    NMSettingBond *          self = NM_SETTING_BOND(setting);
-    NMSettingBondPrivate *   priv = NM_SETTING_BOND_GET_PRIVATE(setting);
+    NMSettingBond           *self = NM_SETTING_BOND(setting);
+    NMSettingBondPrivate    *priv = NM_SETTING_BOND_GET_PRIVATE(setting);
     int                      miimon;
     int                      arp_interval;
     int                      num_grat_arp;
     int                      num_unsol_na;
     int                      peer_notif_delay;
-    const char *             mode_str;
-    const char *             arp_ip_target = NULL;
-    const char *             lacp_rate;
-    const char *             primary;
+    const char              *mode_str;
+    const char              *arp_ip_target = NULL;
+    const char              *lacp_rate;
+    const char              *primary;
+    const char              *s;
     NMBondMode               bond_mode;
     guint                    i;
     const NMUtilsNamedValue *n;
@@ -1016,6 +1081,32 @@ verify(NMSetting *setting, NMConnection *connection, GError **error)
         return FALSE;
     }
 
+    s = _bond_get_option(self, NM_SETTING_BOND_OPTION_BALANCE_SLB);
+    if (s && _atoi(s) > 0) {
+        if (bond_mode != NM_BOND_MODE_XOR) {
+            g_set_error(error,
+                        NM_CONNECTION_ERROR,
+                        NM_CONNECTION_ERROR_INVALID_PROPERTY,
+                        _("%s requires bond mode \"%s\""),
+                        NM_SETTING_BOND_OPTION_BALANCE_SLB,
+                        "balance-xor");
+            g_prefix_error(error, "%s.%s: ", NM_SETTING_BOND_SETTING_NAME, NM_SETTING_BOND_OPTIONS);
+            return FALSE;
+        }
+        s = _bond_get_option(self, NM_SETTING_BOND_OPTION_XMIT_HASH_POLICY);
+        if (s
+            && _nm_setting_bond_xmit_hash_policy_from_string(s)
+                   != NM_BOND_XMIT_HASH_POLICY_VLAN_SRCMAC) {
+            g_set_error(error,
+                        NM_CONNECTION_ERROR,
+                        NM_CONNECTION_ERROR_INVALID_PROPERTY,
+                        _("%s requires xmit_hash_policy \"vlan+srcmac\""),
+                        NM_SETTING_BOND_OPTION_BALANCE_SLB);
+            g_prefix_error(error, "%s.%s: ", NM_SETTING_BOND_SETTING_NAME, NM_SETTING_BOND_OPTIONS);
+            return FALSE;
+        }
+    }
+
     if (!_nm_connection_verify_required_interface_name(connection, error))
         return FALSE;
 
@@ -1062,7 +1153,7 @@ static gboolean
 options_equal_asym(NMSettingBond *s_bond, NMSettingBond *s_bond2, NMSettingCompareFlags flags)
 {
     GHashTableIter iter;
-    const char *   key, *value;
+    const char    *key, *value;
 
     g_hash_table_iter_init(&iter, NM_SETTING_BOND_GET_PRIVATE(s_bond)->options);
     while (g_hash_table_iter_next(&iter, (gpointer *) &key, (gpointer *) &value)) {
@@ -1090,20 +1181,9 @@ options_equal(NMSettingBond *s_bond, NMSettingBond *s_bond2, NMSettingCompareFla
 }
 
 static NMTernary
-compare_property(const NMSettInfoSetting *sett_info,
-                 guint                    property_idx,
-                 NMConnection *           con_a,
-                 NMSetting *              set_a,
-                 NMConnection *           con_b,
-                 NMSetting *              set_b,
-                 NMSettingCompareFlags    flags)
+compare_fcn_options(_NM_SETT_INFO_PROP_COMPARE_FCN_ARGS _nm_nil)
 {
-    if (nm_streq(sett_info->property_infos[property_idx].name, NM_SETTING_BOND_OPTIONS)) {
-        return (!set_b || options_equal(NM_SETTING_BOND(set_a), NM_SETTING_BOND(set_b), flags));
-    }
-
-    return NM_SETTING_CLASS(nm_setting_bond_parent_class)
-        ->compare_property(sett_info, property_idx, con_a, set_a, con_b, set_b, flags);
+    return (!set_b || options_equal(NM_SETTING_BOND(set_a), NM_SETTING_BOND(set_b), flags));
 }
 
 /*****************************************************************************/
@@ -1180,9 +1260,9 @@ finalize(GObject *object)
 static void
 nm_setting_bond_class_init(NMSettingBondClass *klass)
 {
-    GObjectClass *  object_class        = G_OBJECT_CLASS(klass);
+    GObjectClass   *object_class        = G_OBJECT_CLASS(klass);
     NMSettingClass *setting_class       = NM_SETTING_CLASS(klass);
-    GArray *        properties_override = _nm_sett_info_property_override_create_array();
+    GArray         *properties_override = _nm_sett_info_property_override_create_array();
 
     g_type_class_add_private(klass, sizeof(NMSettingBondPrivate));
 
@@ -1190,11 +1270,10 @@ nm_setting_bond_class_init(NMSettingBondClass *klass)
     object_class->set_property = set_property;
     object_class->finalize     = finalize;
 
-    setting_class->verify           = verify;
-    setting_class->compare_property = compare_property;
+    setting_class->verify = verify;
 
     /**
-     * NMSettingBond:options: (type GHashTable(utf8,utf8)):
+     * NMSettingBond:options: (type GHashTable(utf8,utf8))
      *
      * Dictionary of key/value pairs of bonding options.  Both keys and values
      * must be strings. Option names must contain only alphanumeric characters
@@ -1213,9 +1292,16 @@ nm_setting_bond_class_init(NMSettingBondClass *klass)
         "",
         G_TYPE_HASH_TABLE,
         G_PARAM_READWRITE | NM_SETTING_PARAM_INFERRABLE | G_PARAM_STATIC_STRINGS);
-    _nm_properties_override_gobj(properties_override,
-                                 obj_properties[PROP_OPTIONS],
-                                 &nm_sett_info_propert_type_strdict);
+    _nm_properties_override_gobj(
+        properties_override,
+        obj_properties[PROP_OPTIONS],
+        NM_SETT_INFO_PROPERT_TYPE_GPROP(NM_G_VARIANT_TYPE("a{ss}"),
+                                        .typdata_from_dbus.gprop_fcn = _nm_utils_strdict_from_dbus,
+                                        .typdata_to_dbus.gprop_type =
+                                            NM_SETTING_PROPERTY_TO_DBUS_FCN_GPROP_TYPE_STRDICT,
+                                        .compare_fcn   = compare_fcn_options,
+                                        .from_dbus_fcn = _nm_setting_property_from_dbus_fcn_gprop,
+                                        .from_dbus_is_full = TRUE));
 
     /* ---dbus---
      * property: interface-name
@@ -1227,12 +1313,14 @@ nm_setting_bond_class_init(NMSettingBondClass *klass)
      */
     _nm_properties_override_dbus(properties_override,
                                  "interface-name",
-                                 &nm_sett_info_propert_type_deprecated_interface_name);
+                                 &nm_sett_info_propert_type_deprecated_interface_name,
+                                 .dbus_deprecated = TRUE, );
 
     g_object_class_install_properties(object_class, _PROPERTY_ENUMS_LAST, obj_properties);
 
-    _nm_setting_class_commit_full(setting_class,
-                                  NM_META_SETTING_TYPE_BOND,
-                                  NULL,
-                                  properties_override);
+    _nm_setting_class_commit(setting_class,
+                             NM_META_SETTING_TYPE_BOND,
+                             NULL,
+                             properties_override,
+                             NM_SETT_INFO_PRIVATE_OFFSET_FROM_CLASS);
 }

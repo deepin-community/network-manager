@@ -17,7 +17,7 @@ _ASSERT_enum_values_info(GType type, const NMUtilsEnumValueInfo *value_infos)
 {
 #if NM_MORE_ASSERTS > 5
     nm_auto_unref_gtypeclass GTypeClass *klass = NULL;
-    gs_unref_hashtable GHashTable *ht          = NULL;
+    gs_unref_hashtable GHashTable       *ht    = NULL;
 
     klass = g_type_class_ref(type);
 
@@ -109,7 +109,7 @@ _enum_is_valid_flags_nick(const char *str)
 char *
 _nm_utils_enum_to_str_full(GType                       type,
                            int                         value,
-                           const char *                flags_separator,
+                           const char                 *flags_separator,
                            const NMUtilsEnumValueInfo *value_infos)
 {
     nm_auto_unref_gtypeclass GTypeClass *klass = NULL;
@@ -136,16 +136,20 @@ _nm_utils_enum_to_str_full(GType                       type,
         else
             return g_strdup(enum_value->value_nick);
     } else if (G_IS_FLAGS_CLASS(klass)) {
-        unsigned     uvalue = (unsigned) value;
+        unsigned     uvalue          = (unsigned) value;
+        gboolean     uvalue_was_zero = (uvalue == 0);
         GFlagsValue *flags_value;
         NMStrBuf     strbuf;
 
         flags_separator = flags_separator ?: " ";
 
-        nm_str_buf_init(&strbuf, 16, FALSE);
+        strbuf = NM_STR_BUF_INIT(16, FALSE);
 
         for (; value_infos && value_infos->nick; value_infos++) {
             nm_assert(_enum_is_valid_flags_nick(value_infos->nick));
+
+            if (value_infos->value == 0 && !uvalue_was_zero)
+                continue;
 
             if (uvalue == 0) {
                 if (value_infos->value != 0)
@@ -199,18 +203,18 @@ _find_value_info(const NMUtilsEnumValueInfo *value_infos, const char *needle)
 
 gboolean
 _nm_utils_enum_from_str_full(GType                       type,
-                             const char *                str,
-                             int *                       out_value,
-                             char **                     err_token,
+                             const char                 *str,
+                             int                        *out_value,
+                             char                      **err_token,
                              const NMUtilsEnumValueInfo *value_infos)
 {
     nm_auto_unref_gtypeclass GTypeClass *klass     = NULL;
     gboolean                             ret       = FALSE;
     int                                  value     = 0;
-    gs_free char *                       str_clone = NULL;
-    char *                               s;
+    gs_free char                        *str_clone = NULL;
+    char                                *s;
     gint64                               v64;
-    const NMUtilsEnumValueInfo *         nick;
+    const NMUtilsEnumValueInfo          *nick;
 
     g_return_val_if_fail(str, FALSE);
 
@@ -317,7 +321,7 @@ const char **
 _nm_utils_enum_get_values(GType type, int from, int to)
 {
     GTypeClass *klass;
-    GPtrArray * array;
+    GPtrArray  *array;
     int         i;
     char        sbuf[64];
 

@@ -14,13 +14,16 @@
 
 #include "libnm-client-aux-extern/nm-default-client.h"
 
+#include "nmt-page-wifi.h"
+
 #include <stdlib.h>
 #include <linux/if_ether.h>
 
-#include "nmt-page-wifi.h"
+#include "libnm-core-aux-intern/nm-libnm-core-utils.h"
 #include "nmt-mac-entry.h"
 #include "nmt-mtu-entry.h"
 #include "nmt-password-fields.h"
+#include "nmt-8021x-fields.h"
 
 #include "nm-editor-bindings.h"
 
@@ -31,6 +34,7 @@ G_DEFINE_TYPE(NmtPageWifi, nmt_page_wifi, NMT_TYPE_EDITOR_PAGE_DEVICE)
 
 typedef struct {
     NMSettingWirelessSecurity *s_wsec;
+    NMSetting8021x            *s_8021x;
 
 } NmtPageWifiPrivate;
 
@@ -56,16 +60,22 @@ static NmtNewtPopupEntry wifi_band[] = {{NC_("Wi-Fi", "Automatic"), NULL},
                                         {N_("B/G (2.4 GHz)"), "bg"},
                                         {NULL, NULL}};
 
-static NmtNewtPopupEntry wifi_security[] = {{NC_("Wi-Fi security", "None"), "none"},
-                                            {N_("WPA & WPA2 Personal"), "wpa-personal"},
-                                            {N_("WPA3 Personal"), "wpa3-personal"},
-                                            {N_("WPA & WPA2 Enterprise"), "wpa-enterprise"},
-                                            {N_("WEP 40/128-bit Key (Hex or ASCII)"), "wep-key"},
-                                            {N_("WEP 128-bit Passphrase"), "wep-passphrase"},
-                                            {N_("Dynamic WEP (802.1x)"), "dynamic-wep"},
-                                            {N_("LEAP"), "leap"},
-                                            {N_("Enhanced Open (OWE)"), "owe"},
-                                            {NULL, NULL}};
+static struct {
+    NmtNewtPopupEntry common[6];
+    NmtNewtPopupEntry wep[4];
+} wifi_security = {
+    {{NC_("Wi-Fi security", "None"), "none"},
+     {N_("WPA & WPA2 Personal"), "wpa-personal"},
+     {N_("WPA3 Personal"), "wpa3-personal"},
+     {N_("WPA & WPA2 Enterprise"), "wpa-enterprise"},
+     {N_("LEAP"), "leap"},
+     {N_("Enhanced Open (OWE)"), "owe"}},
+    {{N_("WEP 40/128-bit Key (Hex or ASCII)"), "wep-key"},
+     {N_("WEP 128-bit Passphrase"), "wep-passphrase"},
+     {N_("Dynamic WEP (802.1x)"), "dynamic-wep"},
+     {NULL, NULL}},
+
+};
 
 static NmtNewtPopupEntry wep_index[] = {{NC_("WEP key index", "1 (Default)"), "1"},
                                         {NC_("WEP key index", "2"), "2"},
@@ -78,9 +88,9 @@ static NmtNewtPopupEntry wep_auth[] = {{N_("Open System"), "open"},
                                        {NULL, NULL}};
 
 static gboolean
-mode_transform_to_band_visibility(GBinding *    binding,
+mode_transform_to_band_visibility(GBinding     *binding,
                                   const GValue *source_value,
-                                  GValue *      target_value,
+                                  GValue       *target_value,
                                   gpointer      user_data)
 {
     if (!g_strcmp0(g_value_get_string(source_value), NM_SETTING_WIRELESS_MODE_INFRA))
@@ -91,9 +101,9 @@ mode_transform_to_band_visibility(GBinding *    binding,
 }
 
 static gboolean
-band_transform_to_channel_visibility(GBinding *    binding,
+band_transform_to_channel_visibility(GBinding     *binding,
                                      const GValue *source_value,
-                                     GValue *      target_value,
+                                     GValue       *target_value,
                                      gpointer      user_data)
 {
     g_value_set_boolean(target_value, g_value_get_string(source_value) != NULL);
@@ -101,13 +111,13 @@ band_transform_to_channel_visibility(GBinding *    binding,
 }
 
 static gboolean
-ssid_transform_to_entry(GBinding *    binding,
+ssid_transform_to_entry(GBinding     *binding,
                         const GValue *source_value,
-                        GValue *      target_value,
+                        GValue       *target_value,
                         gpointer      user_data)
 {
     GBytes *ssid;
-    char *  utf8;
+    char   *utf8;
 
     ssid = g_value_get_boxed(source_value);
     if (ssid)
@@ -119,15 +129,15 @@ ssid_transform_to_entry(GBinding *    binding,
 }
 
 static gboolean
-ssid_transform_from_entry(GBinding *    binding,
+ssid_transform_from_entry(GBinding     *binding,
                           const GValue *source_value,
-                          GValue *      target_value,
+                          GValue       *target_value,
                           gpointer      user_data)
 {
     NMSettingWireless *s_wireless = user_data;
-    const char *       text;
-    GBytes *           old_ssid, *ssid;
-    char *             utf8;
+    const char        *text;
+    GBytes            *old_ssid, *ssid;
+    char              *utf8;
 
     text = g_value_get_string(source_value);
 
@@ -151,26 +161,22 @@ ssid_transform_from_entry(GBinding *    binding,
 static void
 nmt_page_wifi_constructed(GObject *object)
 {
-    NmtPageWifiPrivate *       priv = NMT_PAGE_WIFI_GET_PRIVATE(object);
-    NmtPageWifi *              wifi = NMT_PAGE_WIFI(object);
-    NmtDeviceEntry *           deventry;
-    NmtEditorSection *         section;
-    NmtEditorGrid *            grid;
-    NMSettingWireless *        s_wireless;
+    NmtPageWifiPrivate        *priv = NMT_PAGE_WIFI_GET_PRIVATE(object);
+    NmtPageWifi               *wifi = NMT_PAGE_WIFI(object);
+    NmtDeviceEntry            *deventry;
+    NmtEditorSection          *section;
+    NmtEditorGrid             *grid;
+    NMSettingWireless         *s_wireless;
     NMSettingWirelessSecurity *s_wsec;
-    NmtNewtWidget *            widget, *hbox, *subgrid;
-    NmtNewtWidget *            mode, *band, *security, *entry;
-    NmtNewtStack *             stack;
-    NMConnection *             conn;
+    NMSetting8021x            *s_8021x;
+    NmtNewtWidget             *widget, *hbox, *subgrid;
+    NmtNewtWidget             *mode, *band, *security, *entry;
+    NmtNewtStack              *stack;
+    NMConnection              *conn;
 
     conn       = nmt_editor_page_get_connection(NMT_EDITOR_PAGE(wifi));
-    s_wireless = nm_connection_get_setting_wireless(conn);
-    if (!s_wireless) {
-        nm_connection_add_setting(conn, nm_setting_wireless_new());
-        s_wireless = nm_connection_get_setting_wireless(conn);
-    }
-
-    s_wsec = nm_connection_get_setting_wireless_security(conn);
+    s_wireless = _nm_connection_ensure_setting(conn, NM_TYPE_SETTING_WIRELESS);
+    s_wsec     = nm_connection_get_setting_wireless_security(conn);
     if (!s_wsec) {
         /* It makes things simpler if we always have a
          * NMSettingWirelessSecurity; we'll hold a ref on one, and add
@@ -178,7 +184,14 @@ nmt_page_wifi_constructed(GObject *object)
          */
         s_wsec = NM_SETTING_WIRELESS_SECURITY(nm_setting_wireless_security_new());
     }
-    priv->s_wsec = g_object_ref_sink(s_wsec);
+    priv->s_wsec = g_object_ref(s_wsec);
+
+    s_8021x = nm_connection_get_setting_802_1x(conn);
+    if (!s_8021x) {
+        s_8021x = NM_SETTING_802_1X(nm_setting_802_1x_new());
+        nm_setting_802_1x_add_eap_method(s_8021x, "TLS");
+    }
+    priv->s_8021x = g_object_ref(s_8021x);
 
     deventry = nmt_editor_page_device_get_device_entry(NMT_EDITOR_PAGE_DEVICE(object));
     g_object_bind_property(s_wireless,
@@ -252,7 +265,7 @@ nmt_page_wifi_constructed(GObject *object)
 
     nmt_editor_grid_append(grid, NULL, nmt_newt_separator_new(), NULL);
 
-    widget = nmt_newt_popup_new(wifi_security);
+    widget = nmt_newt_popup_new((NmtNewtPopupEntry *) &wifi_security);
     nmt_editor_grid_append(grid, _("Security"), widget, NULL);
     security = widget;
 
@@ -276,9 +289,7 @@ nmt_page_wifi_constructed(GObject *object)
     nmt_newt_stack_add(stack, "wpa3-personal", subgrid);
 
     /* "wpa-enterprise" */
-    // FIXME
-    widget = nmt_newt_label_new(_("(No support for wpa-enterprise yet...)"));
-    nmt_newt_stack_add(stack, "wpa-enterprise", widget);
+    nmt_newt_stack_add(stack, "wpa-enterprise", nmt_8021x_fields_new(s_8021x, FALSE));
 
     /* wep-key */
     subgrid = nmt_editor_grid_new();
@@ -352,6 +363,7 @@ nmt_page_wifi_constructed(GObject *object)
     g_object_bind_property(security, "active-id", stack, "active-id", G_BINDING_SYNC_CREATE);
     nm_editor_bind_wireless_security_method(conn,
                                             s_wsec,
+                                            s_8021x,
                                             security,
                                             "active-id",
                                             G_BINDING_BIDIRECTIONAL | G_BINDING_SYNC_CREATE);
@@ -406,4 +418,9 @@ nmt_page_wifi_class_init(NmtPageWifiClass *wifi_class)
 
     object_class->constructed = nmt_page_wifi_constructed;
     object_class->finalize    = nmt_page_wifi_finalize;
+
+    if (!getenv("NM_ALLOW_INSECURE_WEP")) {
+        wifi_security.wep[0].label = NULL;
+        wifi_security.wep[0].id    = NULL;
+    }
 }

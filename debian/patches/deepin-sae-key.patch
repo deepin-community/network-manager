@@ -2,7 +2,7 @@ Index: network-manager/src/core/devices/wifi/nm-device-wifi.c
 ===================================================================
 --- network-manager.orig/src/core/devices/wifi/nm-device-wifi.c
 +++ network-manager/src/core/devices/wifi/nm-device-wifi.c
-@@ -2311,20 +2311,17 @@ need_new_wpa_psk(NMDeviceWifi *
+@@ -2344,20 +2344,17 @@ need_new_wpa_psk(NMDeviceWifi
  
      g_return_val_if_fail(connection, FALSE);
  

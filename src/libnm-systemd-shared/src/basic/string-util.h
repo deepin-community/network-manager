@@ -10,26 +10,23 @@
 #include "string-util-fundamental.h"
 
 /* What is interpreted as whitespace? */
-#define WHITESPACE        " \t\n\r"
-#define NEWLINE           "\n\r"
-#define QUOTES            "\"\'"
-#define COMMENTS          "#;"
-#define GLOB_CHARS        "*?["
-#define DIGITS            "0123456789"
-#define LOWERCASE_LETTERS "abcdefghijklmnopqrstuvwxyz"
-#define UPPERCASE_LETTERS "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
-#define LETTERS           LOWERCASE_LETTERS UPPERCASE_LETTERS
-#define ALPHANUMERICAL    LETTERS DIGITS
-#define HEXDIGITS         DIGITS "abcdefABCDEF"
+#define WHITESPACE          " \t\n\r"
+#define NEWLINE             "\n\r"
+#define QUOTES              "\"\'"
+#define COMMENTS            "#;"
+#define GLOB_CHARS          "*?["
+#define DIGITS              "0123456789"
+#define LOWERCASE_LETTERS   "abcdefghijklmnopqrstuvwxyz"
+#define UPPERCASE_LETTERS   "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+#define LETTERS             LOWERCASE_LETTERS UPPERCASE_LETTERS
+#define ALPHANUMERICAL      LETTERS DIGITS
+#define HEXDIGITS           DIGITS "abcdefABCDEF"
+#define LOWERCASE_HEXDIGITS DIGITS "abcdef"
 
 static inline char* strstr_ptr(const char *haystack, const char *needle) {
         if (!haystack || !needle)
                 return NULL;
         return strstr(haystack, needle);
-}
-
-static inline const char* strempty(const char *s) {
-        return s ?: "";
 }
 
 static inline const char* strnull(const char *s) {
@@ -58,6 +55,10 @@ static inline const char* enable_disable(bool b) {
 
 static inline const char *empty_to_null(const char *p) {
         return isempty(p) ? NULL : p;
+}
+
+static inline const char *empty_to_na(const char *p) {
+        return isempty(p) ? "n/a" : p;
 }
 
 static inline const char *empty_to_dash(const char *str) {
@@ -151,6 +152,8 @@ char *cellescape(char *buf, size_t len, const char *s);
 
 char* strshorten(char *s, size_t l);
 
+int strgrowpad0(char **s, size_t l);
+
 char *strreplace(const char *text, const char *old_string, const char *new_string);
 
 char *strip_tab_ansi(char **ibuf, size_t *_isz, size_t highlight[2]);
@@ -168,42 +171,22 @@ int split_pair(const char *s, const char *sep, char **l, char **r);
 
 int free_and_strdup(char **p, const char *s);
 static inline int free_and_strdup_warn(char **p, const char *s) {
-        if (free_and_strdup(p, s) < 0)
+        int r;
+
+        r = free_and_strdup(p, s);
+        if (r < 0)
                 return log_oom();
-        return 0;
+        return r;
 }
 int free_and_strndup(char **p, const char *s, size_t l);
 
 bool string_is_safe(const char *p) _pure_;
-
-static inline size_t strlen_ptr(const char *s) {
-        if (!s)
-                return 0;
-
-        return strlen(s);
-}
 
 DISABLE_WARNING_STRINGOP_TRUNCATION;
 static inline void strncpy_exact(char *buf, const char *src, size_t buf_len) {
         strncpy(buf, src, buf_len);
 }
 REENABLE_WARNING;
-
-/* Like startswith(), but operates on arbitrary memory blocks */
-static inline void *memory_startswith(const void *p, size_t sz, const char *token) {
-        assert(token);
-
-        size_t n = strlen(token);
-        if (sz < n)
-                return NULL;
-
-        assert(p);
-
-        if (memcmp(p, token, n) != 0)
-                return NULL;
-
-        return (uint8_t*) p + n;
-}
 
 /* Like startswith_no_case(), but operates on arbitrary memory blocks.
  * It works only for ASCII strings.
@@ -242,3 +225,9 @@ int string_contains_word_strv(const char *string, const char *separators, char *
 static inline int string_contains_word(const char *string, const char *separators, const char *word) {
         return string_contains_word_strv(string, separators, STRV_MAKE(word), NULL);
 }
+
+bool streq_skip_trailing_chars(const char *s1, const char *s2, const char *ok);
+
+char *string_replace_char(char *str, char old_char, char new_char);
+
+size_t strspn_from_end(const char *str, const char *accept);

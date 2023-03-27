@@ -14,7 +14,7 @@
 
 /* Hacks necessary to #include wireless.h; yay for WEXT */
 #ifndef __user
-    #define __user
+#define __user
 #endif
 #include <sys/types.h>
 #include <linux/types.h>
@@ -90,7 +90,7 @@ dispose(GObject *object)
 {
     NMWifiUtilsWext *wext = NM_WIFI_UTILS_WEXT(object);
 
-    wext->fd = nm_close(wext->fd);
+    nm_clear_fd(&wext->fd);
 }
 
 static gboolean
@@ -252,13 +252,15 @@ static guint32
 wifi_wext_find_freq(NMWifiUtils *data, const guint32 *freqs)
 {
     NMWifiUtilsWext *wext = (NMWifiUtilsWext *) data;
-    int              i;
+    guint            i;
+    guint            j;
 
-    for (i = 0; i < wext->num_freqs; i++) {
-        while (*freqs) {
-            if (wext->freqs[i] == *freqs)
-                return *freqs;
-            freqs++;
+    /* It's important to check the values in the order of @freqs, because
+     * that array might be sorted to contain preferred frequencies first. */
+    for (j = 0; freqs[j] != 0; j++) {
+        for (i = 0; i < wext->num_freqs; i++) {
+            if (wext->freqs[i] == freqs[j])
+                return freqs[j];
         }
     }
     return 0;
@@ -427,7 +429,7 @@ wext_qual_to_percent(const struct iw_quality *qual, const struct iw_quality *max
 static int
 wifi_wext_get_qual(NMWifiUtils *data)
 {
-    NMWifiUtilsWext *    wext = (NMWifiUtilsWext *) data;
+    NMWifiUtilsWext     *wext = (NMWifiUtilsWext *) data;
     struct iwreq         wrq;
     struct iw_statistics stats;
     char                 ifname[IFNAMSIZ];
@@ -455,8 +457,8 @@ wifi_wext_get_qual(NMWifiUtils *data)
 static gboolean
 wifi_wext_get_station(NMWifiUtils *data,
                       NMEtherAddr *out_bssid,
-                      int *        out_quality,
-                      guint32 *    out_rate)
+                      int         *out_quality,
+                      guint32     *out_rate)
 {
     NMEtherAddr local_addr;
 
@@ -588,9 +590,9 @@ wext_can_scan_ifname(NMWifiUtilsWext *wext, const char *ifname)
 
 static gboolean
 wext_get_range_ifname(NMWifiUtilsWext *wext,
-                      const char *     ifname,
+                      const char      *ifname,
                       struct iw_range *range,
-                      guint32 *        response_len)
+                      guint32         *response_len)
 {
     int          i       = 26;
     gboolean     success = FALSE;
@@ -698,7 +700,7 @@ nm_wifi_utils_wext_init(NMWifiUtilsWext *self)
 static void
 nm_wifi_utils_wext_class_init(NMWifiUtilsWextClass *klass)
 {
-    GObjectClass *    object_class     = G_OBJECT_CLASS(klass);
+    GObjectClass     *object_class     = G_OBJECT_CLASS(klass);
     NMWifiUtilsClass *wifi_utils_class = NM_WIFI_UTILS_CLASS(klass);
 
     object_class->dispose = dispose;
@@ -717,7 +719,7 @@ nm_wifi_utils_wext_class_init(NMWifiUtilsWextClass *klass)
 NMWifiUtils *
 nm_wifi_utils_wext_new(int ifindex, gboolean check_scan)
 {
-    NMWifiUtilsWext *               wext;
+    NMWifiUtilsWext                *wext;
     struct iw_range                 range;
     guint32                         response_len = 0;
     struct iw_range_with_scan_capa *scan_capa_range;

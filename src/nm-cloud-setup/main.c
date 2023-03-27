@@ -16,7 +16,7 @@
 /*****************************************************************************/
 
 typedef struct {
-    GMainLoop *   main_loop;
+    GMainLoop    *main_loop;
     GCancellable *cancellable;
     NMCSProvider *provider_result;
     guint         detect_count;
@@ -26,9 +26,9 @@ static void
 _provider_detect_cb(GObject *source, GAsyncResult *result, gpointer user_data)
 {
     gs_unref_object NMCSProvider *provider = NMCS_PROVIDER(source);
-    gs_free_error GError *error            = NULL;
-    ProviderDetectData *  dd;
-    gboolean              success;
+    gs_free_error GError         *error    = NULL;
+    ProviderDetectData           *dd;
+    gboolean                      success;
 
     success = nmcs_provider_detect_finish(provider, result, &error);
 
@@ -75,14 +75,14 @@ _provider_detect_sigterm_cb(GCancellable *source, gpointer user_data)
 static NMCSProvider *
 _provider_detect(GCancellable *sigterm_cancellable)
 {
-    nm_auto_unref_gmainloop GMainLoop *main_loop = g_main_loop_new(NULL, FALSE);
-    gs_unref_object GCancellable *cancellable    = g_cancellable_new();
-    gs_unref_object NMHttpClient *http_client    = NULL;
-    ProviderDetectData            dd             = {
-        .cancellable     = cancellable,
-        .main_loop       = main_loop,
-        .detect_count    = 0,
-        .provider_result = NULL,
+    nm_auto_unref_gmainloop GMainLoop *main_loop   = g_main_loop_new(NULL, FALSE);
+    gs_unref_object GCancellable      *cancellable = g_cancellable_new();
+    gs_unref_object NMHttpClient      *http_client = NULL;
+    ProviderDetectData                 dd          = {
+                                 .cancellable     = cancellable,
+                                 .main_loop       = main_loop,
+                                 .detect_count    = 0,
+                                 .provider_result = NULL,
     };
     const GType gtypes[] = {
         NMCS_TYPE_PROVIDER_EC2,
@@ -127,17 +127,17 @@ static char **
 _nmc_get_hwaddrs(NMClient *nmc)
 {
     gs_unref_ptrarray GPtrArray *hwaddrs = NULL;
-    const GPtrArray *            devices;
-    char **                      hwaddrs_v;
-    gs_free char *               str = NULL;
+    const GPtrArray             *devices;
+    char                       **hwaddrs_v;
+    gs_free char                *str = NULL;
     guint                        i;
 
     devices = nm_client_get_devices(nmc);
 
     for (i = 0; i < devices->len; i++) {
-        NMDevice *  device = devices->pdata[i];
+        NMDevice   *device = devices->pdata[i];
         const char *hwaddr;
-        char *      s;
+        char       *s;
 
         if (!NM_IS_DEVICE_ETHERNET(device))
             continue;
@@ -180,8 +180,8 @@ _nmc_get_device_by_hwaddr(NMClient *nmc, const char *hwaddr)
     devices = nm_client_get_devices(nmc);
 
     for (i = 0; i < devices->len; i++) {
-        NMDevice *    device = devices->pdata[i];
-        const char *  hwaddr_dev;
+        NMDevice     *device = devices->pdata[i];
+        const char   *hwaddr_dev;
         gs_free char *s = NULL;
 
         if (!NM_IS_DEVICE_ETHERNET(device))
@@ -202,16 +202,16 @@ _nmc_get_device_by_hwaddr(NMClient *nmc, const char *hwaddr)
 /*****************************************************************************/
 
 typedef struct {
-    GMainLoop *                  main_loop;
+    GMainLoop                   *main_loop;
     NMCSProviderGetConfigResult *result;
 } GetConfigData;
 
 static void
 _get_config_cb(GObject *source, GAsyncResult *res, gpointer user_data)
 {
-    GetConfigData *                              data                                = user_data;
+    GetConfigData                                                            *data   = user_data;
     nm_auto_free_nmcs_provider_get_config_result NMCSProviderGetConfigResult *result = NULL;
-    gs_free_error GError *error                                                      = NULL;
+    gs_free_error GError                                                     *error  = NULL;
 
     result = nmcs_provider_get_config_finish(NMCS_PROVIDER(source), res, &error);
 
@@ -230,7 +230,7 @@ _get_config(GCancellable *sigterm_cancellable, NMCSProvider *provider, NMClient 
 {
     nm_auto_unref_gmainloop GMainLoop *main_loop = g_main_loop_new(NULL, FALSE);
     GetConfigData                      data      = {
-        .main_loop = main_loop,
+                                  .main_loop = main_loop,
     };
     gs_strfreev char **hwaddrs = NULL;
 
@@ -251,52 +251,62 @@ _get_config(GCancellable *sigterm_cancellable, NMCSProvider *provider, NMClient 
 /*****************************************************************************/
 
 static gboolean
-_nmc_skip_connection(NMConnection *connection)
+_nmc_skip_connection_by_user_data(NMConnection *connection)
 {
     NMSettingUser *s_user;
-    const char *   v;
-
-    s_user = NM_SETTING_USER(nm_connection_get_setting(connection, NM_TYPE_SETTING_USER));
-    if (!s_user)
-        return FALSE;
+    const char    *v;
 
 #define USER_TAG_SKIP "org.freedesktop.nm-cloud-setup.skip"
 
     nm_assert(nm_setting_user_check_key(USER_TAG_SKIP, NULL));
 
-    v = nm_setting_user_get_data(s_user, USER_TAG_SKIP);
-    return _nm_utils_ascii_str_to_bool(v, FALSE);
+    s_user = NM_SETTING_USER(nm_connection_get_setting(connection, NM_TYPE_SETTING_USER));
+    if (s_user) {
+        v = nm_setting_user_get_data(s_user, USER_TAG_SKIP);
+        if (_nm_utils_ascii_str_to_bool(v, FALSE))
+            return TRUE;
+    }
+
+    return FALSE;
 }
 
 static gboolean
-_nmc_mangle_connection(NMDevice *                            device,
-                       NMConnection *                        connection,
-                       const NMCSProviderGetConfigResult *   result,
-                       const NMCSProviderGetConfigIfaceData *config_data,
-                       gboolean *                            out_skipped_single_addr,
-                       gboolean *                            out_changed)
+_nmc_skip_connection_by_type(NMConnection *connection)
 {
-    NMSettingIPConfig * s_ip;
-    NMActiveConnection *ac;
-    NMConnection *      remote_connection;
-    NMSettingIPConfig * remote_s_ip = NULL;
-    gsize               i;
-    gboolean            addrs_changed       = FALSE;
-    gboolean            rules_changed       = FALSE;
-    gboolean            routes_changed      = FALSE;
-    gs_unref_ptrarray GPtrArray *addrs_new  = NULL;
-    gs_unref_ptrarray GPtrArray *rules_new  = NULL;
-    gs_unref_ptrarray GPtrArray *routes_new = NULL;
+    if (!nm_streq0(nm_connection_get_connection_type(connection), NM_SETTING_WIRED_SETTING_NAME))
+        return TRUE;
+
+    if (!nm_connection_get_setting_ip4_config(connection))
+        return TRUE;
+
+    return FALSE;
+}
+
+static void
+_nmc_mangle_connection(NMDevice                             *device,
+                       NMConnection                         *connection,
+                       const NMCSProviderGetConfigResult    *result,
+                       const NMCSProviderGetConfigIfaceData *config_data,
+                       gboolean                             *out_skipped_single_addr,
+                       gboolean                             *out_changed)
+{
+    NMSettingIPConfig           *s_ip;
+    NMActiveConnection          *ac;
+    NMConnection                *remote_connection;
+    NMSettingIPConfig           *remote_s_ip = NULL;
+    gsize                        i;
+    gboolean                     addrs_changed  = FALSE;
+    gboolean                     rules_changed  = FALSE;
+    gboolean                     routes_changed = FALSE;
+    gs_unref_ptrarray GPtrArray *addrs_new      = NULL;
+    gs_unref_ptrarray GPtrArray *rules_new      = NULL;
+    gs_unref_ptrarray GPtrArray *routes_new     = NULL;
 
     NM_SET_OUT(out_skipped_single_addr, FALSE);
     NM_SET_OUT(out_changed, FALSE);
 
-    if (!nm_streq0(nm_connection_get_connection_type(connection), NM_SETTING_WIRED_SETTING_NAME))
-        return FALSE;
-
     s_ip = nm_connection_get_setting_ip4_config(connection);
-    if (!s_ip)
-        return FALSE;
+    nm_assert(NM_IS_SETTING_IP4_CONFIG(s_ip));
 
     if ((ac = nm_device_get_active_connection(device))
         && (remote_connection = NM_CONNECTION(nm_active_connection_get_connection(ac))))
@@ -337,13 +347,12 @@ _nmc_mangle_connection(NMDevice *                            device,
          * We don't need to configure policy routing in this case. */
         NM_SET_OUT(out_skipped_single_addr, TRUE);
     } else if (config_data->has_ipv4s && config_data->has_cidr) {
-        gs_unref_hashtable GHashTable *unique_subnets =
-            g_hash_table_new(nm_direct_hash, g_direct_equal);
-        NMIPAddress *    addr_entry;
-        NMIPRoute *      route_entry;
-        NMIPRoutingRule *rule_entry;
-        in_addr_t        gateway;
-        char             sbuf[NM_UTILS_INET_ADDRSTRLEN];
+        gs_unref_hashtable GHashTable *unique_subnets = g_hash_table_new(nm_direct_hash, NULL);
+        NMIPAddress                   *addr_entry;
+        NMIPRoute                     *route_entry;
+        NMIPRoutingRule               *rule_entry;
+        in_addr_t                      gateway;
+        char                           sbuf[NM_INET_ADDRSTRLEN];
 
         for (i = 0; i < config_data->ipv4s_len; i++) {
             addr_entry = nm_ip_address_new_binary(AF_INET,
@@ -357,8 +366,8 @@ _nmc_mangle_connection(NMDevice *                            device,
         if (config_data->has_gateway && config_data->gateway) {
             gateway = config_data->gateway;
         } else {
-            gateway = nm_utils_ip4_address_clear_host_address(config_data->cidr_addr,
-                                                              config_data->cidr_prefix);
+            gateway =
+                nm_ip4_addr_clear_host_address(config_data->cidr_addr, config_data->cidr_prefix);
             if (config_data->cidr_prefix < 32)
                 ((guint8 *) &gateway)[3] += 1;
         }
@@ -366,7 +375,7 @@ _nmc_mangle_connection(NMDevice *                            device,
         for (i = 0; i < config_data->ipv4s_len; i++) {
             in_addr_t a = config_data->ipv4s_arr[i];
 
-            a = nm_utils_ip4_address_clear_host_address(a, config_data->cidr_prefix);
+            a = nm_ip4_addr_clear_host_address(a, config_data->cidr_prefix);
 
             G_STATIC_ASSERT_EXPR(sizeof(gsize) >= sizeof(in_addr_t));
             if (g_hash_table_add(unique_subnets, GSIZE_TO_POINTER(a))) {
@@ -381,7 +390,7 @@ _nmc_mangle_connection(NMDevice *                            device,
             rule_entry = nm_ip_routing_rule_new(AF_INET);
             nm_ip_routing_rule_set_priority(rule_entry, 30200 + config_data->iface_idx);
             nm_ip_routing_rule_set_from(rule_entry,
-                                        _nm_utils_inet4_ntop(config_data->ipv4s_arr[i], sbuf),
+                                        nm_inet4_ntop(config_data->ipv4s_arr[i], sbuf),
                                         32);
             nm_ip_routing_rule_set_table(rule_entry, 30200 + config_data->iface_idx);
             nm_assert(nm_ip_routing_rule_validate(rule_entry, NULL));
@@ -405,7 +414,7 @@ _nmc_mangle_connection(NMDevice *                            device,
             rule_entry = nm_ip_routing_rule_new(AF_INET);
             nm_ip_routing_rule_set_priority(rule_entry, 30400 + config_data->iface_idx);
             nm_ip_routing_rule_set_from(rule_entry,
-                                        _nm_utils_inet4_ntop(config_data->ipv4s_arr[i], sbuf),
+                                        nm_inet4_ntop(config_data->ipv4s_arr[i], sbuf),
                                         32);
             nm_ip_routing_rule_set_table(rule_entry, 30400 + config_data->iface_idx);
             nm_assert(nm_ip_routing_rule_validate(rule_entry, NULL));
@@ -429,28 +438,28 @@ _nmc_mangle_connection(NMDevice *                            device,
                                                        rules_new->len);
 
     NM_SET_OUT(out_changed, addrs_changed || routes_changed || rules_changed);
-    return TRUE;
 }
 
 /*****************************************************************************/
 
 static gboolean
-_config_one(GCancellable *                     sigterm_cancellable,
-            NMClient *                         nmc,
+_config_one(GCancellable                      *sigterm_cancellable,
+            NMClient                          *nmc,
             const NMCSProviderGetConfigResult *result,
             guint                              idx)
 {
-    const NMCSProviderGetConfigIfaceData *config_data = result->iface_datas_arr[idx];
-    const char *                          hwaddr      = config_data->hwaddr;
-    gs_unref_object NMDevice *device                  = NULL;
-    gs_unref_object NMConnection *applied_connection  = NULL;
-    guint64                       applied_version_id;
-    gs_free_error GError *error = NULL;
-    gboolean              changed;
-    gboolean              skipped_single_addr;
-    gboolean              version_id_changed;
-    guint                 try_count;
-    gboolean              any_changes = FALSE;
+    const NMCSProviderGetConfigIfaceData *config_data        = result->iface_datas_arr[idx];
+    const char                           *hwaddr             = config_data->hwaddr;
+    gs_unref_object NMDevice             *device             = NULL;
+    gs_unref_object NMConnection         *applied_connection = NULL;
+    guint64                               applied_version_id;
+    gs_free_error GError                 *error = NULL;
+    gboolean                              changed;
+    gboolean                              skipped_single_addr;
+    gboolean                              version_id_changed;
+    guint                                 try_count;
+    gboolean                              any_changes = FALSE;
+    gboolean                              maybe_no_preserved_external_ip;
 
     g_main_context_iteration(NULL, FALSE);
 
@@ -484,6 +493,8 @@ _config_one(GCancellable *                     sigterm_cancellable,
     try_count = 0;
 
 try_again:
+    g_clear_object(&applied_connection);
+    g_clear_error(&error);
 
     applied_connection = nmcs_device_get_applied_connection(device,
                                                             sigterm_cancellable,
@@ -497,22 +508,24 @@ try_again:
         return any_changes;
     }
 
-    if (_nmc_skip_connection(applied_connection)) {
+    if (_nmc_skip_connection_by_user_data(applied_connection)) {
         _LOGD("config device %s: skip applied connection due to user data %s",
               hwaddr,
               USER_TAG_SKIP);
         return any_changes;
     }
 
-    if (!_nmc_mangle_connection(device,
-                                applied_connection,
-                                result,
-                                config_data,
-                                &skipped_single_addr,
-                                &changed)) {
+    if (_nmc_skip_connection_by_type(applied_connection)) {
         _LOGD("config device %s: device has no suitable applied connection. Skip", hwaddr);
         return any_changes;
     }
+
+    _nmc_mangle_connection(device,
+                           applied_connection,
+                           result,
+                           config_data,
+                           &skipped_single_addr,
+                           &changed);
 
     if (!changed) {
         if (skipped_single_addr) {
@@ -539,16 +552,21 @@ try_again:
     /* we are about to call Reapply(). Even if that fails, it counts as if we changed something. */
     any_changes = TRUE;
 
+    /* "preserve-external-ip" flag was only introduced in 1.41.6 (but maybe backported!).
+     * If we run 1.41.6+, we are sure that it's gonna work. Otherwise, we take into account
+     * that the call might fail due to the invalid flag and we retry. */
+    maybe_no_preserved_external_ip =
+        (nmc_client_has_version_info_v(nmc) < NM_ENCODE_VERSION(1, 41, 6));
+
     if (!nmcs_device_reapply(device,
                              sigterm_cancellable,
                              applied_connection,
                              applied_version_id,
+                             maybe_no_preserved_external_ip,
                              &version_id_changed,
                              &error)) {
         if (version_id_changed && try_count < 5) {
             _LOGD("config device %s: applied connection changed in the meantime. Retry...", hwaddr);
-            g_clear_object(&applied_connection);
-            g_clear_error(&error);
             try_count++;
             goto try_again;
         }
@@ -572,8 +590,8 @@ try_again:
 }
 
 static gboolean
-_config_all(GCancellable *                     sigterm_cancellable,
-            NMClient *                         nmc,
+_config_all(GCancellable                      *sigterm_cancellable,
+            NMClient                          *nmc,
             const NMCSProviderGetConfigResult *result)
 {
     gboolean any_changes = FALSE;
@@ -607,12 +625,12 @@ sigterm_handler(gpointer user_data)
 int
 main(int argc, const char *const *argv)
 {
-    gs_unref_object GCancellable *    sigterm_cancellable                            = NULL;
+    gs_unref_object GCancellable              *sigterm_cancellable                   = NULL;
     nm_auto_destroy_and_unref_gsource GSource *sigterm_source                        = NULL;
-    gs_unref_object NMCSProvider *provider                                           = NULL;
-    gs_unref_object NMClient *                   nmc                                 = NULL;
+    gs_unref_object NMCSProvider              *provider                              = NULL;
+    gs_unref_object NMClient                  *nmc                                   = NULL;
     nm_auto_free_nmcs_provider_get_config_result NMCSProviderGetConfigResult *result = NULL;
-    gs_free_error GError *error                                                      = NULL;
+    gs_free_error GError                                                     *error  = NULL;
 
     _nm_logging_enabled_init(g_getenv(NMCS_ENV_VARIABLE("NM_CLOUD_SETUP_LOG")));
 
@@ -625,12 +643,7 @@ main(int argc, const char *const *argv)
 
     sigterm_cancellable = g_cancellable_new();
 
-    sigterm_source = nm_g_source_attach(nm_g_unix_signal_source_new(SIGTERM,
-                                                                    G_PRIORITY_DEFAULT,
-                                                                    sigterm_handler,
-                                                                    sigterm_cancellable,
-                                                                    NULL),
-                                        NULL);
+    sigterm_source = nm_g_unix_signal_add_source(SIGTERM, sigterm_handler, sigterm_cancellable);
 
     provider = _provider_detect(sigterm_cancellable);
     if (!provider)

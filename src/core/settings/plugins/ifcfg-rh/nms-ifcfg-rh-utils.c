@@ -17,7 +17,7 @@
 /*****************************************************************************/
 
 gboolean
-nms_ifcfg_rh_utils_parse_unhandled_spec(const char * unhandled_spec,
+nms_ifcfg_rh_utils_parse_unhandled_spec(const char  *unhandled_spec,
                                         const char **out_unmanaged_spec,
                                         const char **out_unrecognized_spec)
 {
@@ -108,7 +108,7 @@ char *
 utils_cert_path(const char *parent, const char *suffix, const char *extension)
 {
     gs_free char *dir = NULL;
-    const char *  name;
+    const char   *name;
 
     g_return_val_if_fail(parent, NULL);
     g_return_val_if_fail(suffix, NULL);
@@ -171,7 +171,7 @@ utils_get_ifcfg_name(const char *file, gboolean only_ifcfg)
 static char *
 utils_get_extra_path(const char *parent, const char *tag)
 {
-    char *      item_path = NULL, *dirname;
+    char       *item_path = NULL, *dirname;
     const char *name;
 
     g_return_val_if_fail(parent != NULL, NULL);
@@ -221,7 +221,7 @@ shvarFile *
 utils_get_extra_ifcfg(const char *parent, const char *tag, gboolean should_create)
 {
     shvarFile *ifcfg = NULL;
-    char *     path;
+    char      *path;
 
     path = utils_get_extra_path(parent, tag);
     if (!path)
@@ -275,7 +275,7 @@ utils_has_route_file_new_syntax_content(const char *contents, gsize len)
 
     while (TRUE) {
         const char *line = contents;
-        char *      eol;
+        char       *eol;
         gboolean    found = FALSE;
 
         /* matches regex "^[[:space:]]*ADDRESS[0-9]+=" */
@@ -374,7 +374,7 @@ utils_detect_ifcfg_path(const char *path, gboolean only_ifcfg)
             return NULL;
         if (utils_is_ifcfg_alias_file(base, NULL)) {
             gs_free char *ifcfg = NULL;
-            char *        ptr;
+            char         *ptr;
 
             ifcfg = g_strdup(path);
             ptr   = strrchr(ifcfg, ':');
@@ -773,7 +773,7 @@ gboolean
 nms_ifcfg_rh_utils_is_numbered_tag_impl(const char *key,
                                         const char *tag,
                                         gsize       tag_len,
-                                        gint64 *    out_idx)
+                                        gint64     *out_idx)
 {
     gint64 idx;
 
@@ -827,6 +827,7 @@ const NMSIfcfgKeyTypeInfo nms_ifcfg_well_known_keys[] = {
     _KEY_TYPE("BAND", NMS_IFCFG_KEY_TYPE_IS_PLAIN),
     _KEY_TYPE("BONDING_MASTER", NMS_IFCFG_KEY_TYPE_IS_PLAIN),
     _KEY_TYPE("BONDING_OPTS", NMS_IFCFG_KEY_TYPE_IS_PLAIN),
+    _KEY_TYPE("BOND_PORT_QUEUE_ID", NMS_IFCFG_KEY_TYPE_IS_PLAIN),
     _KEY_TYPE("BOOTPROTO", NMS_IFCFG_KEY_TYPE_IS_PLAIN),
     _KEY_TYPE("BRIDGE", NMS_IFCFG_KEY_TYPE_IS_PLAIN),
     _KEY_TYPE("BRIDGE_MACADDR", NMS_IFCFG_KEY_TYPE_IS_PLAIN),
@@ -891,6 +892,7 @@ const NMSIfcfgKeyTypeInfo nms_ifcfg_well_known_keys[] = {
     _KEY_TYPE("DHCPv6_DUID", NMS_IFCFG_KEY_TYPE_IS_PLAIN),
     _KEY_TYPE("DHCPv6_IAID", NMS_IFCFG_KEY_TYPE_IS_PLAIN),
     _KEY_TYPE("DNS", NMS_IFCFG_KEY_TYPE_IS_NUMBERED),
+    _KEY_TYPE("DNS_OVER_TLS", NMS_IFCFG_KEY_TYPE_IS_PLAIN),
     _KEY_TYPE("DOMAIN", NMS_IFCFG_KEY_TYPE_IS_PLAIN),
     _KEY_TYPE("ESSID", NMS_IFCFG_KEY_TYPE_IS_PLAIN),
     _KEY_TYPE("ETHTOOL_OPTS", NMS_IFCFG_KEY_TYPE_IS_PLAIN),
@@ -955,9 +957,12 @@ const NMSIfcfgKeyTypeInfo nms_ifcfg_well_known_keys[] = {
     _KEY_TYPE("IEEE_8021X_SUBJECT_MATCH", NMS_IFCFG_KEY_TYPE_IS_PLAIN),
     _KEY_TYPE("IEEE_8021X_SYSTEM_CA_CERTS", NMS_IFCFG_KEY_TYPE_IS_PLAIN),
     _KEY_TYPE("IPADDR", NMS_IFCFG_KEY_TYPE_IS_NUMBERED),
+    _KEY_TYPE("IPV4_AUTO_ROUTE_EXT_GW", NMS_IFCFG_KEY_TYPE_IS_PLAIN),
     _KEY_TYPE("IPV4_DHCP_TIMEOUT", NMS_IFCFG_KEY_TYPE_IS_PLAIN),
     _KEY_TYPE("IPV4_DNS_PRIORITY", NMS_IFCFG_KEY_TYPE_IS_PLAIN),
     _KEY_TYPE("IPV4_FAILURE_FATAL", NMS_IFCFG_KEY_TYPE_IS_PLAIN),
+    _KEY_TYPE("IPV4_LINK_LOCAL", NMS_IFCFG_KEY_TYPE_IS_PLAIN),
+    _KEY_TYPE("IPV4_REPLACE_LOCAL_RULE", NMS_IFCFG_KEY_TYPE_IS_PLAIN),
     _KEY_TYPE("IPV4_REQUIRED_TIMEOUT", NMS_IFCFG_KEY_TYPE_IS_PLAIN),
     _KEY_TYPE("IPV4_ROUTE_METRIC", NMS_IFCFG_KEY_TYPE_IS_PLAIN),
     _KEY_TYPE("IPV4_ROUTE_TABLE", NMS_IFCFG_KEY_TYPE_IS_PLAIN),
@@ -968,6 +973,7 @@ const NMSIfcfgKeyTypeInfo nms_ifcfg_well_known_keys[] = {
     _KEY_TYPE("IPV6TUNNELIPV4", NMS_IFCFG_KEY_TYPE_IS_PLAIN),
     _KEY_TYPE("IPV6_ADDR_GEN_MODE", NMS_IFCFG_KEY_TYPE_IS_PLAIN),
     _KEY_TYPE("IPV6_AUTOCONF", NMS_IFCFG_KEY_TYPE_IS_PLAIN),
+    _KEY_TYPE("IPV6_AUTO_ROUTE_EXT_GW", NMS_IFCFG_KEY_TYPE_IS_PLAIN),
     _KEY_TYPE("IPV6_DEFAULTDEV", NMS_IFCFG_KEY_TYPE_IS_PLAIN),
     _KEY_TYPE("IPV6_DEFAULTGW", NMS_IFCFG_KEY_TYPE_IS_PLAIN),
     _KEY_TYPE("IPV6_DEFROUTE", NMS_IFCFG_KEY_TYPE_IS_PLAIN),
@@ -981,6 +987,7 @@ const NMSIfcfgKeyTypeInfo nms_ifcfg_well_known_keys[] = {
     _KEY_TYPE("IPV6_PRIVACY", NMS_IFCFG_KEY_TYPE_IS_PLAIN),
     _KEY_TYPE("IPV6_PRIVACY_PREFER_PUBLIC_IP", NMS_IFCFG_KEY_TYPE_IS_PLAIN),
     _KEY_TYPE("IPV6_RA_TIMEOUT", NMS_IFCFG_KEY_TYPE_IS_PLAIN),
+    _KEY_TYPE("IPV6_REPLACE_LOCAL_RULE", NMS_IFCFG_KEY_TYPE_IS_PLAIN),
     _KEY_TYPE("IPV6_REQUIRED_TIMEOUT", NMS_IFCFG_KEY_TYPE_IS_PLAIN),
     _KEY_TYPE("IPV6_RES_OPTIONS", NMS_IFCFG_KEY_TYPE_IS_PLAIN),
     _KEY_TYPE("IPV6_ROUTE_METRIC", NMS_IFCFG_KEY_TYPE_IS_PLAIN),
@@ -1003,6 +1010,7 @@ const NMSIfcfgKeyTypeInfo nms_ifcfg_well_known_keys[] = {
     _KEY_TYPE("MDNS", NMS_IFCFG_KEY_TYPE_IS_PLAIN),
     _KEY_TYPE("METRIC", NMS_IFCFG_KEY_TYPE_IS_NUMBERED),
     _KEY_TYPE("MODE", NMS_IFCFG_KEY_TYPE_IS_PLAIN),
+    _KEY_TYPE("MPTCP_FLAGS", NMS_IFCFG_KEY_TYPE_IS_PLAIN),
     _KEY_TYPE("MTU", NMS_IFCFG_KEY_TYPE_IS_PLAIN),
     _KEY_TYPE("MUD_URL", NMS_IFCFG_KEY_TYPE_IS_PLAIN),
     _KEY_TYPE("MULTI_CONNECT", NMS_IFCFG_KEY_TYPE_IS_PLAIN),
@@ -1057,8 +1065,10 @@ const NMSIfcfgKeyTypeInfo nms_ifcfg_well_known_keys[] = {
     _KEY_TYPE("VLAN_FLAGS", NMS_IFCFG_KEY_TYPE_IS_PLAIN),
     _KEY_TYPE("VLAN_ID", NMS_IFCFG_KEY_TYPE_IS_PLAIN),
     _KEY_TYPE("VLAN_INGRESS_PRIORITY_MAP", NMS_IFCFG_KEY_TYPE_IS_PLAIN),
+    _KEY_TYPE("VLAN_PROTOCOL", NMS_IFCFG_KEY_TYPE_IS_PLAIN),
     _KEY_TYPE("VRF", NMS_IFCFG_KEY_TYPE_IS_PLAIN),
     _KEY_TYPE("VRF_UUID", NMS_IFCFG_KEY_TYPE_IS_PLAIN),
+    _KEY_TYPE("WAIT_ACTIVATION_DELAY", NMS_IFCFG_KEY_TYPE_IS_PLAIN),
     _KEY_TYPE("WEP_KEY_FLAGS", NMS_IFCFG_KEY_TYPE_IS_PLAIN),
     _KEY_TYPE("WPA_ALLOW_WPA", NMS_IFCFG_KEY_TYPE_IS_PLAIN),
     _KEY_TYPE("WPA_ALLOW_WPA2", NMS_IFCFG_KEY_TYPE_IS_PLAIN),
@@ -1075,12 +1085,12 @@ nms_ifcfg_well_known_key_find_info(const char *key, gssize *out_idx)
 
     G_STATIC_ASSERT(G_STRUCT_OFFSET(NMSIfcfgKeyTypeInfo, key_name) == 0);
 
-    idx = nm_utils_array_find_binary_search(nms_ifcfg_well_known_keys,
-                                            sizeof(nms_ifcfg_well_known_keys[0]),
-                                            G_N_ELEMENTS(nms_ifcfg_well_known_keys),
-                                            &key,
-                                            nm_strcmp_p_with_data,
-                                            NULL);
+    idx = nm_array_find_bsearch(nms_ifcfg_well_known_keys,
+                                G_N_ELEMENTS(nms_ifcfg_well_known_keys),
+                                sizeof(nms_ifcfg_well_known_keys[0]),
+                                &key,
+                                nm_strcmp_p_with_data,
+                                NULL);
     NM_SET_OUT(out_idx, idx);
     if (idx < 0)
         return NULL;

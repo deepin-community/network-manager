@@ -4,7 +4,7 @@
 #define __NM_DEVICE_VRF_H__
 
 #if !defined(__NETWORKMANAGER_H_INSIDE__) && !defined(NETWORKMANAGER_COMPILATION)
-    #error "Only <NetworkManager.h> can be included directly."
+#error "Only <NetworkManager.h> can be included directly."
 #endif
 
 #include "nm-device.h"
@@ -24,7 +24,10 @@ G_BEGIN_DECLS
 
 /**
  * NMDeviceVrf:
+ *
+ * Since: 1.24
  */
+typedef struct _NMDeviceVrf      NMDeviceVrf;
 typedef struct _NMDeviceVrfClass NMDeviceVrfClass;
 
 NM_AVAILABLE_IN_1_24

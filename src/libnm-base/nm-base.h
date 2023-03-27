@@ -13,6 +13,11 @@
 
 #define _NM_MAX_CLIENT_ID_LEN (sizeof(guint32) + 128)
 
+enum {
+    NM_DNS_PRIORITY_DEFAULT_NORMAL = 100,
+    NM_DNS_PRIORITY_DEFAULT_VPN    = 50,
+};
+
 /*****************************************************************************/
 
 typedef enum {
@@ -385,5 +390,45 @@ typedef struct {
 #define NM_IW_ESSID_MAX_SIZE 32
 
 /****************************************************************************/
+
+#define NM_BOND_PORT_QUEUE_ID_DEF 0
+
+/****************************************************************************/
+
+/* ifindex generation is per-net namespace, and loopback is always the first
+ * device in the network namespace, thus any loopback device should get ifindex 1. */
+#define NM_LOOPBACK_IFINDEX 1
+
+/*****************************************************************************/
+
+/* NM_CRYPTO_ERROR is part of public API in libnm (implemented in libnm-core).
+ * We also want to use it without libnm-core. So this "_" variant is the internal
+ * version, with numerically same values -- to be used without libnm-base. */
+
+#define _NM_CRYPTO_ERROR_FAILED            0
+#define _NM_CRYPTO_ERROR_INVALID_DATA      1
+#define _NM_CRYPTO_ERROR_INVALID_PASSWORD  2
+#define _NM_CRYPTO_ERROR_UNKNOWN_CIPHER    3
+#define _NM_CRYPTO_ERROR_DECRYPTION_FAILED 4
+#define _NM_CRYPTO_ERROR_ENCRYPTION_FAILED 5
+
+#define _NM_CRYPTO_ERROR _nm_crypto_error_quark()
+GQuark _nm_crypto_error_quark(void);
+
+typedef enum {
+    NM_DNS_IP_CONFIG_TYPE_REMOVED = -1,
+
+    NM_DNS_IP_CONFIG_TYPE_DEFAULT = 0,
+    NM_DNS_IP_CONFIG_TYPE_BEST_DEVICE,
+    NM_DNS_IP_CONFIG_TYPE_VPN,
+} NMDnsIPConfigType;
+
+/*****************************************************************************/
+
+#define NM_DHCP_IAID_TO_HEXSTR_BUF_LEN (3 * sizeof(guint32))
+
+char *nm_dhcp_iaid_to_hexstr(guint32 iaid, char buf[static NM_DHCP_IAID_TO_HEXSTR_BUF_LEN]);
+
+gboolean nm_dhcp_iaid_from_hexstr(const char *str, guint32 *out_value);
 
 #endif /* __NM_LIBNM_BASE_H__ */

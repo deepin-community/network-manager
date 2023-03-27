@@ -11,7 +11,7 @@
 
 #define NMT_TYPE_EDITOR_SECTION (nmt_editor_section_get_type())
 #define NMT_EDITOR_SECTION(obj) \
-    (G_TYPE_CHECK_INSTANCE_CAST((obj), NMT_TYPE_EDITOR_SECTION, NmtEditorSection))
+    (_NM_G_TYPE_CHECK_INSTANCE_CAST((obj), NMT_TYPE_EDITOR_SECTION, NmtEditorSection))
 #define NMT_EDITOR_SECTION_CLASS(klass) \
     (G_TYPE_CHECK_CLASS_CAST((klass), NMT_TYPE_EDITOR_SECTION, NmtEditorSectionClass))
 #define NMT_IS_EDITOR_SECTION(obj) (G_TYPE_CHECK_INSTANCE_TYPE((obj), NMT_TYPE_EDITOR_SECTION))
@@ -35,7 +35,7 @@ GType nmt_editor_section_get_type(void);
 NmtEditorSection *
 nmt_editor_section_new(const char *title, NmtNewtWidget *header_widget, gboolean show_by_default);
 
-const char *   nmt_editor_section_get_title(NmtEditorSection *section);
+const char    *nmt_editor_section_get_title(NmtEditorSection *section);
 NmtNewtWidget *nmt_editor_section_get_header_widget(NmtEditorSection *section);
 NmtEditorGrid *nmt_editor_section_get_body(NmtEditorSection *section);
 

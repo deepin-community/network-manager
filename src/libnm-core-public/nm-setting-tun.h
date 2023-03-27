@@ -7,7 +7,7 @@
 #define __NM_SETTING_TUN_H__
 
 #if !defined(__NETWORKMANAGER_H_INSIDE__) && !defined(NETWORKMANAGER_COMPILATION)
-    #error "Only <NetworkManager.h> can be included directly."
+#error "Only <NetworkManager.h> can be included directly."
 #endif
 
 #include "nm-setting.h"
@@ -39,6 +39,8 @@ G_BEGIN_DECLS
  * @NM_SETTING_TUN_MODE_TAP: a TAP device
  *
  * #NMSettingTunMode values indicate the device type (TUN/TAP)
+ *
+ * Since: 1.2
  */
 typedef enum {
     NM_SETTING_TUN_MODE_UNKNOWN = 0,

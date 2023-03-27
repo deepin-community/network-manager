@@ -16,6 +16,7 @@
 #include "nm-setting-connection.h"
 #include "nm-setting-ovs-bridge.h"
 #include "nm-setting-ovs-external-ids.h"
+#include "nm-setting-ovs-other-config.h"
 #include "libnm-core-intern/nm-core-internal.h"
 
 #define _NMLOG_DEVICE_TYPE NMDeviceOvsBridge
@@ -42,11 +43,11 @@ get_type_description(NMDevice *device)
 }
 
 static gboolean
-create_and_realize(NMDevice *             device,
-                   NMConnection *         connection,
-                   NMDevice *             parent,
+create_and_realize(NMDevice              *device,
+                   NMConnection          *connection,
+                   NMDevice              *parent,
                    const NMPlatformLink **out_plink,
-                   GError **              error)
+                   GError               **error)
 {
     /* The actual backing resources will be created on enslavement by the port
      * when it can identify the port and the bridge. */
@@ -66,29 +67,38 @@ get_generic_capabilities(NMDevice *device)
     return NM_DEVICE_CAP_IS_SOFTWARE;
 }
 
-static NMActStageReturn
-act_stage3_ip_config_start(NMDevice *           device,
-                           int                  addr_family,
-                           gpointer *           out_config,
-                           NMDeviceStateReason *out_failure_reason)
+static gboolean
+ready_for_ip_config(NMDevice *device, gboolean is_manual)
 {
-    return NM_ACT_STAGE_RETURN_IP_FAIL;
+    return FALSE;
 }
 
-static gboolean
-enslave_slave(NMDevice *device, NMDevice *slave, NMConnection *connection, gboolean configure)
+static void
+act_stage3_ip_config(NMDevice *device, int addr_family)
+{
+    nm_device_devip_set_state(device, addr_family, NM_DEVICE_IP_STATE_READY, NULL);
+}
+
+static NMTernary
+attach_port(NMDevice                  *device,
+            NMDevice                  *port,
+            NMConnection              *connection,
+            gboolean                   configure,
+            GCancellable              *cancellable,
+            NMDeviceAttachPortCallback callback,
+            gpointer                   user_data)
 {
     if (!configure)
         return TRUE;
 
-    if (!NM_IS_DEVICE_OVS_PORT(slave))
+    if (!NM_IS_DEVICE_OVS_PORT(port))
         return FALSE;
 
     return TRUE;
 }
 
 static void
-release_slave(NMDevice *device, NMDevice *slave, gboolean configure)
+detach_port(NMDevice *device, NMDevice *port, gboolean configure)
 {}
 
 void
@@ -115,13 +125,14 @@ nm_device_ovs_reapply_connection(NMDevice *self, NMConnection *con_old, NMConnec
         device_type = NM_DEVICE_TYPE_OVS_BRIDGE;
     }
 
-    nm_ovsdb_set_external_ids(
-        nm_ovsdb_get(),
-        device_type,
-        nm_device_get_ip_iface(self),
-        nm_connection_get_uuid(con_new),
-        _nm_connection_get_setting(con_old, NM_TYPE_SETTING_OVS_EXTERNAL_IDS),
-        _nm_connection_get_setting(con_new, NM_TYPE_SETTING_OVS_EXTERNAL_IDS));
+    nm_ovsdb_set_reapply(nm_ovsdb_get(),
+                         device_type,
+                         nm_device_get_ip_iface(self),
+                         nm_connection_get_uuid(con_new),
+                         _nm_connection_get_setting(con_old, NM_TYPE_SETTING_OVS_EXTERNAL_IDS),
+                         _nm_connection_get_setting(con_new, NM_TYPE_SETTING_OVS_EXTERNAL_IDS),
+                         _nm_connection_get_setting(con_old, NM_TYPE_SETTING_OVS_OTHER_CONFIG),
+                         _nm_connection_get_setting(con_new, NM_TYPE_SETTING_OVS_OTHER_CONFIG));
 }
 
 /*****************************************************************************/
@@ -141,7 +152,7 @@ static void
 nm_device_ovs_bridge_class_init(NMDeviceOvsBridgeClass *klass)
 {
     NMDBusObjectClass *dbus_object_class = NM_DBUS_OBJECT_CLASS(klass);
-    NMDeviceClass *    device_class      = NM_DEVICE_CLASS(klass);
+    NMDeviceClass     *device_class      = NM_DEVICE_CLASS(klass);
 
     dbus_object_class->interface_infos = NM_DBUS_INTERFACE_INFOS(&interface_info_device_ovs_bridge);
 
@@ -154,9 +165,10 @@ nm_device_ovs_bridge_class_init(NMDeviceOvsBridgeClass *klass)
     device_class->create_and_realize                  = create_and_realize;
     device_class->unrealize                           = unrealize;
     device_class->get_generic_capabilities            = get_generic_capabilities;
-    device_class->act_stage3_ip_config_start          = act_stage3_ip_config_start;
-    device_class->enslave_slave                       = enslave_slave;
-    device_class->release_slave                       = release_slave;
+    device_class->act_stage3_ip_config                = act_stage3_ip_config;
+    device_class->ready_for_ip_config                 = ready_for_ip_config;
+    device_class->attach_port                         = attach_port;
+    device_class->detach_port                         = detach_port;
     device_class->can_reapply_change_ovs_external_ids = TRUE;
     device_class->reapply_connection                  = nm_device_ovs_reapply_connection;
 }

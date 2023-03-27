@@ -190,17 +190,18 @@ static const NMDhcpOption *const _sorted_options_4[G_N_ELEMENTS(_nm_dhcp_option_
 };
 
 const NMDhcpOption _nm_dhcp_option_dhcp6_options[] = {
-    REQ(NM_DHCP_OPTION_DHCP6_CLIENTID, "dhcp6_client_id", FALSE),
+    REQ(NM_DHCP_OPTION_DHCP6_CLIENT_ID, "dhcp6_client_id", FALSE),
 
     /* Don't request server ID by default; some servers don't reply to
      * Information Requests that request the Server ID.
      */
-    REQ(NM_DHCP_OPTION_DHCP6_SERVERID, "dhcp6_server_id", FALSE),
+    REQ(NM_DHCP_OPTION_DHCP6_SERVER_ID, "dhcp6_server_id", FALSE),
 
     REQ(NM_DHCP_OPTION_DHCP6_DNS_SERVERS, "dhcp6_name_servers", TRUE),
     REQ(NM_DHCP_OPTION_DHCP6_DOMAIN_LIST, "dhcp6_domain_search", TRUE),
     REQ(NM_DHCP_OPTION_DHCP6_SNTP_SERVERS, "dhcp6_sntp_servers", TRUE),
     REQ(NM_DHCP_OPTION_DHCP6_FQDN, "fqdn_fqdn", FALSE),
+    REQ(NM_DHCP_OPTION_DHCP6_NTP_SERVER, "dhcp6_ntp_servers", TRUE),
     REQ(NM_DHCP_OPTION_DHCP6_MUD_URL, "dhcp6_mud_url", FALSE),
 
     /* Internal values */
@@ -235,6 +236,7 @@ static const NMDhcpOption *const _sorted_options_6[G_N_ELEMENTS(_nm_dhcp_option_
     A(13),
     A(14),
     A(15),
+    A(16),
 #undef A
 };
 
@@ -247,7 +249,7 @@ _sorted_options_generate_sort(gconstpointer pa, gconstpointer pb, gpointer user_
     const NMDhcpOption *const *b = pb;
 
     NM_CMP_DIRECT((*a)->option_num, (*b)->option_num);
-    return nm_assert_unreachable_val(0);
+    return 0;
 }
 
 static char *
@@ -272,7 +274,6 @@ _sorted_options_generate(const NMDhcpOption *base, const NMDhcpOption *const *so
 
 _nm_unused static void
 _ASSERT_sorted(int IS_IPv4, const NMDhcpOption *const *const sorted, int n)
-
 {
     const NMDhcpOption *const options =
         IS_IPv4 ? _nm_dhcp_option_dhcp4_options : _nm_dhcp_option_dhcp6_options;
@@ -283,6 +284,16 @@ _ASSERT_sorted(int IS_IPv4, const NMDhcpOption *const *const sorted, int n)
     for (i = 0; i < n; i++) {
         const NMDhcpOption *opt = sorted[i];
 
+        if (!opt || opt < options || opt >= &options[n]) {
+            g_error("%s:%d: _sorted_options_%c[%d] must be a valid pointer into "
+                    "_nm_dhcp_option_dhcp%c_options, but is %p",
+                    __FILE__,
+                    __LINE__,
+                    IS_IPv4 ? '4' : '6',
+                    i,
+                    IS_IPv4 ? '4' : '6',
+                    opt);
+        }
         g_assert(opt);
         g_assert(opt >= options);
         g_assert(opt < &options[n]);
@@ -291,7 +302,7 @@ _ASSERT_sorted(int IS_IPv4, const NMDhcpOption *const *const sorted, int n)
             const NMDhcpOption *opt2 = sorted[j];
 
             if (opt == opt2) {
-                g_error("%s:%d: the _sorted_options_%c at [%d] (opt=%u, %s) is duplicated at "
+                g_error("%s:%d: _sorted_options_%c[%d] (opt=%u, %s) is duplicated at "
                         "[%d] (SORT: %s)",
                         __FILE__,
                         __LINE__,
@@ -308,7 +319,7 @@ _ASSERT_sorted(int IS_IPv4, const NMDhcpOption *const *const sorted, int n)
             const NMDhcpOption *opt2 = sorted[i - 1];
 
             if (opt2->option_num >= opt->option_num) {
-                g_error("%s:%d: the _sorted_options_%c at [%d] (opt=%u, %s) should come before "
+                g_error("%s:%d: _sorted_options_%c[%d] (opt=%u, %s) should come before "
                         "[%d] (opt=%u, %s) (SORT: %s)",
                         __FILE__,
                         __LINE__,
@@ -372,8 +383,14 @@ nm_dhcp_option_find(int addr_family, guint option)
 /*****************************************************************************/
 
 void
-nm_dhcp_option_take_option(GHashTable *options, int addr_family, guint option, char *value)
+nm_dhcp_option_take_option(GHashTable *options,
+                           gboolean    static_keys,
+                           int         addr_family,
+                           guint       option,
+                           char       *value)
 {
+    const char *key;
+
     nm_assert_addr_family(addr_family);
     nm_assert(value);
     nm_assert(g_utf8_validate(value, -1, NULL));
@@ -384,38 +401,37 @@ nm_dhcp_option_take_option(GHashTable *options, int addr_family, guint option, c
         return;
     }
 
-    g_hash_table_insert(options,
-                        (gpointer) nm_dhcp_option_request_string(addr_family, option),
-                        value);
+    key = nm_dhcp_option_request_string(addr_family, option),
+    g_hash_table_insert(options, static_keys ? (gpointer) key : g_strdup(key), value);
 }
 
 void
-nm_dhcp_option_add_option(GHashTable *options, int addr_family, guint option, const char *value)
-{
-    nm_dhcp_option_take_option(options, addr_family, option, g_strdup(value));
-}
-
-void
-nm_dhcp_option_add_option_utf8safe_escape(GHashTable *  options,
+nm_dhcp_option_add_option_utf8safe_escape(GHashTable   *options,
+                                          gboolean      static_keys,
                                           int           addr_family,
                                           guint         option,
                                           const guint8 *data,
                                           gsize         n_data)
 {
     gs_free char *to_free = NULL;
-    const char *  escaped;
+    const char   *escaped;
 
     escaped = nm_utils_buf_utf8safe_escape((char *) data,
                                            n_data,
                                            NM_UTILS_STR_UTF8_SAFE_FLAG_ESCAPE_CTRL,
                                            &to_free);
-    nm_dhcp_option_add_option(options, addr_family, option, escaped ?: "");
+    nm_dhcp_option_add_option(options, static_keys, addr_family, option, escaped ?: "");
 }
 
 void
-nm_dhcp_option_add_option_u64(GHashTable *options, int addr_family, guint option, guint64 value)
+nm_dhcp_option_add_option_u64(GHashTable *options,
+                              gboolean    static_keys,
+                              int         addr_family,
+                              guint       option,
+                              guint64     value)
 {
     nm_dhcp_option_take_option(options,
+                               static_keys,
                                addr_family,
                                option,
                                g_strdup_printf("%" G_GUINT64_FORMAT, value));
@@ -423,13 +439,18 @@ nm_dhcp_option_add_option_u64(GHashTable *options, int addr_family, guint option
 
 void
 nm_dhcp_option_add_option_in_addr(GHashTable *options,
+                                  gboolean    static_keys,
                                   int         addr_family,
                                   guint       option,
                                   in_addr_t   value)
 {
-    char sbuf[NM_UTILS_INET_ADDRSTRLEN];
+    char sbuf[NM_INET_ADDRSTRLEN];
 
-    nm_dhcp_option_add_option(options, addr_family, option, _nm_utils_inet4_ntop(value, sbuf));
+    nm_dhcp_option_add_option(options,
+                              static_keys,
+                              addr_family,
+                              option,
+                              nm_inet4_ntop(value, sbuf));
 }
 
 void
@@ -449,7 +470,7 @@ nm_dhcp_option_add_requests_to_options(GHashTable *options, int addr_family)
 }
 
 GHashTable *
-nm_dhcp_option_create_options_dict(void)
+nm_dhcp_option_create_options_dict(gboolean static_keys)
 {
-    return g_hash_table_new_full(nm_str_hash, g_str_equal, NULL, g_free);
+    return g_hash_table_new_full(nm_str_hash, g_str_equal, static_keys ? NULL : g_free, g_free);
 }

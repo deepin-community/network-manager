@@ -12,7 +12,7 @@
 #include "nm-dbus-manager.h"
 
 #define NM_TYPE_MANAGER            (nm_manager_get_type())
-#define NM_MANAGER(obj)            (G_TYPE_CHECK_INSTANCE_CAST((obj), NM_TYPE_MANAGER, NMManager))
+#define NM_MANAGER(obj)            (_NM_G_TYPE_CHECK_INSTANCE_CAST((obj), NM_TYPE_MANAGER, NMManager))
 #define NM_MANAGER_CLASS(klass)    (G_TYPE_CHECK_CLASS_CAST((klass), NM_TYPE_MANAGER, NMManagerClass))
 #define NM_IS_MANAGER(obj)         (G_TYPE_CHECK_INSTANCE_TYPE((obj), NM_TYPE_MANAGER))
 #define NM_IS_MANAGER_CLASS(klass) (G_TYPE_CHECK_CLASS_TYPE((klass), NM_TYPE_MANAGER))
@@ -20,6 +20,7 @@
     (G_TYPE_INSTANCE_GET_CLASS((obj), NM_TYPE_MANAGER, NMManagerClass))
 
 #define NM_MANAGER_VERSION                      "version"
+#define NM_MANAGER_VERSION_INFO                 "version-info"
 #define NM_MANAGER_CAPABILITIES                 "capabilities"
 #define NM_MANAGER_STATE                        "state"
 #define NM_MANAGER_STARTUP                      "startup"
@@ -30,6 +31,7 @@
 #define NM_MANAGER_WWAN_HARDWARE_ENABLED        "wwan-hardware-enabled"
 #define NM_MANAGER_WIMAX_ENABLED                "wimax-enabled"
 #define NM_MANAGER_WIMAX_HARDWARE_ENABLED       "wimax-hardware-enabled"
+#define NM_MANAGER_RADIO_FLAGS                  "radio-flags"
 #define NM_MANAGER_ACTIVE_CONNECTIONS           "active-connections"
 #define NM_MANAGER_CONNECTIVITY                 "connectivity"
 #define NM_MANAGER_CONNECTIVITY_CHECK_AVAILABLE "connectivity-check-available"
@@ -117,7 +119,7 @@ const CList *nm_manager_get_active_connections(NMManager *manager);
 NMSettingsConnection **nm_manager_get_activatable_connections(NMManager *manager,
                                                               gboolean   for_auto_activation,
                                                               gboolean   sort,
-                                                              guint *    out_len);
+                                                              guint     *out_len);
 
 void     nm_manager_write_device_state_all(NMManager *manager);
 gboolean nm_manager_write_device_state(NMManager *manager, NMDevice *device, int *out_ifindex);
@@ -156,29 +158,29 @@ nm_manager_device_route_metric_reserve(NMManager *self, int ifindex, NMDeviceTyp
 
 void nm_manager_device_route_metric_clear(NMManager *self, int ifindex);
 
-char *nm_manager_get_connection_iface(NMManager *   self,
+char *nm_manager_get_connection_iface(NMManager    *self,
                                       NMConnection *connection,
-                                      NMDevice **   out_parent,
-                                      const char ** out_parent_spec,
-                                      GError **     error);
+                                      NMDevice    **out_parent,
+                                      const char  **out_parent_spec,
+                                      GError      **error);
 
 const char *nm_manager_iface_for_uuid(NMManager *self, const char *uuid);
 
-NMActiveConnection *nm_manager_activate_connection(NMManager *            manager,
-                                                   NMSettingsConnection * connection,
-                                                   NMConnection *         applied_connection,
-                                                   const char *           specific_object,
-                                                   NMDevice *             device,
-                                                   NMAuthSubject *        subject,
+NMActiveConnection *nm_manager_activate_connection(NMManager             *manager,
+                                                   NMSettingsConnection  *connection,
+                                                   NMConnection          *applied_connection,
+                                                   const char            *specific_object,
+                                                   NMDevice              *device,
+                                                   NMAuthSubject         *subject,
                                                    NMActivationType       activation_type,
                                                    NMActivationReason     activation_reason,
                                                    NMActivationStateFlags initial_state_flags,
-                                                   GError **              error);
+                                                   GError               **error);
 
-gboolean nm_manager_deactivate_connection(NMManager *         manager,
+gboolean nm_manager_deactivate_connection(NMManager          *manager,
                                           NMActiveConnection *active,
                                           NMDeviceStateReason reason,
-                                          GError **           error);
+                                          GError            **error);
 
 void nm_manager_set_capability(NMManager *self, NMCapability cap);
 void nm_manager_emit_device_ifindex_changed(NMManager *self, NMDevice *device);
@@ -186,28 +188,32 @@ void nm_manager_emit_device_ifindex_changed(NMManager *self, NMDevice *device);
 NMDevice *nm_manager_get_device(NMManager *self, const char *ifname, NMDeviceType device_type);
 gboolean  nm_manager_remove_device(NMManager *self, const char *ifname, NMDeviceType device_type);
 
-void nm_manager_dbus_set_property_handle(NMDBusObject *                     obj,
+void nm_manager_dbus_set_property_handle(NMDBusObject                      *obj,
                                          const NMDBusInterfaceInfoExtended *interface_info,
-                                         const NMDBusPropertyInfoExtended * property_info,
-                                         GDBusConnection *                  connection,
-                                         const char *                       sender,
-                                         GDBusMethodInvocation *            invocation,
-                                         GVariant *                         value,
+                                         const NMDBusPropertyInfoExtended  *property_info,
+                                         GDBusConnection                   *connection,
+                                         const char                        *sender,
+                                         GDBusMethodInvocation             *invocation,
+                                         GVariant                          *value,
                                          gpointer                           user_data);
 
 NMMetered nm_manager_get_metered(NMManager *self);
 
 void nm_manager_notify_device_availability_maybe_changed(NMManager *self);
 
+struct _NMDnsManager;
+
+struct _NMDnsManager *nm_manager_get_dns_manager(NMManager *self);
+
 /*****************************************************************************/
 
-void nm_manager_device_auth_request(NMManager *                    self,
-                                    NMDevice *                     device,
-                                    GDBusMethodInvocation *        context,
-                                    NMConnection *                 connection,
-                                    const char *                   permission,
+void nm_manager_device_auth_request(NMManager                     *self,
+                                    NMDevice                      *device,
+                                    GDBusMethodInvocation         *context,
+                                    NMConnection                  *connection,
+                                    const char                    *permission,
                                     gboolean                       allow_interaction,
-                                    GCancellable *                 cancellable,
+                                    GCancellable                  *cancellable,
                                     NMManagerDeviceAuthRequestFunc callback,
                                     gpointer                       user_data);
 

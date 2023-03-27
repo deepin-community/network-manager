@@ -2,12 +2,12 @@
 .\"     Title: nmcli
 .\"    Author: 
 .\" Generator: DocBook XSL Stylesheets vsnapshot <http://docbook.sf.net/>
-.\"      Date: 09/22/2021
+.\"      Date: 03/09/2023
 .\"    Manual: General Commands Manual
-.\"    Source: NetworkManager 1.32.12
+.\"    Source: NetworkManager 1.42.4
 .\"  Language: English
 .\"
-.TH "NMCLI" "1" "" "NetworkManager 1\&.32\&.12" "General Commands Manual"
+.TH "NMCLI" "1" "" "NetworkManager 1\&.42\&.4" "General Commands Manual"
 .\" -----------------------------------------------------------------
 .\" * Define some portability stuff
 .\" -----------------------------------------------------------------
@@ -220,6 +220,19 @@ will display passwords and secrets that might be present in an output of an oper
 Output is terse\&. This mode is designed and suitable for computer (script) processing\&.
 .RE
 .PP
+\fB\-\-offline\fR
+.RS 4
+Work without a daemon\&. Makes
+\fBconnection add\fR
+and
+\fBconnection modify\fR
+commands accept and produce connection data via standard input/output\&. Ordinarily, nmcli would communicate with the NetworkManager service\&.
+.sp
+The connection data format (keyfile) is described in
+\fBnm-settings-keyfile\fR(5)
+manual\&.
+.RE
+.PP
 \fB\-v\fR | \fB\-\-version\fR
 .RS 4
 Show
@@ -389,7 +402,7 @@ and
 to watch for changes in certain devices or connections\&.
 .SH "CONNECTION MANAGEMENT COMMANDS"
 .HP \w'\fBnmcli\ connection\fR\ 'u
-\fBnmcli connection\fR {\fBshow\fR | \fBup\fR | \fBdown\fR | \fBmodify\fR | \fBadd\fR | \fBedit\fR | \fBclone\fR | \fBdelete\fR | \fBmonitor\fR | \fBreload\fR | \fBload\fR | \fBimport\fR | \fBexport\fR} [\fIARGUMENTS\fR...]
+\fBnmcli connection\fR {\fBshow\fR | \fBup\fR | \fBdown\fR | \fBmodify\fR | \fBadd\fR | \fBedit\fR | \fBclone\fR | \fBdelete\fR | \fBmonitor\fR | \fBreload\fR | \fBload\fR | \fBimport\fR | \fBexport\fR | \fBmigrate\fR} [\fIARGUMENTS\fR...]
 .PP
 NetworkManager stores all network configuration as "connections", which are collections of data (Layer2 details, IP addressing, etc\&.) that describe how to create or connect to a network\&. A connection is "active" when a device uses that connection\*(Aqs configuration to create or connect to a network\&. There may be multiple connections that apply to a device, but only one of them can be active on that device at any given time\&. The additional connections can be used to allow quick switching between different networks and configurations\&.
 .PP
@@ -594,7 +607,7 @@ Deactivate a connection from a device without preventing the device from further
 Be aware that this command deactivates the specified active connection, but the device on which the connection was active, is still ready to connect and will perform auto\-activation by looking for a suitable connection that has the \*(Aqautoconnect\*(Aq flag set\&. Note that the deactivating connection profile is internally blocked from autoconnecting again\&. Hence it will not autoconnect until reboot or until the user performs an action that unblocks autoconnect, like modifying the profile or explicitly activating it\&.
 .sp
 In most cases you may want to use
-\fBdevice disconnect\fR
+\fBdevice down\fR
 command instead\&.
 .sp
 The connection is identified by its name, UUID or D\-Bus path\&. If
@@ -617,7 +630,7 @@ If
 option is not specified, the default timeout will be 10 seconds\&.
 .RE
 .PP
-\fBmodify\fR [\fB\-\-temporary\fR] [\fBid\fR | \fBuuid\fR | \fBpath\fR] \fIID\fR {\fIoption\fR\ \fIvalue\fR\ |\ [+|\-]\fIsetting\fR\&.\fIproperty\fR\ \fIvalue\fR}...
+\fBmodify\fR [\fB\-\-temporary\fR] [\fBid\fR | \fBuuid\fR | \fBpath\fR] [\fIID\fR] {\fIoption\fR\ \fIvalue\fR\ |\ [+|\-]\fIsetting\fR\&.\fIproperty\fR\ \fIvalue\fR}...
 .RS 4
 Add, modify or remove properties in the connection profile\&.
 .sp
@@ -654,7 +667,15 @@ is ambiguous, a keyword
 \fBuuid\fR
 or
 \fBpath\fR
-can be used\&.
+can be used\&. The
+\fIID\fR
+is not used with the global
+\fB\-\-offline\fR
+option\&.
+.sp
+When the global
+\fB\-\-offline\fR
+is used, the command reads the connection from the standard input and prints the modified connection to standard output instead of making the the NetworkManager daemon act upon specified connection\&.
 .RE
 .PP
 \fBmodify\fR [\fB\-\-temporary\fR] [\fBid\fR | \fBuuid\fR | \fBpath\fR] \fIID\fR \fBremove\fR\ \fIsetting\fR
@@ -1113,6 +1134,10 @@ If a single
 argument is encountered it is ignored\&. This is for compatibility with older versions on
 \fBnmcli\fR\&.
 .RE
+.sp
+When the global
+\fB\-\-offline\fR
+is used, the command prints the resulting connection to standard output instead of actually adding the connection via the NetworkManager daemon\&.
 .RE
 .PP
 \fBedit\fR {[\fBid\fR\ |\ \fBuuid\fR\ |\ \fBpath\fR]\ \fIID\fR | [\fBtype\fR\ \fItype\fR]\ [\fBcon\-name\fR\ \fIname\fR] }
@@ -1254,9 +1279,37 @@ could export a connection\&. If no
 \fIfile\fR
 is provided, the VPN configuration data will be printed to standard output\&.
 .RE
+.PP
+\fBmigrate\fR [\fB\-\-plugin\fR\ \fIplugin\fR...] [\fBid\fR | \fBuuid\fR | \fBpath\fR] [\fIID\fR...]
+.RS 4
+Migrate connection profiles to a different settings plugin, such as
+keyfile
+(default) or
+ifcfg\-rh\&.
+.sp
+The connection to be migrated is identified by its name, UUID or D\-Bus path\&. If
+\fIID\fR
+is ambiguous, a keyword
+\fBid\fR,
+\fBuuid\fR
+or
+\fBpath\fR
+can be used\&. See
+\fBconnection show\fR
+above for the description of the
+\fIID\fR\-specifying keywords\&.
+.sp
+If no connections are specified, the command acts on all available connections\&. Therefore, with no arguments, the command migrates all connection profiles to the
+keyfile
+plugin\&.
+.sp
+If
+\fB\-\-wait\fR
+option is not specified, the default timeout will be 10 seconds\&.
+.RE
 .SH "DEVICE MANAGEMENT COMMANDS"
 .HP \w'\fBnmcli\ device\fR\ 'u
-\fBnmcli device\fR {\fBstatus\fR | \fBshow\fR | \fBset\fR | \fBconnect\fR | \fBreapply\fR | \fBmodify\fR | \fBdisconnect\fR | \fBdelete\fR | \fBmonitor\fR | \fBwifi\fR | \fBlldp\fR} [\fIARGUMENTS\fR...]
+\fBnmcli device\fR {\fBstatus\fR | \fBshow\fR | \fBset\fR | \fBup\fR | \fBconnect\fR | \fBreapply\fR | \fBmodify\fR | \fBdown\fR | \fBdisconnect\fR | \fBdelete\fR | \fBmonitor\fR | \fBwifi\fR | \fBlldp\fR | \fBcheckpoint\fR} [\fIARGUMENTS\fR...]
 .PP
 Show and manage network interfaces\&.
 .PP
@@ -1278,18 +1331,26 @@ Show detailed information about devices\&. Without an argument, all devices are 
 Set device properties\&.
 .RE
 .PP
-\fBconnect\fR \fIifname\fR
+\fBup\fR \fIifname\fR
 .RS 4
 Connect the device\&. NetworkManager will try to find a suitable connection that will be activated\&. It will also consider connections that are not set to auto connect\&.
 .sp
 If no compatible connection exists, a new profile with default settings will be created and activated\&. This differentiates
 \fBnmcli connection up ifname "$DEVICE"\fR
 from
-\fBnmcli device connect "$DEVICE"\fR
+\fBnmcli device up "$DEVICE"\fR
 .sp
 If
 \fB\-\-wait\fR
 option is not specified, the default timeout will be 90 seconds\&.
+.RE
+.PP
+\fBconnect\fR \fIifname\fR
+.RS 4
+Alias for command
+\fBup\fR\&. Before version 1\&.34\&.0
+\fBup\fR
+was not supported\&.
 .RE
 .PP
 \fBreapply\fR \fIifname\fR
@@ -1308,13 +1369,21 @@ See
 for the list of available properties\&. Please note that some properties can\*(Aqt be changed on an already connected device\&.
 .RE
 .PP
-\fBdisconnect\fR \fIifname\fR...
+\fBdown\fR \fIifname\fR...
 .RS 4
 Disconnect a device and prevent the device from automatically activating further connections without user/manual intervention\&. Note that disconnecting software devices may mean that the devices will disappear\&.
 .sp
 If
 \fB\-\-wait\fR
 option is not specified, the default timeout will be 10 seconds\&.
+.RE
+.PP
+\fBdisconnect\fR \fIifname\fR...
+.RS 4
+Alias for command
+\fBdown\fR\&. Before version 1\&.34\&.0
+\fBdown\fR
+was not supported\&.
 .RE
 .PP
 \fBdelete\fR \fIifname\fR...
@@ -1409,7 +1478,7 @@ when connecting for the first time to an AP not broadcasting its SSID\&. Otherwi
 Create a Wi\-Fi hotspot\&. The command creates a hotspot connection profile according to Wi\-Fi device capabilities and activates it on the device\&. The hotspot is secured with WPA if device/driver supports that, otherwise WEP is used\&. Use
 \fBconnection down\fR
 or
-\fBdevice disconnect\fR
+\fBdevice down\fR
 to stop the hotspot\&.
 .sp
 Parameters of the hotspot can be influenced by the optional parameters:
@@ -1474,6 +1543,17 @@ Display information about neighboring devices learned through the Link Layer Dis
 \fBifname\fR
 option can be used to list neighbors only for a given interface\&. The protocol must be enabled in the connection settings\&.
 .RE
+.PP
+\fBcheckpoint\fR [\fB\-\-timeout\fR\ \fIseconds\fR] [\fIifname\fR...] \fB\-\-\fR \fICOMMAND\fR...
+.RS 4
+Runs the command with a configuration checkpoint taken and asks for a confirmation when finished\&. When the confirmation is not given, the checkpoint is automatically restored after timeout\&.
+.sp
+This allows doing disruptive configuration changes over remote connections with an option of restoring the network configuration to a known good state in case of an error\&.
+.sp
+If the a list of interface names is specified, the checkpoint is taken, the checkpoint is takes only on the specified devices\&. Otherwise a checkpoint is taken for all devices\&.
+.sp
+Currently the timeout defaults to 15 seconds\&. This may change in a future version\&.
+.RE
 .SH "SECRET AGENT"
 .HP \w'\fBnmcli\ agent\fR\ 'u
 \fBnmcli agent\fR {\fBsecret\fR | \fBpolkit\fR | \fBall\fR}
@@ -1535,9 +1615,19 @@ Connection that is being activated\&.
 Connection that is being disconnected\&.
 .RE
 .PP
+\fBconnection\-external\fR
+.RS 4
+Connection representing configuration created externally to NetworkManager\&.
+.RE
+.PP
 \fBconnection\-invisible\fR
 .RS 4
 Connection whose details is the user not permitted to see\&.
+.RE
+.PP
+\fBconnection\-deprecated\fR
+.RS 4
+Connection that uses deprecated settings\&. It might not be possible to activate it\&.
 .RE
 .PP
 \fBconnectivity\-full\fR
@@ -1578,6 +1668,11 @@ Device that is being configured\&.
 \fBdevice\-disconnected\fR
 .RS 4
 Device that is not connected\&.
+.RE
+.PP
+\fBdevice\-external\fR
+.RS 4
+Device configured externally to NetworkManager\&.
 .RE
 .PP
 \fBdevice\-firmware\-missing\fR
@@ -1695,6 +1790,11 @@ Wi\-Fi network with a poor signal level\&.
 Wi\-Fi network that hasn\*(Aqt been actually seen (a hidden AP)\&.
 .RE
 .PP
+\fBwifi\-deprecated\fR
+.RS 4
+Wi\-Fi network that might be impossible to connect to due to use of deprecated functionality\&.
+.RE
+.PP
 \fBdisabled\fR
 .RS 4
 A property that is turned off\&.
@@ -1721,6 +1821,47 @@ Determines the locale to be used for internationalized messages\&.
 \fBLANG\fR
 .RS 4
 Provides a default value for the internationalization variables that are unset or null\&.
+.RE
+.PP
+\fBNO_COLOR\fR
+.RS 4
+Default to not producing colored and paged output\&. The
+\fB\-\-colors\fR
+option, if used, takes precedence\&.
+.RE
+.PP
+\fBPAGER\fR
+.RS 4
+Filter to pipe the output through if it doesn\*(Aqt fit on a screen\&. Can be a file name of an executable or a shell command\&. Empty string to disable the functionality\&.
+.sp
+Note that the pager command is expected to handle wide characters and ANSI escape sequences for changing colors (unless they\*(Aqre disabled)\&.
+\fBnmcli\fR
+sets up the environment variables
+\fBLESS\fR
+and
+\fBLESSCHARSET\fR
+appropriately for the
+\fBless\fR(1)
+pager, other pagers may or may not need extra configuration\&.
+.sp
+If unspecified,
+\fBpager\fR(1),
+\fBless\fR(1)
+and
+\fBmore\fR(1)
+will be tried (in that order)\&.
+.RE
+.PP
+\fBTERM\fR
+.RS 4
+Terminal type\&. If
+dumb,
+\fBnmcli\fR
+will not use a pager or produce ANSI escape sequences for coloring\&.
+.sp
+Terminal types other than
+dumb
+are assumed to support ASCII escape sequences for setting the output color\&.
 .RE
 .SH "INTERNATIONALIZATION NOTES"
 .PP
@@ -1893,7 +2034,7 @@ connects the Wi\-Fi connection with UUID 6b028a27\-6dc9\-4411\-9886\-e9ad1dd4376
 shows the status for all devices\&.
 .RE
 .PP
-\fBnmcli dev disconnect em2\fR
+\fBnmcli dev down em2\fR
 .RS 4
 disconnects a connection on interface em2 and marks the device as unavailable for auto\-connecting\&. As a result, no connection will automatically be activated on the device until the device\*(Aqs \*(Aqautoconnect\*(Aq is set to TRUE or the user manually activates a connection\&.
 .RE

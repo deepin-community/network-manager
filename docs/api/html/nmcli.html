@@ -6,9 +6,9 @@
 <meta name="generator" content="DocBook XSL Stylesheets Vsnapshot">
 <link rel="home" href="index.html" title="NetworkManager Reference Manual">
 <link rel="up" href="manpages.html" title="Part I. Manual Pages">
-<link rel="prev" href="NetworkManager-dispatcher.html" title="NetworkManager-dispatcher">
+<link rel="prev" href="NetworkManager-wait-online.service.html" title="NetworkManager-wait-online.service">
 <link rel="next" href="nmcli-examples.html" title="nmcli-examples">
-<meta name="generator" content="GTK-Doc V1.33.0 (XML mode)">
+<meta name="generator" content="GTK-Doc V1.33.1 (XML mode)">
 <link rel="stylesheet" href="style.css" type="text/css">
 </head>
 <body bgcolor="white" text="black" link="#0000FF" vlink="#840084" alink="#0000FF">
@@ -16,7 +16,7 @@
 <td width="100%" align="left" class="shortcuts"></td>
 <td><a accesskey="h" href="index.html"><img src="home.png" width="16" height="16" border="0" alt="Home"></a></td>
 <td><a accesskey="u" href="manpages.html"><img src="up.png" width="16" height="16" border="0" alt="Up"></a></td>
-<td><a accesskey="p" href="NetworkManager-dispatcher.html"><img src="left.png" width="16" height="16" border="0" alt="Prev"></a></td>
+<td><a accesskey="p" href="NetworkManager-wait-online.service.html"><img src="left.png" width="16" height="16" border="0" alt="Prev"></a></td>
 <td><a accesskey="n" href="nmcli-examples.html"><img src="right.png" width="16" height="16" border="0" alt="Next"></a></td>
 </tr></table>
 <div class="refentry">
@@ -182,6 +182,18 @@
 <td><p><span class="term">  <code class="option">-t</code>  |   <code class="option">--terse</code>  </span></p></td>
 <td><p>Output is terse. This mode is designed and suitable for computer (script)
           processing.</p></td>
+</tr>
+<tr>
+<td><p><span class="term">  <code class="option">--offline</code>  </span></p></td>
+<td>
+<p>Work without a daemon. Makes <span class="command"><strong>connection add</strong></span> and
+          <span class="command"><strong>connection modify</strong></span> commands accept and produce connection
+          data via standard input/output. Ordinarily, nmcli would communicate with
+          the NetworkManager service.</p>
+<p>The connection data format (keyfile) is described in
+          <span class="citerefentry"><span class="refentrytitle">nm-settings-keyfile</span>(5)</span>
+          manual.</p>
+</td>
 </tr>
 <tr>
 <td><p><span class="term">  <code class="option">-v</code>  |   <code class="option">--version</code>  </span></p></td>
@@ -427,7 +439,7 @@
 </div>
 <div class="refsect1">
 <a name="connection"></a><h2>Connection Management Commands</h2>
-<div class="cmdsynopsis"><p><code class="command">nmcli connection</code>  { <span class="command"><strong>show</strong></span>  |   <span class="command"><strong>up</strong></span>  |   <span class="command"><strong>down</strong></span>  |   <span class="command"><strong>modify</strong></span>  |   <span class="command"><strong>add</strong></span>  |   <span class="command"><strong>edit</strong></span>  |   <span class="command"><strong>clone</strong></span>  |   <span class="command"><strong>delete</strong></span>  |   <span class="command"><strong>monitor</strong></span>  |   <span class="command"><strong>reload</strong></span>  |   <span class="command"><strong>load</strong></span>  |   <span class="command"><strong>import</strong></span>  |   <span class="command"><strong>export</strong></span> } [<em class="replaceable"><code>ARGUMENTS</code></em>...]</p></div>
+<div class="cmdsynopsis"><p><code class="command">nmcli connection</code>  { <span class="command"><strong>show</strong></span>  |   <span class="command"><strong>up</strong></span>  |   <span class="command"><strong>down</strong></span>  |   <span class="command"><strong>modify</strong></span>  |   <span class="command"><strong>add</strong></span>  |   <span class="command"><strong>edit</strong></span>  |   <span class="command"><strong>clone</strong></span>  |   <span class="command"><strong>delete</strong></span>  |   <span class="command"><strong>monitor</strong></span>  |   <span class="command"><strong>reload</strong></span>  |   <span class="command"><strong>load</strong></span>  |   <span class="command"><strong>import</strong></span>  |   <span class="command"><strong>export</strong></span>  |   <span class="command"><strong>migrate</strong></span> } [<em class="replaceable"><code>ARGUMENTS</code></em>...]</p></div>
 <p>NetworkManager stores all network configuration as "connections",
     which are collections of data (Layer2 details, IP addressing, etc.) that
     describe how to create or connect to a network. A connection is "active"
@@ -640,13 +652,13 @@
           internally blocked from autoconnecting again. Hence it will not autoconnect
           until reboot or until the user performs an action that unblocks autoconnect,
           like modifying the profile or explicitly activating it.</p>
-<p>In most cases you may want to use <span class="command"><strong>device disconnect</strong></span>
+<p>In most cases you may want to use <span class="command"><strong>device down</strong></span>
           command instead.</p>
 <p>The connection is identified by its name, UUID or D-Bus path. If
           <em class="replaceable"><code>ID</code></em> is ambiguous, a keyword <code class="option">id</code>,
           <code class="option">uuid</code>, <code class="option">path</code> or
           <code class="option">apath</code> can be used.</p>
-<p> See <span class="command"><strong>connection show</strong></span> above for the description of
+<p>See <span class="command"><strong>connection show</strong></span> above for the description of
           the <em class="replaceable"><code>ID</code></em>-specifying keywords.</p>
 <p>If <code class="option">--wait</code> option is not specified, the default timeout
           will be 10 seconds.</p>
@@ -657,7 +669,7 @@
           <span class="command"><strong>modify</strong></span>
            [<code class="option">--temporary</code>]
            [ <code class="option">id</code>  |   <code class="option">uuid</code>  |   <code class="option">path</code> ]
-            <em class="replaceable"><code>ID</code></em> 
+           [<em class="replaceable"><code>ID</code></em>]
             
             { <em class="replaceable"><code>option</code></em> <em class="replaceable"><code>value</code></em>  |   [+|-]<em class="replaceable"><code>setting</code></em>.<em class="replaceable"><code>property</code></em> <em class="replaceable"><code>value</code></em> }
           ... 
@@ -682,7 +694,13 @@
           <code class="literal">802-1x.phase1-auth-flags</code> etc.</p>
 <p>The connection is identified by its name, UUID or D-Bus path. If
           <em class="replaceable"><code>ID</code></em> is ambiguous, a keyword <code class="option">id</code>,
-          <code class="option">uuid</code> or <code class="option">path</code> can be used.</p>
+          <code class="option">uuid</code> or <code class="option">path</code> can be used.
+          The <em class="replaceable"><code>ID</code></em> is not used with the global
+          <code class="option">--offline</code> option.</p>
+<p>When the global <code class="option">--offline</code> is used, the
+          command reads the connection from the standard input and prints the
+          modified connection to standard output instead of making the
+          the NetworkManager daemon act upon specified connection.</p>
 </td>
 </tr>
 <tr>
@@ -770,6 +788,9 @@
 </tr>
 </tbody>
 </table></div>
+<p>When the global <code class="option">--offline</code> is used, the
+          command prints the resulting connection to standard output instead of
+          actually adding the connection via the NetworkManager daemon.</p>
 </td>
 </tr>
 <tr>
@@ -934,12 +955,37 @@
           data will be printed to standard output.</p>
 </td>
 </tr>
+<tr>
+<td><p><span class="term">
+          <span class="command"><strong>migrate</strong></span>
+           [
+             <code class="option">--plugin</code>
+               <em class="replaceable"><code>plugin</code></em>... 
+          ]
+           [ <code class="option">id</code>  |   <code class="option">uuid</code>  |   <code class="option">path</code> ]
+           [<em class="replaceable"><code>ID</code></em>...]
+        </span></p></td>
+<td>
+<p>Migrate connection profiles to a different settings plugin, such
+	  as <code class="literal">keyfile</code> (default) or <code class="literal">ifcfg-rh</code>.</p>
+<p>The connection to be migrated is identified by its name, UUID or D-Bus path.
+	  If <em class="replaceable"><code>ID</code></em> is ambiguous, a keyword <code class="option">id</code>,
+	  <code class="option">uuid</code> or <code class="option">path</code> can be used. See <span class="command"><strong>connection
+	  show</strong></span> above for the description of the
+	  <em class="replaceable"><code>ID</code></em>-specifying keywords.</p>
+<p>If no connections are specified, the command acts on all available
+	  connections. Therefore, with no arguments, the command migrates all connection
+          profiles to the <code class="literal">keyfile</code> plugin.</p>
+<p>If <code class="option">--wait</code> option is not specified, the default timeout will be 10
+          seconds.</p>
+</td>
+</tr>
 </tbody>
 </table></div>
 </div>
 <div class="refsect1">
 <a name="device"></a><h2>Device Management Commands</h2>
-<div class="cmdsynopsis"><p><code class="command">nmcli device</code>  { <span class="command"><strong>status</strong></span>  |   <span class="command"><strong>show</strong></span>  |   <span class="command"><strong>set</strong></span>  |   <span class="command"><strong>connect</strong></span>  |   <span class="command"><strong>reapply</strong></span>  |   <span class="command"><strong>modify</strong></span>  |   <span class="command"><strong>disconnect</strong></span>  |   <span class="command"><strong>delete</strong></span>  |   <span class="command"><strong>monitor</strong></span>  |   <span class="command"><strong>wifi</strong></span>  |   <span class="command"><strong>lldp</strong></span> } [<em class="replaceable"><code>ARGUMENTS</code></em>...]</p></div>
+<div class="cmdsynopsis"><p><code class="command">nmcli device</code>  { <span class="command"><strong>status</strong></span>  |   <span class="command"><strong>show</strong></span>  |   <span class="command"><strong>set</strong></span>  |   <span class="command"><strong>up</strong></span>  |   <span class="command"><strong>connect</strong></span>  |   <span class="command"><strong>reapply</strong></span>  |   <span class="command"><strong>modify</strong></span>  |   <span class="command"><strong>down</strong></span>  |   <span class="command"><strong>disconnect</strong></span>  |   <span class="command"><strong>delete</strong></span>  |   <span class="command"><strong>monitor</strong></span>  |   <span class="command"><strong>wifi</strong></span>  |   <span class="command"><strong>lldp</strong></span>  |   <span class="command"><strong>checkpoint</strong></span> } [<em class="replaceable"><code>ARGUMENTS</code></em>...]</p></div>
 <p>Show and manage network interfaces.</p>
 <div class="variablelist"><table border="0" class="variablelist">
 <colgroup>
@@ -982,7 +1028,7 @@
 </tr>
 <tr>
 <td><p><span class="term">
-          <span class="command"><strong>connect</strong></span>
+          <span class="command"><strong>up</strong></span>
             <em class="replaceable"><code>ifname</code></em> 
         </span></p></td>
 <td>
@@ -992,10 +1038,18 @@
 <p>If no compatible connection exists, a new profile with default
           settings will be created and activated. This differentiates
           <span class="command"><strong>nmcli connection up ifname "$DEVICE"</strong></span> from
-          <span class="command"><strong>nmcli device connect "$DEVICE"</strong></span></p>
+          <span class="command"><strong>nmcli device up "$DEVICE"</strong></span></p>
 <p>If <code class="option">--wait</code> option is not specified, the default timeout will be 90
           seconds.</p>
 </td>
+</tr>
+<tr>
+<td><p><span class="term">
+          <span class="command"><strong>connect</strong></span>
+            <em class="replaceable"><code>ifname</code></em> 
+        </span></p></td>
+<td><p>Alias for command <span class="command"><strong>up</strong></span>. Before version 1.34.0 <span class="command"><strong>up</strong></span>
+                was not supported.</p></td>
 </tr>
 <tr>
 <td><p><span class="term">
@@ -1023,7 +1077,7 @@
 </tr>
 <tr>
 <td><p><span class="term">
-          <span class="command"><strong>disconnect</strong></span>
+          <span class="command"><strong>down</strong></span>
             <em class="replaceable"><code>ifname</code></em>... 
         </span></p></td>
 <td>
@@ -1033,6 +1087,14 @@
 <p>If <code class="option">--wait</code> option is not specified, the default timeout
           will be 10 seconds.</p>
 </td>
+</tr>
+<tr>
+<td><p><span class="term">
+          <span class="command"><strong>disconnect</strong></span>
+            <em class="replaceable"><code>ifname</code></em>... 
+        </span></p></td>
+<td><p>Alias for command <span class="command"><strong>down</strong></span>. Before version 1.34.0 <span class="command"><strong>down</strong></span>
+                was not supported.</p></td>
 </tr>
 <tr>
 <td><p><span class="term">
@@ -1179,7 +1241,7 @@
           according to Wi-Fi device capabilities and activates it on the device. The
           hotspot is secured with WPA if device/driver supports that, otherwise WEP is
           used. Use <span class="command"><strong>connection down</strong></span> or <span class="command"><strong>device
-          disconnect</strong></span> to stop the hotspot.</p>
+          down</strong></span> to stop the hotspot.</p>
 <p>Parameters of the hotspot can be influenced by the optional
           parameters:</p>
 <div class="variablelist"><table border="0" class="variablelist">
@@ -1264,6 +1326,28 @@
           used to list neighbors only for a given interface. The protocol must be enabled
           in the connection settings.</p></td>
 </tr>
+<tr>
+<td><p><span class="term">
+          <span class="command"><strong>checkpoint</strong></span>
+           [<code class="option">--timeout</code> <em class="replaceable"><code>seconds</code></em>]
+           [<em class="replaceable"><code>ifname</code></em>...]
+            <code class="option">--</code> 
+            <em class="replaceable"><code>COMMAND</code></em>... 
+        </span></p></td>
+<td>
+<p>Runs the command with a configuration checkpoint taken and asks for a
+          confirmation when finished. When the confirmation is not given, the
+          checkpoint is automatically restored after timeout.</p>
+<p>This allows doing disruptive configuration changes over remote
+          connections with an option of restoring the network configuration to a
+          known good state in case of an error.</p>
+<p>If the a list of interface names is specified, the checkpoint is
+          taken, the checkpoint is takes only on the specified devices. Otherwise
+          a checkpoint is taken for all devices.</p>
+<p>Currently the timeout defaults to 15 seconds. This may change in
+          a future version.</p>
+</td>
+</tr>
 </tbody>
 </table></div>
 </div>
@@ -1333,8 +1417,16 @@
 <td><p>Connection that is being disconnected.</p></td>
 </tr>
 <tr>
+<td><p><span class="term"><code class="option">connection-external</code></span></p></td>
+<td><p>Connection representing configuration created externally to NetworkManager.</p></td>
+</tr>
+<tr>
 <td><p><span class="term"><code class="option">connection-invisible</code></span></p></td>
 <td><p>Connection whose details is the user not permitted to see.</p></td>
+</tr>
+<tr>
+<td><p><span class="term"><code class="option">connection-deprecated</code></span></p></td>
+<td><p>Connection that uses deprecated settings. It might not be possible to activate it.</p></td>
 </tr>
 <tr>
 <td><p><span class="term"><code class="option">connectivity-full</code></span></p></td>
@@ -1367,6 +1459,10 @@
 <tr>
 <td><p><span class="term"><code class="option">device-disconnected</code></span></p></td>
 <td><p>Device that is not connected.</p></td>
+</tr>
+<tr>
+<td><p><span class="term"><code class="option">device-external</code></span></p></td>
+<td><p>Device configured externally to NetworkManager.</p></td>
 </tr>
 <tr>
 <td><p><span class="term"><code class="option">device-firmware-missing</code></span></p></td>
@@ -1461,6 +1557,10 @@
 <td><p>Wi-Fi network that hasn't been actually seen (a hidden AP).</p></td>
 </tr>
 <tr>
+<td><p><span class="term"><code class="option">wifi-deprecated</code></span></p></td>
+<td><p>Wi-Fi network that might be impossible to connect to due to use of deprecated functionality.</p></td>
+</tr>
+<tr>
 <td><p><span class="term"><code class="option">disabled</code></span></p></td>
 <td><p>A property that is turned off.</p></td>
 </tr>
@@ -1494,6 +1594,39 @@
 <td><p><span class="term"><code class="envar">LANG</code></span></p></td>
 <td><p>Provides a default value for the internationalization variables that are
           unset or null.</p></td>
+</tr>
+<tr>
+<td><p><span class="term"><code class="envar">NO_COLOR</code></span></p></td>
+<td><p>Default to not producing colored and paged output. The
+          <code class="option">--colors</code> option, if used, takes precedence.</p></td>
+</tr>
+<tr>
+<td><p><span class="term"><code class="envar">PAGER</code></span></p></td>
+<td>
+<p>Filter to pipe the output through if it doesn't fit on a screen.
+          Can be a file name of an executable or a shell command. Empty string to
+          disable the functionality.</p>
+<p>Note that the pager command is expected to handle wide characters
+          and ANSI escape sequences for changing colors (unless they're disabled).
+          <span class="command"><strong>nmcli</strong></span> sets up the environment variables
+          <code class="envar">LESS</code> and <code class="envar">LESSCHARSET</code> appropriately for the
+          <span class="citerefentry"><span class="refentrytitle">less</span>(1)</span>
+          pager, other pagers may or may not need extra configuration.</p>
+<p>If unspecified,
+          <span class="citerefentry"><span class="refentrytitle">pager</span>(1)</span>,
+          <span class="citerefentry"><span class="refentrytitle">less</span>(1)</span>
+          and <span class="citerefentry"><span class="refentrytitle">more</span>(1)</span>
+          will be tried (in that order).</p>
+</td>
+</tr>
+<tr>
+<td><p><span class="term"><code class="envar">TERM</code></span></p></td>
+<td>
+<p>Terminal type. If <code class="literal">dumb</code>, <span class="command"><strong>nmcli</strong></span>
+          will not use a pager or produce ANSI escape sequences for coloring.</p>
+<p>Terminal types other than <code class="literal">dumb</code> are assumed to
+          support ASCII escape sequences for setting the output color.</p>
+</td>
 </tr>
 </tbody>
 </table></div>
@@ -1646,7 +1779,7 @@
 <td><p>shows the status for all devices.</p></td>
 </tr>
 <tr>
-<td><p><span class="term"><strong class="userinput"><code>nmcli dev disconnect em2</code></strong></span></p></td>
+<td><p><span class="term"><strong class="userinput"><code>nmcli dev down em2</code></strong></span></p></td>
 <td><p>disconnects a connection on interface em2 and marks the device as
           unavailable for auto-connecting. As a result, no connection will automatically
           be activated on the device until the device's 'autoconnect' is set to TRUE or
@@ -1775,6 +1908,6 @@
 </div>
 </div>
 <div class="footer">
-<hr>Generated by GTK-Doc V1.33.0</div>
+<hr>Generated by GTK-Doc V1.33.1</div>
 </body>
 </html>

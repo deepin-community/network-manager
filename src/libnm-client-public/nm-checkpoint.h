@@ -7,7 +7,7 @@
 #define __NM_CHECKPOINT_H__
 
 #if !defined(__NETWORKMANAGER_H_INSIDE__) && !defined(NETWORKMANAGER_COMPILATION)
-    #error "Only <NetworkManager.h> can be included directly."
+#error "Only <NetworkManager.h> can be included directly."
 #endif
 
 #include "nm-object.h"
@@ -29,7 +29,10 @@ G_BEGIN_DECLS
 
 /**
  * NMCheckpoint:
+ *
+ * Since: 1.12
  */
+typedef struct _NMCheckpoint      NMCheckpoint;
 typedef struct _NMCheckpointClass NMCheckpointClass;
 
 GType nm_checkpoint_get_type(void);

@@ -8,7 +8,7 @@
 <link rel="up" href="manpages.html" title="Part I. Manual Pages">
 <link rel="prev" href="NetworkManager.html" title="NetworkManager">
 <link rel="next" href="NetworkManager-dispatcher.html" title="NetworkManager-dispatcher">
-<meta name="generator" content="GTK-Doc V1.33.0 (XML mode)">
+<meta name="generator" content="GTK-Doc V1.33.1 (XML mode)">
 <link rel="stylesheet" href="style.css" type="text/css">
 </head>
 <body bgcolor="white" text="black" link="#0000FF" vlink="#840084" alink="#0000FF">
@@ -245,24 +245,29 @@ no-auto-default=*
 </tr>
 <tr>
 <td><p><span class="term"><code class="varname">configure-and-quit</code></span></p></td>
-<td><p>
-            When set to '<code class="literal">true</code>', NetworkManager quits after
-            performing initial network configuration but spawns small helpers
-            to preserve DHCP leases and IPv6 addresses.  This is useful in
-            environments where network setup is more or less static or it is
-            desirable to save process time but still handle some dynamic
-            configurations.  When this option is <code class="literal">true</code>,
-            network configuration for Wi-Fi, WWAN, Bluetooth, ADSL, and PPPoE
-            interfaces cannot be preserved due to their use of external
-            services, and these devices will be deconfigured when NetworkManager
-            quits even though other interface's configuration may be preserved.
-            Also, to preserve DHCP addresses the '<code class="literal">dhcp</code>' option
-            must be set to '<code class="literal">internal</code>'. The default value of
-            the '<code class="literal">configure-and-quit</code>' option is
-            '<code class="literal">false</code>', meaning that NetworkManager will continue
-            running after initial network configuration and continue responding
-            to system and hardware events, D-Bus requests, and user commands.
-          </p></td>
+<td>
+<p>
+            This option is no longer useful to configure in NetworkManager.conf file.
+            It can however also be configured on the command line with the same
+            values, where it has some use.
+          </p>
+<p>
+            When set to '<code class="literal">initrd</code>', NetworkManager does not connect
+            to D-Bus and quits after configuring the network. This is an implementation
+            detail how the NetworkManager module of dracut can run NetworkManager.
+            An alternative to this is having NetworkManager as a systemd service
+            with D-Bus in initrd.
+          </p>
+<p>
+            The value '<code class="literal">true</code>' is unsupported since version 1.36.
+            Previously this was a mode where NetworkManager would quit after configuring
+            the network and run helper processes for DHCP and SLAAC.
+          </p>
+<p>
+            Otherwise, NetworkManager runs a system service with D-Bus and does not
+            quit during normal operation.
+          </p>
+</td>
 </tr>
 <tr>
 <td><p><span class="term"><code class="varname">hostname-mode</code></span></p></td>
@@ -329,17 +334,11 @@ no-auto-default=*
         manual page for more details).</p>
 <p><code class="literal">systemd-resolved</code>: NetworkManager will
         push the DNS configuration to systemd-resolved</p>
-<p><code class="literal">unbound</code>: NetworkManager will talk
-        to unbound and dnssec-triggerd, using "Conditional Forwarding"
-        with DNSSEC support. <code class="filename">/etc/resolv.conf</code>
-        will be managed by dnssec-trigger daemon. This option is
-        deprecated. Note that dnssec-trigger ships a NetworkManager dispatcher
-        script so this DNS plugin is not necessary.</p>
 <p><code class="literal">none</code>: NetworkManager will not
         modify resolv.conf. This implies
         <code class="literal">rc-manager</code> <code class="literal">unmanaged</code></p>
-<p>Note that the plugins <code class="literal">dnsmasq</code>, <code class="literal">systemd-resolved</code>
-        and <code class="literal">unbound</code> are caching local nameservers.
+<p>Note that the plugins <code class="literal">dnsmasq</code> and <code class="literal">systemd-resolved</code>
+        are caching local nameservers.
         Hence, when NetworkManager writes <code class="filename">/run/NetworkManager/resolv.conf</code>
         and <code class="filename">/etc/resolv.conf</code> (according to <code class="literal">rc-manager</code>
         setting below), the name server there will be localhost only.
@@ -606,9 +605,56 @@ unmanaged-devices=mac:00:22:68:1c:59:b1;mac:00:1E:65:30:D1:C4;interface-name:eth
 <div class="refsect1">
 <a name="id-1.2.3.10"></a><h2>
 <code class="literal">logging</code> section</h2>
-<p>This section controls NetworkManager's logging.  Any
-    settings here are overridden by the <code class="option">--log-level</code>
-    and <code class="option">--log-domains</code> command-line options.</p>
+<p>
+    This section controls NetworkManager's logging.
+    Logging is very important to understand what NetworkManager is doing.
+    When you report a bug, do not unnecessarily filter or limit the log file.
+    Just enable <code class="literal">level=TRACE</code> and <code class="literal">domains=ALL</code>
+    to collect everything.
+    </p>
+<p>
+    The recommended way for enabling logging is with a file <code class="filename">/etc/NetworkManager/conf.d/95-logging.conf</code>
+    that contains
+</p>
+<pre class="programlisting">
+[logging]
+level=TRACE
+domains=ALL
+</pre>
+<p>
+    and restart the daemon with <span class="command"><strong>systemctl restart NetworkManager</strong></span>. Then
+    reproduce the problem. You can find the logs in syslog (for example <span class="command"><strong>journalctl</strong></span>).
+    </p>
+<p>
+    Any settings here are overridden by the <code class="option">--log-level</code>
+    and <code class="option">--log-domains</code> command-line options.
+    Logging can also be reconfigured at runtime with
+    <span class="command"><strong>nmcli general logging level "$LEVEL" domains "$DOMAINS"</strong></span>.
+    However, often it is interesting to get a complete log from the
+    start. Especially, when debugging an issue, enable debug logging
+    in NetworkManager.conf and restart the service to enable verbose logging
+    early on.
+    </p>
+<p>
+    By setting <code class="option">nm.debug</code> on the kernel command line (either from
+    <code class="filename">/run/NetworkManager/proc-cmdline</code> or <code class="filename">/proc/cmdline</code>),
+    debug logging is enabled. This overrides both the command-line options and the settings
+    from NetworkManager.conf.
+    </p>
+<p>
+    NetworkManager's logging aims not to contain private sensitive data
+    and you should be fine sharing the debug logs. Still, there will
+    be IP addresses and your network setup, if you consider that private
+    then review the log before sharing. However, try not to mangle the logfile
+    in a way that distorts the meaning too much.
+    </p>
+<p>
+    NetworkManager uses syslog or systemd-journald, depending on configuration.
+    In any case, debug logs are verbose and might be rate limited
+    or filtered by the logging daemon. For systemd-journald, see
+    <code class="literal">RateLimitIntervalSec</code> and <code class="literal">RateLimitBurst</code>
+    in <code class="literal">journald.conf</code> manual for how to disable that.
+    </p>
 <p>
       </p>
 <div class="variablelist"><table border="0" class="variablelist">
@@ -619,22 +665,37 @@ unmanaged-devices=mac:00:22:68:1c:59:b1;mac:00:1E:65:30:D1:C4;interface-name:eth
 <tbody>
 <tr>
 <td><p><span class="term"><code class="varname">level</code></span></p></td>
-<td><p>The default logging verbosity level.
+<td>
+<p>The default logging verbosity level.
           One of <code class="literal">OFF</code>, <code class="literal">ERR</code>,
           <code class="literal">WARN</code>, <code class="literal">INFO</code>,
-          <code class="literal">DEBUG</code>, <code class="literal">TRACE</code>.  The ERR
-          level logs only critical errors.  WARN logs warnings that may
-          reflect operation. INFO logs various informational messages that
-          are useful for tracking state and operations.  DEBUG enables
-          verbose logging for debugging purposes. TRACE enables even more
-          verbose logging then DEBUG level.  Subsequent levels also log
-          all messages from earlier levels; thus setting the log level
-          to INFO also logs error and warning messages.</p></td>
+          <code class="literal">DEBUG</code>, <code class="literal">TRACE</code>,
+          in order of verbosity.
+          </p>
+<p>
+          <code class="literal">OFF</code> disables all logging. <code class="literal">INFO</code>
+          is the default verbosity for regular operation. <code class="literal">TRACE</code>
+          is for debugging.
+          </p>
+<p>
+          The other levels are in most cases not useful. For example, <code class="literal">DEBUG</code>
+          is between <code class="literal">TRACE</code> and <code class="literal">INFO</code>, but it's too
+          verbose for regular operation and lacks possibly interesting messages for debugging.
+          Almost always, when debugging an issue or reporting a bug, collect full
+          level <code class="literal">TRACE</code> logs to get the full picture.
+          </p>
+</td>
 </tr>
 <tr>
 <td><p><span class="term"><code class="varname">domains</code></span></p></td>
 <td>
-<p>The following log domains are available:
+<p>Filter the messages by their topic. When debugging
+          an issue, it's better to collect all logs (<code class="literal">ALL</code> domain)
+          upfront. The unnecessary parts can always be ignored
+          later.
+          </p>
+<p>In the uncommon case to tune out certain topics, the following log
+          domains are available:
           PLATFORM, RFKILL, ETHER, WIFI, BT, MB, DHCP4, DHCP6, PPP,
           WIFI_SCAN, IP4, IP6, AUTOIP4, DNS, VPN, SHARING, SUPPLICANT,
           AGENTS, SETTINGS, SUSPEND, CORE, DEVICE, OLPC, WIMAX,
@@ -645,7 +706,11 @@ unmanaged-devices=mac:00:22:68:1c:59:b1;mac:00:1E:65:30:D1:C4;interface-name:eth
           ALL, DEFAULT, DHCP, IP.</p>
 <p>You can specify per-domain log level overrides by
           adding a colon and a log level to any domain. E.g.,
-          "<code class="literal">WIFI:DEBUG,WIFI_SCAN:OFF</code>".</p>
+          "<code class="literal">WIFI:DEBUG,WIFI_SCAN:OFF</code>".
+          Another example is <code class="literal">ALL,VPN_PLUGIN:TRACE</code>
+          to enable all the logging there is (see about <code class="literal">VPN_PLUGIN</code>
+          below).
+          </p>
 </td>
 </tr>
 <tr>
@@ -752,6 +817,14 @@ ipv6.ip6-privacy=0
 <td><p>If unspecified, the ultimate default values depends on the DNS plugin. With systemd-resolved the default currently is "no" (0) and for all other plugins also "no" (0).</p></td>
 </tr>
 <tr>
+<td><p><span class="term"><code class="varname">connection.mptcp-flags</code></span></p></td>
+<td><p>If unspecified, the fallback is 0x22 (<code class="literal">"enabled,subflow"</code>). Note that if sysctl <code class="literal">/proc/sys/net/mptcp/enabled</code> is disabled, NetworkManager will still not configure endpoints.</p></td>
+</tr>
+<tr>
+<td><p><span class="term"><code class="varname">connection.dns-over-tls</code></span></p></td>
+<td><p>If unspecified, the ultimate default values depends on the DNS plugin. With systemd-resolved the default currently is global setting and for all other plugins "no" (0).</p></td>
+</tr>
+<tr>
 <td><p><span class="term"><code class="varname">connection.stable-id</code></span></p></td>
 <td></td>
 </tr>
@@ -834,6 +907,10 @@ ipv6.ip6-privacy=0
 <td></td>
 </tr>
 <tr>
+<td><p><span class="term"><code class="varname">ipv4.link-local</code></span></p></td>
+<td><p>If left unspecified, fallback to "auto" which makes it dependent on "ipv4.method" setting.</p></td>
+</tr>
+<tr>
 <td><p><span class="term"><code class="varname">ipv4.route-metric</code></span></p></td>
 <td></td>
 </tr>
@@ -843,6 +920,12 @@ ipv6.ip6-privacy=0
             is different from explicitly selecting the main table 254, because of how NetworkManager
             removes extraneous routes from the tables.
           </p></td>
+</tr>
+<tr>
+<td><p><span class="term"><code class="varname">ipv6.addr-gen-mode</code></span></p></td>
+<td><p>If the per-profile setting is either "default" or "default-or-eui64", the
+            global default is used. If the default is unspecified, the fallback value is either "stable-privacy"
+            or "eui64", depending on whether the per-profile setting is "default" or "default-or-eui64, respectively.</p></td>
 </tr>
 <tr>
 <td><p><span class="term"><code class="varname">ipv6.ra-timeout</code></span></p></td>
@@ -890,6 +973,10 @@ ipv6.ip6-privacy=0
             is different from explicitly selecting the main table 254, because of how NetworkManager
             removes extraneous routes from the tables.
           </p></td>
+</tr>
+<tr>
+<td><p><span class="term"><code class="varname">loopback.mtu</code></span></p></td>
+<td><p>If configured explicitly to 0, the MTU is not reconfigured during device activation unless it is required due to IPv6 constraints. If left unspecified, a DHCP/IPv6 SLAAC provided value is used or the MTU is left unspecified on activation.</p></td>
 </tr>
 <tr>
 <td><p><span class="term"><code class="varname">sriov.autoprobe-drivers</code></span></p></td>
@@ -1211,6 +1298,7 @@ managed=1
 <td><p>
               Specify the Wi-Fi backend used for the device. Currently, supported
               are <code class="literal">wpa_supplicant</code> and <code class="literal">iwd</code> (experimental).
+              If unspecified, the default is "<code class="literal">wpa_supplicant</code>".
             </p></td>
 </tr>
 <tr>
@@ -1344,8 +1432,8 @@ managed=1
 <div class="refsect1">
 <a name="id-1.2.3.14"></a><h2>
 <code class="literal">global-dns</code> section</h2>
-<p>This section specifies global DNS settings that override
-    connection-specific configuration.</p>
+<p>This section specifies DNS settings that are applied
+    globally, in addition to connection-specific ones.</p>
 <p>
       </p>
 <div class="variablelist"><table border="0" class="variablelist">
@@ -1377,10 +1465,15 @@ managed=1
 <p>Sections with a name starting with the "global-dns-domain-"
     prefix allow to define global DNS configuration for specific
     domains.  The part of section name after "global-dns-domain-"
-    specifies the domain name a section applies to.  More specific
-    domains have the precedence over less specific ones and the
-    default domain is represented by the wildcard "*".  A default
-    domain section is mandatory.
+    specifies the domain name a section applies to (for example, a
+    section could be named "global-dns-domain-foobar.com").  More
+    specific domains have the precedence over less specific ones and
+    the default domain is represented by the wildcard "*".
+
+    To be valid, global DNS domains must include a section for the
+    default domain "*". When the global DNS domains are valid, the
+    name servers and domains defined globally override the ones from
+    active connections.
     </p>
 <p>
       </p>
@@ -1784,6 +1877,6 @@ interface-name:vboxnet*,except:interface-name:vboxnet2
 </div>
 </div>
 <div class="footer">
-<hr>Generated by GTK-Doc V1.33.0</div>
+<hr>Generated by GTK-Doc V1.33.1</div>
 </body>
 </html>

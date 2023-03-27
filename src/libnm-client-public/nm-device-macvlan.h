@@ -7,7 +7,7 @@
 #define __NM_DEVICE_MACVLAN_H__
 
 #if !defined(__NETWORKMANAGER_H_INSIDE__) && !defined(NETWORKMANAGER_COMPILATION)
-    #error "Only <NetworkManager.h> can be included directly."
+#error "Only <NetworkManager.h> can be included directly."
 #endif
 
 #include "nm-device.h"
@@ -32,7 +32,10 @@ G_BEGIN_DECLS
 
 /**
  * NMDeviceMacvlan:
+ *
+ * Since: 1.2
  */
+typedef struct _NMDeviceMacvlan      NMDeviceMacvlan;
 typedef struct _NMDeviceMacvlanClass NMDeviceMacvlanClass;
 
 NM_AVAILABLE_IN_1_2
@@ -47,8 +50,8 @@ gboolean nm_device_macvlan_get_no_promisc(NMDeviceMacvlan *device);
 NM_AVAILABLE_IN_1_2
 gboolean nm_device_macvlan_get_tap(NMDeviceMacvlan *device);
 
-NM_AVAILABLE_IN_1_2
 NM_DEPRECATED_IN_1_24_FOR(nm_device_get_hw_address)
+NM_AVAILABLE_IN_1_2
 const char *nm_device_macvlan_get_hw_address(NMDeviceMacvlan *device);
 
 G_END_DECLS

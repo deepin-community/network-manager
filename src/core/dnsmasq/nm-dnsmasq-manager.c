@@ -17,6 +17,7 @@
 #include "nm-dnsmasq-utils.h"
 #include "nm-utils.h"
 #include "NetworkManagerUtils.h"
+#include "nm-l3-config-data.h"
 #include "libnm-core-intern/nm-core-internal.h"
 
 #define CONFDIR NMCONFDIR "/dnsmasq-shared.d"
@@ -61,14 +62,17 @@ G_DEFINE_TYPE(NMDnsMasqManager, nm_dnsmasq_manager, G_TYPE_OBJECT)
 static void
 dm_watch_cb(GPid pid, int status, gpointer user_data)
 {
-    NMDnsMasqManager *       manager = NM_DNSMASQ_MANAGER(user_data);
+    NMDnsMasqManager        *manager = NM_DNSMASQ_MANAGER(user_data);
     NMDnsMasqManagerPrivate *priv    = NM_DNSMASQ_MANAGER_GET_PRIVATE(manager);
     guint                    err;
 
     if (WIFEXITED(status)) {
+        char sbuf[NM_UTILS_TO_STRING_BUFFER_SIZE];
+
         err = WEXITSTATUS(status);
         if (err != 0) {
-            _LOGW("dnsmasq exited with error: %s", nm_utils_dnsmasq_status_to_string(err, NULL, 0));
+            _LOGW("dnsmasq exited with error: %s",
+                  nm_utils_dnsmasq_status_to_string(err, sbuf, sizeof(sbuf)));
         }
     } else if (WIFSTOPPED(status)) {
         _LOGW("dnsmasq stopped unexpectedly with signal %d", WSTOPSIG(status));
@@ -85,24 +89,27 @@ dm_watch_cb(GPid pid, int status, gpointer user_data)
 }
 
 static GPtrArray *
-create_dm_cmd_line(const char *       iface,
-                   const NMIP4Config *ip4_config,
-                   const char *       pidfile,
-                   gboolean           announce_android_metered,
-                   GError **          error)
+create_dm_cmd_line(const char           *iface,
+                   const NML3ConfigData *l3cd,
+                   const char           *pidfile,
+                   gboolean              announce_android_metered,
+                   GError              **error)
 {
-    gs_unref_ptrarray GPtrArray *cmd = NULL;
-    nm_auto_free_gstring GString *s  = NULL;
+    gs_unref_ptrarray GPtrArray  *cmd = NULL;
+    nm_auto_free_gstring GString *s   = NULL;
     char                          first[INET_ADDRSTRLEN];
     char                          last[INET_ADDRSTRLEN];
     char                          listen_address_s[INET_ADDRSTRLEN];
-    char                          tmpaddr[INET_ADDRSTRLEN];
-    gs_free char *                error_desc = NULL;
-    const char *                  dm_binary;
-    const NMPlatformIP4Address *  listen_address;
-    guint                         i, n;
+    char                          sbuf_addr[INET_ADDRSTRLEN];
+    gs_free char                 *error_desc = NULL;
+    const char                   *dm_binary;
+    const NMPlatformIP4Address   *listen_address;
+    const char *const            *strarr;
+    guint                         n;
+    guint                         i;
 
-    listen_address = nm_ip4_config_get_first_address(ip4_config);
+    listen_address = NMP_OBJECT_CAST_IP4_ADDRESS(
+        nm_l3_config_data_get_first_obj(l3cd, NMP_OBJECT_TYPE_IP4_ADDRESS, NULL));
 
     g_return_val_if_fail(listen_address, NULL);
 
@@ -139,7 +146,7 @@ create_dm_cmd_line(const char *       iface,
      */
     nm_strv_ptrarray_add_string_dup(cmd, "--strict-order");
 
-    _nm_utils_inet4_ntop(listen_address->address, listen_address_s);
+    nm_inet4_ntop(listen_address->address, listen_address_s);
 
     nm_strv_ptrarray_add_string_concat(cmd, "--listen-address=", listen_address_s);
 
@@ -151,28 +158,33 @@ create_dm_cmd_line(const char *       iface,
 
     nm_strv_ptrarray_add_string_printf(cmd, "--dhcp-range=%s,%s,60m", first, last);
 
-    if (nm_ip4_config_best_default_route_get(ip4_config)) {
+    if (nm_l3_config_data_get_best_default_route(l3cd, AF_INET)) {
         nm_strv_ptrarray_add_string_concat(cmd, "--dhcp-option=option:router,", listen_address_s);
     }
 
-    if ((n = nm_ip4_config_get_num_nameservers(ip4_config))) {
+    strarr = nm_l3_config_data_get_nameservers(l3cd, AF_INET, &n);
+    if (n > 0) {
         nm_gstring_prepare(&s);
         g_string_append(s, "--dhcp-option=option:dns-server");
         for (i = 0; i < n; i++) {
+            in_addr_t a;
+
+            if (!nm_utils_dnsname_parse_assert(AF_INET, strarr[i], NULL, &a, NULL))
+                continue;
+
             g_string_append_c(s, ',');
-            g_string_append(
-                s,
-                _nm_utils_inet4_ntop(nm_ip4_config_get_nameserver(ip4_config, i), tmpaddr));
+            g_string_append(s, nm_inet4_ntop(a, sbuf_addr));
         }
         nm_strv_ptrarray_take_gstring(cmd, &s);
     }
 
-    if ((n = nm_ip4_config_get_num_searches(ip4_config))) {
+    strarr = nm_l3_config_data_get_searches(l3cd, AF_INET, &n);
+    if (n > 0) {
         nm_gstring_prepare(&s);
         g_string_append(s, "--dhcp-option=option:domain-search");
         for (i = 0; i < n; i++) {
             g_string_append_c(s, ',');
-            g_string_append(s, nm_ip4_config_get_search(ip4_config, i));
+            g_string_append(s, strarr[i]);
         }
         nm_strv_ptrarray_take_gstring(cmd, &s);
     }
@@ -182,8 +194,6 @@ create_dm_cmd_line(const char *       iface,
          * did not ask for this option. See https://www.lorier.net/docs/android-metered.html */
         nm_strv_ptrarray_add_string_dup(cmd, "--dhcp-option-force=43,ANDROID_METERED");
     }
-
-    nm_strv_ptrarray_add_string_dup(cmd, "--dhcp-lease-max=50");
 
     nm_strv_ptrarray_add_string_printf(cmd,
                                        "--dhcp-leasefile=%s/dnsmasq-%s.leases",
@@ -203,10 +213,10 @@ create_dm_cmd_line(const char *       iface,
 static void
 kill_existing_by_pidfile(const char *pidfile)
 {
-    char *      contents = NULL;
+    char       *contents = NULL;
     pid_t       pid;
     char        proc_path[250];
-    char *      cmdline_contents = NULL;
+    char       *cmdline_contents = NULL;
     guint64     start_time;
     const char *exe;
 
@@ -237,25 +247,25 @@ out:
 }
 
 gboolean
-nm_dnsmasq_manager_start(NMDnsMasqManager *manager,
-                         NMIP4Config *     ip4_config,
-                         gboolean          announce_android_metered,
-                         GError **         error)
+nm_dnsmasq_manager_start(NMDnsMasqManager     *manager,
+                         const NML3ConfigData *l3cd,
+                         gboolean              announce_android_metered,
+                         GError              **error)
 {
-    NMDnsMasqManagerPrivate *priv;
     gs_unref_ptrarray GPtrArray *dm_cmd  = NULL;
-    gs_free char *               cmd_str = NULL;
+    gs_free char                *cmd_str = NULL;
+    NMDnsMasqManagerPrivate     *priv;
 
     g_return_val_if_fail(NM_IS_DNSMASQ_MANAGER(manager), FALSE);
     g_return_val_if_fail(!error || !*error, FALSE);
-    g_return_val_if_fail(nm_ip4_config_get_num_addresses(ip4_config) > 0, FALSE);
+    g_return_val_if_fail(NM_IS_L3_CONFIG_DATA(l3cd), FALSE);
+    g_return_val_if_fail(nm_l3_config_data_get_num_addresses(l3cd, AF_INET) > 0, FALSE);
 
     priv = NM_DNSMASQ_MANAGER_GET_PRIVATE(manager);
 
     kill_existing_by_pidfile(priv->pidfile);
 
-    dm_cmd =
-        create_dm_cmd_line(priv->iface, ip4_config, priv->pidfile, announce_android_metered, error);
+    dm_cmd = create_dm_cmd_line(priv->iface, l3cd, priv->pidfile, announce_android_metered, error);
     if (!dm_cmd)
         return FALSE;
 
@@ -310,7 +320,7 @@ nm_dnsmasq_manager_init(NMDnsMasqManager *manager)
 NMDnsMasqManager *
 nm_dnsmasq_manager_new(const char *iface)
 {
-    NMDnsMasqManager *       manager;
+    NMDnsMasqManager        *manager;
     NMDnsMasqManagerPrivate *priv;
 
     manager = g_object_new(NM_TYPE_DNSMASQ_MANAGER, NULL);

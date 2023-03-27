@@ -7,7 +7,7 @@
 #define __NM_DEVICE_VLAN_H__
 
 #if !defined(__NETWORKMANAGER_H_INSIDE__) && !defined(NETWORKMANAGER_COMPILATION)
-    #error "Only <NetworkManager.h> can be included directly."
+#error "Only <NetworkManager.h> can be included directly."
 #endif
 
 #include "nm-device.h"
@@ -31,6 +31,7 @@ G_BEGIN_DECLS
 /**
  * NMDeviceVlan:
  */
+typedef struct _NMDeviceVlan      NMDeviceVlan;
 typedef struct _NMDeviceVlanClass NMDeviceVlanClass;
 
 GType nm_device_vlan_get_type(void);

@@ -34,8 +34,8 @@ NM_GOBJECT_PROPERTIES_DEFINE_BASE(PROP_CARRIER,
 
 typedef struct {
     NMLDBusPropertyO parent;
-    char *           group;
-    char *           local;
+    char            *group;
+    char            *local;
     guint32          id;
     guint32          limit;
     guint32          ageing;
@@ -96,10 +96,10 @@ nm_device_vxlan_get_hw_address(NMDeviceVxlan *device)
  *
  * Returns: %TRUE if the device has carrier.
  *
- * Since: 1.2
- *
  * This property is not implemented yet, and the function always returns
  * FALSE.
+ *
+ * Since: 1.42
  **/
 gboolean
 nm_device_vxlan_get_carrier(NMDeviceVxlan *device)
@@ -325,7 +325,7 @@ nm_device_vxlan_get_proxy(NMDeviceVxlan *device)
  *
  * Returns: whether route short circuit is turned on
  *
- * Since: 1.2
+ * Since: 1.42
  **/
 gboolean
 nm_device_vxlan_get_rsc(NMDeviceVxlan *device)
@@ -522,7 +522,7 @@ const NMLDBusMetaIface _nml_dbus_meta_iface_nm_device_vxlan = NML_DBUS_META_IFAC
 static void
 nm_device_vxlan_class_init(NMDeviceVxlanClass *klass)
 {
-    GObjectClass * object_class    = G_OBJECT_CLASS(klass);
+    GObjectClass  *object_class    = G_OBJECT_CLASS(klass);
     NMObjectClass *nm_object_class = NM_OBJECT_CLASS(klass);
     NMDeviceClass *device_class    = NM_DEVICE_CLASS(klass);
 
@@ -541,9 +541,9 @@ nm_device_vxlan_class_init(NMDeviceVxlanClass *klass)
      *
      * Whether the device has carrier.
      *
-     * Since: 1.2
-     *
      * This property is not implemented yet, and the property is always FALSE.
+     *
+     * Since: 1.2
      **/
     obj_properties[PROP_CARRIER] = g_param_spec_boolean(NM_DEVICE_VXLAN_CARRIER,
                                                         "",

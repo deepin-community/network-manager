@@ -15,7 +15,7 @@
 #include "nm-dbus-interface.h"
 
 #ifndef NM_VERSION_H
-    #define NM_DEPRECATED_IN_1_8_FOR(n)
+#define NM_DEPRECATED_IN_1_8_FOR(n)
 #endif
 
 /*
@@ -171,7 +171,7 @@ typedef enum {
 } NMVpnPluginFailure;
 
 #ifndef NM_VERSION_H
-    #undef NM_DEPRECATED_IN_1_8_FOR
+#undef NM_DEPRECATED_IN_1_8_FOR
 #endif
 
 /*** Generic config ***/
@@ -273,7 +273,7 @@ typedef enum {
  */
 #define NM_VPN_PLUGIN_IP6_CONFIG_PTP "ptp"
 
-/* uint32: prefix length of the VPN interface; 1 - 128 inclusive */
+/* uint32: prefix length of the VPN interface; 0 - 128 inclusive */
 #define NM_VPN_PLUGIN_IP6_CONFIG_PREFIX "prefix"
 
 /* array of array of uint8: IP addresses of DNS servers for the VPN (network byte order) */

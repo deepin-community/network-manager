@@ -14,17 +14,17 @@
 #include <sys/stat.h>
 
 #if SESSION_TRACKING_SYSTEMD && SESSION_TRACKING_ELOGIND
-    #error Cannot build both systemd-logind and elogind support
+#error Cannot build both systemd-logind and elogind support
 #endif
 
 #if SESSION_TRACKING_SYSTEMD
-    #include <systemd/sd-login.h>
-    #define LOGIND_NAME "systemd-logind"
+#include <systemd/sd-login.h>
+#define LOGIND_NAME "systemd-logind"
 #endif
 
 #if SESSION_TRACKING_ELOGIND
-    #include <elogind/sd-login.h>
-    #define LOGIND_NAME "elogind"
+#include <elogind/sd-login.h>
+#define LOGIND_NAME "elogind"
 #endif
 
 #include "NetworkManagerUtils.h"
@@ -48,14 +48,14 @@ struct _NMSessionMonitor {
 #if SESSION_TRACKING_XLOGIND
     struct {
         sd_login_monitor *monitor;
-        GSource *         watch;
+        GSource          *watch;
     } sd;
 #endif
 
 #if SESSION_TRACKING_CONSOLEKIT
     struct {
         GFileMonitor *monitor;
-        GHashTable *  cache;
+        GHashTable   *cache;
         time_t        timestamp;
     } ck;
 #endif
@@ -114,13 +114,10 @@ st_sd_init(NMSessionMonitor *monitor)
         return;
     }
 
-    monitor->sd.watch = nm_g_unix_fd_source_new(sd_login_monitor_get_fd(monitor->sd.monitor),
+    monitor->sd.watch = nm_g_unix_fd_add_source(sd_login_monitor_get_fd(monitor->sd.monitor),
                                                 G_IO_IN,
-                                                G_PRIORITY_DEFAULT,
                                                 st_sd_changed,
-                                                monitor,
-                                                NULL);
-    g_source_attach(monitor->sd.watch, NULL);
+                                                monitor);
 }
 
 static void
@@ -145,8 +142,8 @@ static gboolean
 ck_load_cache(GHashTable *cache)
 {
     GKeyFile *keyfile = g_key_file_new();
-    char **   groups  = NULL;
-    GError *  error   = NULL;
+    char    **groups  = NULL;
+    GError   *error   = NULL;
     gsize     i, len;
     gboolean  finished = FALSE;
 
@@ -235,9 +232,9 @@ ck_session_exists(NMSessionMonitor *monitor, uid_t uid, gboolean active)
 }
 
 static void
-ck_changed(GFileMonitor *    file_monitor,
-           GFile *           file,
-           GFile *           other_file,
+ck_changed(GFileMonitor     *file_monitor,
+           GFile            *file,
+           GFile            *other_file,
            GFileMonitorEvent event_type,
            gpointer          user_data)
 {
@@ -247,7 +244,7 @@ ck_changed(GFileMonitor *    file_monitor,
 static void
 ck_init(NMSessionMonitor *monitor)
 {
-    GFile * file  = g_file_new_for_path(CKDB_PATH);
+    GFile  *file  = g_file_new_for_path(CKDB_PATH);
     GError *error = NULL;
 
     if (g_file_query_exists(file, NULL)) {

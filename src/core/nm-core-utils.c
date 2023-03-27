@@ -39,8 +39,8 @@
 #include "nm-setting-wireless-security.h"
 
 #ifdef __NM_SD_UTILS_H__
-    #error \
-        "nm-core-utils.c should stay independent of systemd utils. Are you looking for NetworkMangerUtils.c? "
+#error \
+    "nm-core-utils.c should stay independent of systemd utils. Are you looking for NetworkMangerUtils.c? "
 #endif
 
 G_STATIC_ASSERT(sizeof(NMUtilsTestFlags) <= sizeof(int));
@@ -58,7 +58,7 @@ G_STATIC_ASSERT(sizeof(NMUtilsTestFlags) <= sizeof(int));
 static int _nm_utils_testing = 0;
 
 gboolean
-nm_utils_get_testing_initialized()
+nm_utils_get_testing_initialized(void)
 {
     NMUtilsTestFlags flags;
 
@@ -69,7 +69,7 @@ nm_utils_get_testing_initialized()
 }
 
 NMUtilsTestFlags
-nm_utils_get_testing()
+nm_utils_get_testing(void)
 {
     NMUtilsTestFlags flags;
 
@@ -110,7 +110,7 @@ _nm_utils_set_testing(NMUtilsTestFlags flags)
 
 /*****************************************************************************/
 
-static GSList * _singletons          = NULL;
+static GSList  *_singletons          = NULL;
 static gboolean _singletons_shutdown = FALSE;
 
 static void
@@ -292,7 +292,7 @@ typedef struct {
         } sync;
     };
     NMUtilsKillChildAsyncCb callback;
-    void *                  user_data;
+    void                   *user_data;
 
     char log_name[1]; /* variable-length object, must be last element!! */
 } KillChildAsyncData;
@@ -304,9 +304,9 @@ typedef struct {
 static KillChildAsyncData *
 _kc_async_data_alloc(pid_t                   pid,
                      NMLogDomain             log_domain,
-                     const char *            log_name,
+                     const char             *log_name,
                      NMUtilsKillChildAsyncCb callback,
-                     void *                  user_data)
+                     void                   *user_data)
 {
     KillChildAsyncData *data;
     size_t              log_name_len;
@@ -443,9 +443,9 @@ _kc_invoke_callback_idle(gpointer user_data)
 static void
 _kc_invoke_callback(pid_t                   pid,
                     NMLogDomain             log_domain,
-                    const char *            log_name,
+                    const char             *log_name,
                     NMUtilsKillChildAsyncCb callback,
-                    void *                  user_data,
+                    void                   *user_data,
                     gboolean                success,
                     int                     child_status)
 {
@@ -458,7 +458,7 @@ _kc_invoke_callback(pid_t                   pid,
     data->sync.success      = success;
     data->sync.child_status = child_status;
 
-    g_idle_add(_kc_invoke_callback_idle, data);
+    nm_g_idle_add(_kc_invoke_callback_idle, data);
 }
 
 /* nm_utils_kill_child_async:
@@ -482,10 +482,10 @@ void
 nm_utils_kill_child_async(pid_t                   pid,
                           int                     sig,
                           NMLogDomain             log_domain,
-                          const char *            log_name,
+                          const char             *log_name,
                           guint32                 wait_before_kill_msec,
                           NMUtilsKillChildAsyncCb callback,
-                          void *                  user_data)
+                          void                   *user_data)
 {
     int                 status = 0, errsv;
     pid_t               ret;
@@ -620,7 +620,7 @@ nm_utils_kill_child_sync(pid_t       pid,
                          int         sig,
                          NMLogDomain log_domain,
                          const char *log_name,
-                         int *       child_status,
+                         int        *child_status,
                          guint32     wait_before_kill_msec,
                          guint32     sleep_duration_msec)
 {
@@ -1176,14 +1176,14 @@ typedef struct {
 
 static gboolean
 match_device_s390_subchannels_parse(const char *s390_subchannels,
-                                    guint32 *   out_a,
-                                    guint32 *   out_b,
-                                    guint32 *   out_c)
+                                    guint32    *out_a,
+                                    guint32    *out_b,
+                                    guint32    *out_c)
 {
     char      buf[30 + 1];
     const int BUFSIZE = G_N_ELEMENTS(buf) - 1;
     guint     i       = 0;
-    char *    pa = NULL, *pb = NULL, *pc = NULL;
+    char     *pa = NULL, *pb = NULL, *pc = NULL;
     gint64    a, b, c;
 
     nm_assert(s390_subchannels);
@@ -1417,20 +1417,20 @@ match_device_eval(const char *spec_str, gboolean allow_fuzzy, MatchDeviceData *m
 
 NMMatchSpecMatchType
 nm_match_spec_device(const GSList *specs,
-                     const char *  interface_name,
-                     const char *  device_type,
-                     const char *  driver,
-                     const char *  driver_version,
-                     const char *  hwaddr,
-                     const char *  s390_subchannels,
-                     const char *  dhcp_plugin)
+                     const char   *interface_name,
+                     const char   *device_type,
+                     const char   *driver,
+                     const char   *driver_version,
+                     const char   *hwaddr,
+                     const char   *s390_subchannels,
+                     const char   *dhcp_plugin)
 {
-    const GSList *  iter;
+    const GSList   *iter;
     gboolean        has_match        = FALSE;
     gboolean        has_match_except = FALSE;
     gboolean        has_except       = FALSE;
     gboolean        has_not_except   = FALSE;
-    const char *    spec_str;
+    const char     *spec_str;
     MatchDeviceData match_data = {
         .interface_name = interface_name,
         .device_type    = nm_str_not_empty(device_type),
@@ -1511,12 +1511,12 @@ match_connection_eval(const char *spec_str, const MatchConnectionData *match_dat
 static NMMatchSpecMatchType
 match_spec_connection(const GSList *specs, const char *id, const char *uuid, const char *origin)
 {
-    const GSList *            iter;
+    const GSList             *iter;
     gboolean                  has_match        = FALSE;
     gboolean                  has_match_except = FALSE;
     gboolean                  has_except       = FALSE;
     gboolean                  has_not_except   = FALSE;
-    const char *              spec_str;
+    const char               *spec_str;
     const MatchConnectionData match_data = {
         .id     = nm_str_not_empty(id),
         .uuid   = nm_str_not_empty(uuid),
@@ -1564,8 +1564,8 @@ nm_utils_connection_match_spec_list(NMConnection *connection,
                                     int           no_match_value)
 {
     NMMatchSpecMatchType m;
-    NMSettingUser *      s_user;
-    const char *         origin = NULL;
+    NMSettingUser       *s_user;
+    const char          *origin = NULL;
 
     if (!specs)
         return no_match_value;
@@ -1593,7 +1593,7 @@ nm_utils_connection_match_spec_list(NMConnection *connection,
 static gboolean
 match_config_eval(const char *str, const char *tag, guint cur_nm_version)
 {
-    gs_free char *     s_ver        = NULL;
+    gs_free char      *s_ver        = NULL;
     gs_strfreev char **s_ver_tokens = NULL;
     int                v_maj = -1, v_min = -1, v_mic = -1;
     guint              c_maj = -1, c_min = -1, c_mic = -1;
@@ -1735,7 +1735,7 @@ nm_match_spec_config(const GSList *specs, guint cur_nm_version, const char *env)
 GSList *
 nm_match_spec_split(const char *value)
 {
-    char *  string_value, *p, *q0, *q;
+    char   *string_value, *p, *q0, *q;
     GSList *pieces = NULL;
     int     trailing_ws;
 
@@ -1835,7 +1835,7 @@ char *
 nm_match_spec_join(GSList *specs)
 {
     const char *p;
-    GString *   str;
+    GString    *str;
 
     str = g_string_new("");
 
@@ -1898,10 +1898,10 @@ nm_match_spec_join(GSList *specs)
 }
 
 static void
-_pattern_parse(const char * input,
+_pattern_parse(const char  *input,
                const char **out_pattern,
-               gboolean *   out_is_inverted,
-               gboolean *   out_is_mandatory)
+               gboolean    *out_is_inverted,
+               gboolean    *out_is_mandatory)
 {
     gboolean is_inverted  = FALSE;
     gboolean is_mandatory = FALSE;
@@ -2006,7 +2006,7 @@ gboolean
 nm_utils_kernel_cmdline_match_check(const char *const *proc_cmdline,
                                     const char *const *patterns,
                                     guint              num_patterns,
-                                    GError **          error)
+                                    GError           **error)
 {
     gboolean has_optional     = FALSE;
     gboolean has_any_optional = FALSE;
@@ -2109,13 +2109,13 @@ nm_utils_cmp_connection_by_autoconnect_priority(NMConnection *a, NMConnection *b
 
 typedef struct {
     const char *name;
-    NMSetting * setting;
-    NMSetting * diff_base_setting;
+    NMSetting  *setting;
+    NMSetting  *diff_base_setting;
     GHashTable *setting_diff;
 } LogConnectionSettingData;
 
 typedef struct {
-    const char *        item_name;
+    const char         *item_name;
     NMSettingDiffResult diff_result;
 } LogConnectionSettingItem;
 
@@ -2125,7 +2125,7 @@ _log_connection_sort_hashes_fcn(gconstpointer a, gconstpointer b)
     const LogConnectionSettingData *v1 = a;
     const LogConnectionSettingData *v2 = b;
     NMSettingPriority               p1, p2;
-    NMSetting *                     s1, *s2;
+    NMSetting                      *s1, *s2;
 
     s1 = v1->setting ?: v1->diff_base_setting;
     s2 = v2->setting ?: v2->diff_base_setting;
@@ -2144,10 +2144,10 @@ _log_connection_sort_hashes_fcn(gconstpointer a, gconstpointer b)
 static GArray *
 _log_connection_sort_hashes(NMConnection *connection,
                             NMConnection *diff_base,
-                            GHashTable *  connection_diff)
+                            GHashTable   *connection_diff)
 {
     GHashTableIter           iter;
-    GArray *                 sorted_hashes;
+    GArray                  *sorted_hashes;
     LogConnectionSettingData setting_data;
 
     sorted_hashes = g_array_sized_new(TRUE,
@@ -2192,7 +2192,7 @@ static char *
 _log_connection_get_property(NMSetting *setting, const char *name)
 {
     GValue val = G_VALUE_INIT;
-    char * s;
+    char  *s;
 
     g_return_val_if_fail(setting, NULL);
 
@@ -2215,6 +2215,8 @@ _log_connection_get_property(NMSetting *setting, const char *name)
             s = g_strdup_printf("'%s'", escaped);
             g_free(escaped);
         }
+    } else if (G_VALUE_HOLDS_VARIANT(&val)) {
+        s = g_variant_print(g_value_get_variant(&val), FALSE);
     } else {
         s = g_strdup_value_contents(&val);
         if (s == NULL)
@@ -2253,18 +2255,18 @@ nm_utils_log_connection_diff(NMConnection *connection,
                              NMConnection *diff_base,
                              guint32       level,
                              guint64       domain,
-                             const char *  name,
-                             const char *  prefix,
-                             const char *  dbus_path)
+                             const char   *name,
+                             const char   *prefix,
+                             const char   *dbus_path)
 {
     GHashTable *connection_diff = NULL;
-    GArray *    sorted_hashes;
-    GArray *    sorted_names = NULL;
+    GArray     *sorted_hashes;
+    GArray     *sorted_names = NULL;
     int         i, j;
     gboolean    connection_diff_are_same;
     gboolean    print_header = TRUE;
     gboolean    print_setting_header;
-    GString *   str1;
+    GString    *str1;
 
     g_return_if_fail(NM_IS_CONNECTION(connection));
     g_return_if_fail(!diff_base || (NM_IS_CONNECTION(diff_base) && diff_base != connection));
@@ -2331,14 +2333,14 @@ nm_utils_log_connection_diff(NMConnection *connection,
 
     for (i = 0; i < sorted_hashes->len; i++) {
         LogConnectionSettingData *setting_data =
-            &g_array_index(sorted_hashes, LogConnectionSettingData, i);
+            &nm_g_array_index(sorted_hashes, LogConnectionSettingData, i);
 
         _log_connection_sort_names(setting_data, sorted_names);
         print_setting_header = TRUE;
         for (j = 0; j < sorted_names->len; j++) {
-            char *                    str_conn, *str_diff;
+            char                     *str_conn, *str_diff;
             LogConnectionSettingItem *item =
-                &g_array_index(sorted_names, LogConnectionSettingItem, j);
+                &nm_g_array_index(sorted_names, LogConnectionSettingItem, j);
 
             str_conn = (item->diff_result & NM_SETTING_DIFF_RESULT_IN_A)
                            ? _log_connection_get_property(setting_data->setting, item->item_name)
@@ -2349,7 +2351,7 @@ nm_utils_log_connection_diff(NMConnection *connection,
                     : NULL;
 
             if (print_header) {
-                GError *    err_verify = NULL;
+                GError     *err_verify = NULL;
                 const char *t1, *t2;
 
                 t1 = nm_connection_get_connection_type(connection);
@@ -2484,8 +2486,6 @@ out:
 
 typedef struct {
     NMUuid bin;
-    char
-        _nul_sentinel; /* just for safety, if somebody accidentally uses the binary in a string context. */
 
     /* depending on whether the string is packed or not (with/without hyphens),
      * it's 32 or 36 characters long (plus the trailing NUL).
@@ -2503,9 +2503,8 @@ _uuid_data_init(UuidData *uuid_data, gboolean packed, gboolean is_fake, const NM
     nm_assert(uuid_data);
     nm_assert(uuid);
 
-    uuid_data->bin           = *uuid;
-    uuid_data->_nul_sentinel = '\0';
-    uuid_data->is_fake       = is_fake;
+    uuid_data->bin     = *uuid;
+    uuid_data->is_fake = is_fake;
     if (packed) {
         G_STATIC_ASSERT_EXPR(sizeof(uuid_data->str) >= (sizeof(*uuid) * 2 + 1));
         nm_utils_bin2hexstr_full(uuid, sizeof(*uuid), '\0', FALSE, uuid_data->str);
@@ -2529,9 +2528,9 @@ again:
     if (G_UNLIKELY(!d)) {
         static gsize    lock;
         static UuidData uuid_data;
-        gs_free char *  content   = NULL;
+        gs_free char   *content   = NULL;
         gboolean        is_fake   = TRUE;
-        const char *    fake_type = NULL;
+        const char     *fake_type = NULL;
         NMUuid          uuid;
 
         /* Get the machine ID from /etc/machine-id; it's always in /etc no matter
@@ -2573,7 +2572,7 @@ again:
 
         if (is_fake) {
             const guint8 *seed_bin;
-            const char *  hash_seed;
+            const NMUuid *hash_seed;
             gsize         seed_len;
 
             if (!allow_fake) {
@@ -2583,6 +2582,9 @@ again:
             }
 
             if (nm_utils_host_id_get(&seed_bin, &seed_len)) {
+                static const NMUuid u =
+                    NM_UUID_INIT(ab, 08, 5f, 06, b6, 29, 46, d1, a5, 53, 84, ee, ba, 56, 83, b6);
+
                 /* We have no valid machine-id but we have a valid secrey_key.
                  * Generate a fake machine ID by hashing the secret-key. The secret_key
                  * is commonly persisted, so it should be stable across reboots (despite
@@ -2595,8 +2597,11 @@ again:
                  * will call _machine_id_get(FALSE), so it won't allow accessing a fake
                  * machine-id, thus avoiding the problem. */
                 fake_type = "secret-key";
-                hash_seed = "ab085f06-b629-46d1-a553-84eeba5683b6";
+                hash_seed = &u;
             } else {
+                static const NMUuid u =
+                    NM_UUID_INIT(7f, f0, c8, f5, 53, 99, 49, 01, ab, 63, 61, bf, 59, 4a, be, 8b);
+
                 /* the secret-key is not valid/persistent either. That happens when we fail
                  * to read/write the secret-key to disk. Fallback to boot-id. The boot-id
                  * itself may be fake and randomly generated ad-hoc, but that is as best
@@ -2604,7 +2609,7 @@ again:
                 seed_bin  = (const guint8 *) nm_utils_boot_id_bin();
                 seed_len  = sizeof(NMUuid);
                 fake_type = "boot-id";
-                hash_seed = "7ff0c8f5-5399-4901-ab63-61bf594abe8b";
+                hash_seed = &u;
             }
 
             /* the fake machine-id is based on secret-key/boot-id, but we hash it
@@ -2613,7 +2618,7 @@ again:
                                          (const char *) seed_bin,
                                          seed_len,
                                          NM_UUID_TYPE_VERSION5,
-                                         (gpointer) hash_seed);
+                                         hash_seed);
         }
 
         if (!g_once_init_enter(&lock))
@@ -2663,7 +2668,7 @@ static gboolean
 _host_id_read_timestamp(gboolean      use_secret_key_file,
                         const guint8 *host_id,
                         gsize         host_id_len,
-                        gint64 *      out_timestamp_ns)
+                        gint64       *out_timestamp_ns)
 {
     struct stat st;
     gint64      now;
@@ -2687,8 +2692,9 @@ _host_id_read_timestamp(gboolean      use_secret_key_file,
      * timestamp. It is wrong to worry about using a fake timestamp (which is tied to
      * the secret_key) if we are unable to access the secret_key file in the first place.
      *
-     * Pick a random timestamp from the past two years. Yes, this timestamp
-     * is not stable across restarts, but apparently neither is the host-id
+     * Pick a timestamp from the past two years, by using a generated timespan
+     * by hashing the host-id. Yes, this timestamp counts back from @now, and is
+     * thus not stable across restarts. But apparently neither is the host-id
      * nor the secret_key itself. */
 
 #define EPOCH_TWO_YEARS (G_GINT64_CONSTANT(2 * 365 * 24 * 3600) * NM_UTILS_NSEC_PER_SEC)
@@ -2705,17 +2711,23 @@ _host_id_read_timestamp(gboolean      use_secret_key_file,
 static const guint8 *
 _host_id_hash_v2(const guint8 *seed_arr,
                  gsize         seed_len,
-                 guint8 *      out_digest /* 32 bytes (NM_UTILS_CHECKSUM_LENGTH_SHA256) */)
+                 guint8       *out_digest /* 32 bytes (NM_UTILS_CHECKSUM_LENGTH_SHA256) */)
 {
     nm_auto_free_checksum GChecksum *sum = g_checksum_new(G_CHECKSUM_SHA256);
-    const UuidData *                 machine_id_data;
+    const UuidData                  *machine_id_data;
     char                             slen[100];
 
-    /*
-        (stat -c '%s' /var/lib/NetworkManager/secret_key;
-         echo -n ' ';
-         cat /var/lib/NetworkManager/secret_key;
-         cat /etc/machine-id | tr -d '\n' | sed -n 's/[a-f0-9-]/\0/pg') | sha256sum
+    /* The following snippet generates the same (binary) host-id:
+
+        (
+          stat -c '%s' /var/lib/NetworkManager/secret_key | tr -d '\n';
+          echo -n ' ';
+          cat /var/lib/NetworkManager/secret_key;
+          cat /etc/machine-id | tr -d '\n' | sed -n 's/[a-f0-9-]/\0/pg'
+        ) \
+        | sha256sum \
+        | awk '{print $1}' \
+        | xxd -r -p
     */
 
     nm_sprintf_buf(slen, "%" G_GSIZE_FORMAT " ", seed_len);
@@ -2737,9 +2749,9 @@ _host_id_read(guint8 **out_host_id, gsize *out_host_id_len)
 #define SECRET_KEY_LEN 32u
     guint8                               sha256_digest[NM_UTILS_CHECKSUM_LENGTH_SHA256];
     nm_auto_clear_secret_ptr NMSecretPtr file_content = {0};
-    const guint8 *                       secret_arr;
+    const guint8                        *secret_arr;
     gsize                                secret_len;
-    GError *                             error = NULL;
+    GError                              *error = NULL;
     gboolean                             success;
 
     if (!nm_utils_file_get_contents(-1,
@@ -2808,7 +2820,10 @@ _host_id_read(guint8 **out_host_id, gsize *out_host_id_len)
         int    base64_save  = 0;
         gsize  len;
 
-        success = nm_utils_random_bytes(rnd_buf, sizeof(rnd_buf));
+        if (nm_random_get_crypto_bytes(rnd_buf, sizeof(rnd_buf)) < 0)
+            nm_random_get_bytes_full(rnd_buf, sizeof(rnd_buf), &success);
+        else
+            success = TRUE;
 
         /* Our key is really binary data. But since we anyway generate a random seed
          * (with 32 random bytes), don't write it in binary, but instead create
@@ -2869,15 +2884,22 @@ out:
 typedef struct {
     guint8 *host_id;
     gsize   host_id_len;
-    gint64  timestamp_ns;
-    bool    is_good : 1;
-    bool    timestamp_is_good : 1;
+
+    /* The timestamp (in nsec since the Epoch) returned by nm_utils_host_id_get_timestamp_nsec().
+     * It is associated with the host (and the host-id). We currently use this for the LLT DUID
+     * generation for IPv6. Instead of persisting the timestamp separately to disk, we re-use the
+     * file timestamp of the secret_key file. */
+    gint64 timestamp_nsec;
+
+    bool is_good : 1;
+    bool timestamp_is_good : 1;
 } HostIdData;
+
+static const HostIdData *volatile host_id_static;
 
 static const HostIdData *
 _host_id_get(void)
 {
-    static const HostIdData *volatile host_id_static;
     const HostIdData *host_id;
 
 again:
@@ -2894,7 +2916,7 @@ again:
         host_id_data.timestamp_is_good = _host_id_read_timestamp(host_id_data.is_good,
                                                                  host_id_data.host_id,
                                                                  host_id_data.host_id_len,
-                                                                 &host_id_data.timestamp_ns);
+                                                                 &host_id_data.timestamp_nsec);
         if (!host_id_data.timestamp_is_good && host_id_data.is_good)
             nm_log_warn(LOGD_CORE, "secret-key: failure reading host timestamp (use fake one)");
 
@@ -2933,9 +2955,81 @@ nm_utils_host_id_get(const guint8 **out_host_id, gsize *out_host_id_len)
 }
 
 gint64
-nm_utils_host_id_get_timestamp_ns(void)
+nm_utils_host_id_get_timestamp_nsec(void)
 {
-    return _host_id_get()->timestamp_ns;
+    return _host_id_get()->timestamp_nsec;
+}
+
+static GArray    *nmtst_host_id_stack = NULL;
+static GMutex     nmtst_host_id_lock;
+const HostIdData *nmtst_host_id_static_0 = NULL;
+
+void
+nmtst_utils_host_id_push(const guint8 *host_id,
+                         gssize        host_id_len,
+                         gboolean      is_good,
+                         const gint64 *p_timestamp_nsec)
+{
+    NM_G_MUTEX_LOCKED(&nmtst_host_id_lock);
+    gs_free char *str1_to_free = NULL;
+    HostIdData   *h;
+
+    g_assert(host_id_len >= -1);
+
+    if (host_id_len < 0)
+        host_id_len = host_id ? strlen((const char *) host_id) : 0;
+
+    nm_log_dbg(LOGD_CORE,
+               "nmtst: host-id push: \"%s\" (%zu), is-good=%d, timestamp=%" G_GINT64_FORMAT "%s",
+               nm_utils_buf_utf8safe_escape(host_id,
+                                            host_id_len,
+                                            NM_UTILS_STR_UTF8_SAFE_FLAG_ESCAPE_CTRL,
+                                            &str1_to_free),
+               (gsize) host_id_len,
+               !!is_good,
+               p_timestamp_nsec ? *p_timestamp_nsec : 0,
+               p_timestamp_nsec ? "" : " (not-good)");
+
+    if (!nmtst_host_id_stack) {
+        nmtst_host_id_stack    = g_array_new(FALSE, FALSE, sizeof(HostIdData));
+        nmtst_host_id_static_0 = g_atomic_pointer_get(&host_id_static);
+    }
+
+    h = nm_g_array_append_new(nmtst_host_id_stack, HostIdData);
+
+    *h = (HostIdData){
+        .host_id           = nm_memdup(host_id, host_id_len),
+        .host_id_len       = host_id_len,
+        .timestamp_nsec    = p_timestamp_nsec ? *p_timestamp_nsec : 0,
+        .is_good           = is_good,
+        .timestamp_is_good = !!p_timestamp_nsec,
+    };
+
+    g_atomic_pointer_set(&host_id_static, h);
+}
+
+void
+nmtst_utils_host_id_pop(void)
+{
+    NM_G_MUTEX_LOCKED(&nmtst_host_id_lock);
+    HostIdData *h;
+
+    g_assert(nmtst_host_id_stack);
+    g_assert(nmtst_host_id_stack->len > 0);
+
+    nm_log_dbg(LOGD_CORE, "nmtst: host-id pop");
+
+    h = &nm_g_array_index(nmtst_host_id_stack, HostIdData, nmtst_host_id_stack->len - 1);
+
+    g_free((char *) h->host_id);
+    g_array_set_size(nmtst_host_id_stack, nmtst_host_id_stack->len - 1u);
+
+    if (!g_atomic_pointer_compare_and_exchange(
+            &host_id_static,
+            h,
+            nmtst_host_id_stack->len == 0u ? nmtst_host_id_static_0
+                                           : &nm_g_array_last(nmtst_host_id_stack, HostIdData)))
+        g_assert_not_reached();
 }
 
 /*****************************************************************************/
@@ -2951,7 +3045,7 @@ again:
     if (G_UNLIKELY(!d)) {
         static gsize    lock;
         static UuidData boot_id;
-        gs_free char *  contents = NULL;
+        gs_free char   *contents = NULL;
         NMUuid          uuid;
         gboolean        is_fake = FALSE;
 
@@ -3005,7 +3099,10 @@ again:
     if (G_UNLIKELY(!proc_cmdline)) {
         gs_free char *str = NULL;
 
-        g_file_get_contents("/proc/cmdline", &str, NULL, NULL);
+        /* /run/NetworkManager/proc-cmdline can be used to overrule /proc/cmdline. */
+        if (!g_file_get_contents(NMRUNDIR "/proc-cmdline", &str, NULL, NULL))
+            g_file_get_contents("/proc/cmdline", &str, NULL, NULL);
+
         str = nm_str_realloc(str);
 
         proc_cmdline = str ?: "";
@@ -3155,7 +3252,7 @@ get_gre_eui64_u_bit(guint32 addr)
  */
 gboolean
 nm_utils_get_ipv6_interface_identifier(NMLinkType          link_type,
-                                       const guint8 *      hwaddr,
+                                       const guint8       *hwaddr,
                                        guint               hwaddr_len,
                                        guint               dev_id,
                                        NMUtilsIPv6IfaceId *out_iid)
@@ -3174,25 +3271,32 @@ nm_utils_get_ipv6_interface_identifier(NMLinkType          link_type,
          * making sure to set the 'u' bit to 1.  The GUID is the lower 64 bits
          * of the IPoIB interface's hardware address.
          */
-        g_return_val_if_fail(hwaddr_len == INFINIBAND_ALEN, FALSE);
-        memcpy(out_iid->id_u8, hwaddr + INFINIBAND_ALEN - 8, 8);
-        out_iid->id_u8[0] |= 0x02;
-        return TRUE;
+        if (hwaddr_len == INFINIBAND_ALEN) {
+            memcpy(out_iid->id_u8, hwaddr + INFINIBAND_ALEN - 8, 8);
+            out_iid->id_u8[0] |= 0x02;
+            return TRUE;
+        }
+        break;
     case NM_LINK_TYPE_GRE:
         /* Hardware address is the network-endian IPv4 address */
-        g_return_val_if_fail(hwaddr_len == 4, FALSE);
-        addr              = *(guint32 *) hwaddr;
-        out_iid->id_u8[0] = get_gre_eui64_u_bit(addr);
-        out_iid->id_u8[1] = 0x00;
-        out_iid->id_u8[2] = 0x5E;
-        out_iid->id_u8[3] = 0xFE;
-        memcpy(out_iid->id_u8 + 4, &addr, 4);
-        return TRUE;
+        if (hwaddr_len == 4) {
+            addr              = unaligned_read_ne32(hwaddr);
+            out_iid->id_u8[0] = get_gre_eui64_u_bit(addr);
+            out_iid->id_u8[1] = 0x00;
+            out_iid->id_u8[2] = 0x5E;
+            out_iid->id_u8[3] = 0xFE;
+            memcpy(out_iid->id_u8 + 4, &addr, 4);
+            return TRUE;
+        }
+        break;
     case NM_LINK_TYPE_6LOWPAN:
         /* The hardware address is already 64-bit. This is the case for
          * IEEE 802.15.4 networks. */
-        memcpy(out_iid->id_u8, hwaddr, sizeof(out_iid->id_u8));
-        return TRUE;
+        if (hwaddr_len == sizeof(out_iid->id_u8)) {
+            memcpy(out_iid->id_u8, hwaddr, sizeof(out_iid->id_u8));
+            return TRUE;
+        }
+        break;
     default:
         if (hwaddr_len == ETH_ALEN) {
             /* Translate 48-bit MAC address to a 64-bit Modified EUI-64.  See
@@ -3227,7 +3331,7 @@ nm_utils_stable_id_random(void)
 {
     char buf[15];
 
-    nm_utils_random_bytes(buf, sizeof(buf));
+    nm_random_get_bytes(buf, sizeof(buf));
     return g_base64_encode((guchar *) buf, sizeof(buf));
 }
 
@@ -3236,7 +3340,7 @@ nm_utils_stable_id_generated_complete(const char *stable_id_generated)
 {
     nm_auto_free_checksum GChecksum *sum = NULL;
     guint8                           buf[NM_UTILS_CHECKSUM_LENGTH_SHA1];
-    char *                           base64;
+    char                            *base64;
 
     /* for NM_UTILS_STABLE_TYPE_GENERATED we generate a possibly long string
      * by doing text-substitutions in nm_utils_stable_id_parse().
@@ -3264,8 +3368,13 @@ nm_utils_stable_id_generated_complete(const char *stable_id_generated)
 static void
 _stable_id_append(GString *str, const char *substitution)
 {
-    if (!substitution)
+    if (!substitution) {
+        /* Would have been nicer to append "=NIL;" to differentiate between
+         * empty and NULL.
+         *
+         * Can't do that now, as it would change behavior. */
         substitution = "";
+    }
     g_string_append_printf(str, "=%zu{%s}", strlen(substitution), substitution);
 }
 
@@ -3275,7 +3384,7 @@ nm_utils_stable_id_parse(const char *stable_id,
                          const char *hwaddr,
                          const char *bootid,
                          const char *uuid,
-                         char **     out_generated)
+                         char      **out_generated)
 {
     gsize    i, idx_start;
     GString *str = NULL;
@@ -3335,7 +3444,7 @@ nm_utils_stable_id_parse(const char *stable_id,
     ({                                                                        \
         gboolean _match = FALSE;                                              \
                                                                               \
-        if (g_str_has_prefix(&stable_id[i], "" prefix "")) {                  \
+        if (NM_STR_HAS_PREFIX(&stable_id[i], "" prefix "")) {                 \
             _match = TRUE;                                                    \
             if (!str)                                                         \
                 str = g_string_sized_new(256);                                \
@@ -3423,15 +3532,14 @@ _is_reserved_ipv6_iid(const guint8 *iid)
     return FALSE;
 }
 
-static gboolean
-_set_stable_privacy(NMUtilsStableType stable_type,
-                    struct in6_addr * addr,
-                    const char *      ifname,
-                    const char *      network_id,
-                    guint32           dad_counter,
-                    const guint8 *    host_id,
-                    gsize             host_id_len,
-                    GError **         error)
+void
+nm_utils_ipv6_addr_set_stable_privacy_with_host_id(NMUtilsStableType stable_type,
+                                                   struct in6_addr  *addr,
+                                                   const char       *ifname,
+                                                   const char       *network_id,
+                                                   guint32           dad_counter,
+                                                   const guint8     *host_id,
+                                                   gsize             host_id_len)
 {
     nm_auto_free_checksum GChecksum *sum = NULL;
     guint8                           digest[NM_UTILS_CHECKSUM_LENGTH_SHA256];
@@ -3480,30 +3588,29 @@ _set_stable_privacy(NMUtilsStableType stable_type,
     }
 
     memcpy(addr->s6_addr + 8, &digest[0], 8);
-    return TRUE;
 }
 
-gboolean
-nm_utils_ipv6_addr_set_stable_privacy_impl(NMUtilsStableType stable_type,
-                                           struct in6_addr * addr,
-                                           const char *      ifname,
-                                           const char *      network_id,
-                                           guint32           dad_counter,
-                                           guint8 *          host_id,
-                                           gsize             host_id_len,
-                                           GError **         error)
+void
+nm_utils_ipv6_addr_set_stable_privacy(NMUtilsStableType stable_type,
+                                      struct in6_addr  *addr,
+                                      const char       *ifname,
+                                      const char       *network_id,
+                                      guint32           dad_counter)
 {
-    return _set_stable_privacy(stable_type,
-                               addr,
-                               ifname,
-                               network_id,
-                               dad_counter,
-                               host_id,
-                               host_id_len,
-                               error);
+    const guint8 *host_id;
+    gsize         host_id_len;
+
+    nm_utils_host_id_get(&host_id, &host_id_len);
+
+    nm_utils_ipv6_addr_set_stable_privacy_with_host_id(stable_type,
+                                                       addr,
+                                                       ifname,
+                                                       network_id,
+                                                       dad_counter,
+                                                       host_id,
+                                                       host_id_len);
 }
 
-#define RFC7217_IDGEN_RETRIES 3
 /**
  * nm_utils_ipv6_addr_set_stable_privacy:
  *
@@ -3513,19 +3620,16 @@ nm_utils_ipv6_addr_set_stable_privacy_impl(NMUtilsStableType stable_type,
  * Returns: %TRUE on success, %FALSE if the address could not be generated.
  */
 gboolean
-nm_utils_ipv6_addr_set_stable_privacy(NMUtilsStableType stable_type,
-                                      struct in6_addr * addr,
-                                      const char *      ifname,
-                                      const char *      network_id,
-                                      guint32           dad_counter,
-                                      GError **         error)
+nm_utils_ipv6_addr_set_stable_privacy_may_fail(NMUtilsStableType stable_type,
+                                               struct in6_addr  *addr,
+                                               const char       *ifname,
+                                               const char       *network_id,
+                                               guint32           dad_counter,
+                                               GError          **error)
 {
-    const guint8 *host_id;
-    gsize         host_id_len;
-
     g_return_val_if_fail(network_id, FALSE);
 
-    if (dad_counter >= RFC7217_IDGEN_RETRIES) {
+    if (dad_counter >= NM_STABLE_PRIVACY_RFC7217_IDGEN_RETRIES) {
         g_set_error_literal(error,
                             NM_UTILS_ERROR,
                             NM_UTILS_ERROR_UNKNOWN,
@@ -3533,24 +3637,16 @@ nm_utils_ipv6_addr_set_stable_privacy(NMUtilsStableType stable_type,
         return FALSE;
     }
 
-    nm_utils_host_id_get(&host_id, &host_id_len);
-
-    return _set_stable_privacy(stable_type,
-                               addr,
-                               ifname,
-                               network_id,
-                               dad_counter,
-                               host_id,
-                               host_id_len,
-                               error);
+    nm_utils_ipv6_addr_set_stable_privacy(stable_type, addr, ifname, network_id, dad_counter);
+    return TRUE;
 }
 
 /*****************************************************************************/
 
 static void
 _hw_addr_eth_complete(struct ether_addr *addr,
-                      const char *       current_mac_address,
-                      const char *       generate_mac_address_mask)
+                      const char        *current_mac_address,
+                      const char        *generate_mac_address_mask)
 {
     struct ether_addr  mask;
     struct ether_addr  oui;
@@ -3606,19 +3702,19 @@ nm_utils_hw_addr_gen_random_eth(const char *current_mac_address,
 {
     struct ether_addr bin_addr;
 
-    nm_utils_random_bytes(&bin_addr, ETH_ALEN);
+    nm_random_get_bytes(&bin_addr, ETH_ALEN);
     _hw_addr_eth_complete(&bin_addr, current_mac_address, generate_mac_address_mask);
     return nm_utils_hwaddr_ntoa(&bin_addr, ETH_ALEN);
 }
 
 static char *
 _hw_addr_gen_stable_eth(NMUtilsStableType stable_type,
-                        const char *      stable_id,
-                        const guint8 *    host_id,
+                        const char       *stable_id,
+                        const guint8     *host_id,
                         gsize             host_id_len,
-                        const char *      ifname,
-                        const char *      current_mac_address,
-                        const char *      generate_mac_address_mask)
+                        const char       *ifname,
+                        const char       *current_mac_address,
+                        const char       *generate_mac_address_mask)
 {
     nm_auto_free_checksum GChecksum *sum = NULL;
     guint32                          tmp;
@@ -3652,12 +3748,12 @@ _hw_addr_gen_stable_eth(NMUtilsStableType stable_type,
 
 char *
 nm_utils_hw_addr_gen_stable_eth_impl(NMUtilsStableType stable_type,
-                                     const char *      stable_id,
-                                     const guint8 *    host_id,
+                                     const char       *stable_id,
+                                     const guint8     *host_id,
                                      gsize             host_id_len,
-                                     const char *      ifname,
-                                     const char *      current_mac_address,
-                                     const char *      generate_mac_address_mask)
+                                     const char       *ifname,
+                                     const char       *current_mac_address,
+                                     const char       *generate_mac_address_mask)
 {
     return _hw_addr_gen_stable_eth(stable_type,
                                    stable_id,
@@ -3670,10 +3766,10 @@ nm_utils_hw_addr_gen_stable_eth_impl(NMUtilsStableType stable_type,
 
 char *
 nm_utils_hw_addr_gen_stable_eth(NMUtilsStableType stable_type,
-                                const char *      stable_id,
-                                const char *      ifname,
-                                const char *      current_mac_address,
-                                const char *      generate_mac_address_mask)
+                                const char       *stable_id,
+                                const char       *ifname,
+                                const char       *current_mac_address,
+                                const char       *generate_mac_address_mask)
 {
     const guint8 *host_id;
     gsize         host_id_len;
@@ -3696,7 +3792,7 @@ nm_utils_hw_addr_gen_stable_eth(NMUtilsStableType stable_type,
 GBytes *
 nm_utils_dhcp_client_id_mac(int arp_type, const guint8 *hwaddr, gsize hwaddr_len)
 {
-    guint8 *     client_id_buf;
+    guint8      *client_id_buf;
     const guint8 hwaddr_type = arp_type;
 
     if (!nm_utils_arp_type_get_hwaddr_relevant_part(arp_type, &hwaddr, &hwaddr_len))
@@ -3774,7 +3870,7 @@ nm_utils_dhcp_client_id_duid(guint32 iaid, const guint8 *duid, gsize duid_len)
         guint8  type;
         guint32 iaid;
         guint8  duid[];
-    } * client_id;
+    }    *client_id;
     gsize total_size;
 
     /* the @duid must include the 16 bit duid-type and the data (of max 128 bytes). */
@@ -3824,7 +3920,7 @@ nm_utils_dhcp_client_id_systemd_node_specific_full(guint32       iaid,
                 } en;
             };
         } duid;
-    } * client_id;
+    }      *client_id;
     guint64 u64;
 
     g_return_val_if_fail(machine_id, NULL);
@@ -3858,7 +3954,7 @@ nm_utils_dhcp_client_id_systemd_node_specific(guint32 iaid)
 GBytes *
 nm_utils_generate_duid_llt(int arp_type, const guint8 *hwaddr, gsize hwaddr_len, gint64 time)
 {
-    guint8 *      arr;
+    guint8       *arr;
     const guint16 duid_type = htons(1);
     const guint16 hw_type   = htons(arp_type);
     const guint32 duid_time = htonl(NM_MAX(0, time - NM_UTILS_EPOCH_DATETIME_200001010000));
@@ -3879,7 +3975,7 @@ nm_utils_generate_duid_llt(int arp_type, const guint8 *hwaddr, gsize hwaddr_len,
 GBytes *
 nm_utils_generate_duid_ll(int arp_type, const guint8 *hwaddr, gsize hwaddr_len)
 {
-    guint8 *      arr;
+    guint8       *arr;
     const guint16 duid_type = htons(3);
     const guint16 hw_type   = htons(arp_type);
 
@@ -3899,7 +3995,7 @@ GBytes *
 nm_utils_generate_duid_uuid(const NMUuid *uuid)
 {
     const guint16 duid_type = htons(4);
-    guint8 *      duid_buffer;
+    guint8       *duid_buffer;
 
     nm_assert(uuid);
 
@@ -3927,7 +4023,7 @@ again:
     p = g_atomic_pointer_get(&global_duid);
     if (G_UNLIKELY(!p)) {
         nm_auto_free_checksum GChecksum *sum = NULL;
-        const NMUuid *                   machine_id;
+        const NMUuid                    *machine_id;
         union {
             guint8 sha256[NM_UTILS_CHECKSUM_LENGTH_SHA256];
             NMUuid uuid;
@@ -4047,7 +4143,7 @@ nm_utils_get_reverse_dns_domains_ip_4(guint32 addr, guint8 plen, GPtrArray *doma
     guint   octets;
     guint   i;
     gsize   len0, len;
-    char *  str, *s;
+    char   *str, *s;
 
     g_return_if_fail(domains);
     g_return_if_fail(plen <= 32);
@@ -4069,8 +4165,8 @@ nm_utils_get_reverse_dns_domains_ip_4(guint32 addr, guint8 plen, GPtrArray *doma
         len = len0;
         str = s = g_malloc(len);
         for (i = octets; i > 0; i--)
-            nm_utils_strbuf_append(&s, &len, "%u.", p[i - 1] & 0xff);
-        nm_utils_strbuf_append_str(&s, &len, "in-addr.arpa");
+            nm_strbuf_append(&s, &len, "%u.", p[i - 1] & 0xff);
+        nm_strbuf_append_str(&s, &len, "in-addr.arpa");
 
         g_ptr_array_add(domains, str);
 
@@ -4094,7 +4190,7 @@ nm_utils_get_reverse_dns_domains_ip_6(const struct in6_addr *ip, guint8 plen, GP
     guint           nibbles, bits, entries;
     int             i, j;
     gsize           len0, len;
-    char *          str, *s;
+    char           *str, *s;
 
     g_return_if_fail(domains);
     g_return_if_fail(plen <= 128);
@@ -4103,7 +4199,7 @@ nm_utils_get_reverse_dns_domains_ip_6(const struct in6_addr *ip, guint8 plen, GP
         return;
 
     memcpy(&addr, ip, sizeof(struct in6_addr));
-    nm_utils_ip6_address_clear_host_address(&addr, NULL, plen);
+    nm_ip6_addr_clear_host_address(&addr, NULL, plen);
 
     /* Number of nibbles to include in domains */
     nibbles = (plen - 1) / 4 + 1;
@@ -4121,8 +4217,8 @@ nm_utils_get_reverse_dns_domains_ip_6(const struct in6_addr *ip, guint8 plen, GP
         str = s = g_malloc(len);
 
         for (j = nibbles - 1; j >= 0; j--)
-            nm_utils_strbuf_append(&s, &len, "%x.", (addr.s6_addr[j / 2] >> N_SHIFT(j)) & 0xf);
-        nm_utils_strbuf_append_str(&s, &len, "ip6.arpa");
+            nm_strbuf_append(&s, &len, "%x.", (addr.s6_addr[j / 2] >> N_SHIFT(j)) & 0xf);
+        nm_strbuf_append_str(&s, &len, "ip6.arpa");
 
         g_ptr_array_add(domains, str);
 
@@ -4133,7 +4229,7 @@ nm_utils_get_reverse_dns_domains_ip_6(const struct in6_addr *ip, guint8 plen, GP
 }
 
 struct plugin_info {
-    char *      path;
+    char       *path;
     struct stat st;
 };
 
@@ -4188,11 +4284,11 @@ nm_utils_validate_plugin(const char *path, struct stat *st, GError **error)
 char **
 nm_utils_read_plugin_paths(const char *dirname, const char *prefix)
 {
-    GDir *      dir;
-    GError *    error = NULL;
+    GDir       *dir;
+    GError     *error = NULL;
     const char *item;
-    GArray *    paths;
-    char **     result;
+    GArray     *paths;
+    char      **result;
     guint       i;
 
     g_return_val_if_fail(dirname, NULL);
@@ -4248,7 +4344,7 @@ skip:
 
     result = g_new(char *, paths->len + 1);
     for (i = 0; i < paths->len; i++)
-        result[i] = g_array_index(paths, struct plugin_info, i).path;
+        result[i] = nm_g_array_index(paths, struct plugin_info, i).path;
     result[i] = NULL;
 
     g_array_free(paths, TRUE);
@@ -4258,10 +4354,10 @@ skip:
 char *
 nm_utils_format_con_diff_for_audit(GHashTable *diff)
 {
-    GHashTable *   setting_diff;
-    char *         setting_name, *prop_name;
+    GHashTable    *setting_diff;
+    char          *setting_name, *prop_name;
     GHashTableIter iter, iter2;
-    GString *      str;
+    GString       *str;
 
     str = g_string_sized_new(32);
     g_hash_table_iter_init(&iter, diff);
@@ -4676,9 +4772,9 @@ get_max_rate_vht(const guint8 *bytes, guint len, guint32 *out_maxrate)
 void
 nm_wifi_utils_parse_ies(const guint8 *bytes,
                         gsize         len,
-                        guint32 *     out_max_rate,
-                        gboolean *    out_metered,
-                        gboolean *    out_owe_transition_mode)
+                        guint32      *out_max_rate,
+                        gboolean     *out_metered,
+                        gboolean     *out_owe_transition_mode)
 {
     guint8  id, elem_len;
     guint32 m;
@@ -4765,18 +4861,21 @@ NM_UTILS_LOOKUP_STR_DEFINE(nm_activation_type_to_string,
 
 typedef struct {
     GPid     pid;
-    GTask *  task;
+    GTask   *task;
     gulong   cancellable_id;
     GSource *child_watch_source;
     GSource *timeout_source;
 
     int      child_stdin;
     int      child_stdout;
+    int      child_stderr;
     GSource *input_source;
     GSource *output_source;
+    GSource *error_source;
 
     NMStrBuf in_buffer;
     NMStrBuf out_buffer;
+    NMStrBuf err_buffer;
     gsize    out_buffer_offset;
 } HelperInfo;
 
@@ -4812,13 +4911,17 @@ helper_info_free(gpointer data)
 
     nm_str_buf_destroy(&info->in_buffer);
     nm_str_buf_destroy(&info->out_buffer);
+    nm_str_buf_destroy(&info->err_buffer);
     nm_clear_g_source_inst(&info->input_source);
     nm_clear_g_source_inst(&info->output_source);
+    nm_clear_g_source_inst(&info->error_source);
 
     if (info->child_stdout != -1)
         nm_close(info->child_stdout);
     if (info->child_stdin != -1)
         nm_close(info->child_stdin);
+    if (info->child_stderr != -1)
+        nm_close(info->child_stderr);
 
     if (info->pid != -1) {
         nm_assert(info->pid > 1);
@@ -4832,6 +4935,10 @@ static void
 helper_complete(HelperInfo *info, GError *error)
 {
     if (error) {
+        if (info->err_buffer.len > 0) {
+            _LOG2T(info, "stderr: %s", nm_str_buf_get_str(&info->err_buffer));
+        }
+
         nm_clear_g_cancellable_disconnect(g_task_get_cancellable(info->task),
                                           &info->cancellable_id);
         g_task_return_error(info->task, error);
@@ -4901,7 +5008,7 @@ helper_have_data(int fd, GIOCondition condition, gpointer user_data)
 {
     HelperInfo *info = user_data;
     gssize      n_read;
-    GError *    error = NULL;
+    GError     *error = NULL;
 
     n_read = nm_utils_fd_read(fd, &info->in_buffer);
     _LOG2T(info, "read returns %ld", (long) n_read);
@@ -4927,11 +5034,29 @@ helper_have_data(int fd, GIOCondition condition, gpointer user_data)
     return G_SOURCE_CONTINUE;
 }
 
+static gboolean
+helper_have_err_data(int fd, GIOCondition condition, gpointer user_data)
+{
+    HelperInfo *info = user_data;
+    gssize      n_read;
+
+    n_read = nm_utils_fd_read(fd, &info->err_buffer);
+
+    if (n_read > 0)
+        return G_SOURCE_CONTINUE;
+
+    nm_clear_g_source_inst(&info->error_source);
+    nm_close(info->child_stderr);
+    info->child_stderr = -1;
+
+    return G_SOURCE_CONTINUE;
+}
+
 static void
 helper_child_terminated(GPid pid, int status, gpointer user_data)
 {
-    HelperInfo *  info        = user_data;
-    GError *      error       = NULL;
+    HelperInfo   *info        = user_data;
+    GError       *error       = NULL;
     gs_free char *status_desc = NULL;
 
     _LOG2D(info, "process %s", (status_desc = nm_utils_get_process_exit_status_desc(status)));
@@ -4964,7 +5089,7 @@ static void
 helper_cancelled(GObject *object, gpointer user_data)
 {
     HelperInfo *info  = user_data;
-    GError *    error = NULL;
+    GError     *error = NULL;
 
     nm_clear_g_signal_handler(g_task_get_cancellable(info->task), &info->cancellable_id);
     nm_utils_error_set_cancelled(&error, FALSE, NULL);
@@ -4972,16 +5097,16 @@ helper_cancelled(GObject *object, gpointer user_data)
 }
 
 void
-nm_utils_spawn_helper(const char *const * args,
-                      GCancellable *      cancellable,
+nm_utils_spawn_helper(const char *const  *args,
+                      GCancellable       *cancellable,
                       GAsyncReadyCallback callback,
                       gpointer            cb_data)
 {
     gs_free_error GError *error    = NULL;
-    gs_free char *        commands = NULL;
-    HelperInfo *          info;
+    gs_free char         *commands = NULL;
+    HelperInfo           *info;
     int                   fd_flags;
-    const char *const *   arg;
+    const char *const    *arg;
 
     nm_assert(args && args[0]);
 
@@ -5002,10 +5127,11 @@ nm_utils_spawn_helper(const char *const * args,
                                   &info->pid,
                                   &info->child_stdin,
                                   &info->child_stdout,
-                                  NULL,
+                                  &info->child_stderr,
                                   &error)) {
         info->child_stdin  = -1;
         info->child_stdout = -1;
+        info->child_stderr = -1;
         info->pid          = -1;
         g_task_return_error(info->task,
                             g_error_new(NM_UTILS_ERROR,
@@ -5034,9 +5160,11 @@ nm_utils_spawn_helper(const char *const * args,
     fcntl(info->child_stdin, F_SETFL, fd_flags | O_NONBLOCK);
     fd_flags = fcntl(info->child_stdout, F_GETFD, 0);
     fcntl(info->child_stdout, F_SETFL, fd_flags | O_NONBLOCK);
+    fd_flags = fcntl(info->child_stderr, F_GETFD, 0);
+    fcntl(info->child_stderr, F_SETFL, fd_flags | O_NONBLOCK);
 
     /* Watch process stdin */
-    nm_str_buf_init(&info->out_buffer, 32, TRUE);
+    info->out_buffer = NM_STR_BUF_INIT(NM_UTILS_GET_NEXT_REALLOC_SIZE_40, TRUE);
     for (arg = args; *arg; arg++) {
         nm_str_buf_append(&info->out_buffer, *arg);
         nm_str_buf_append_c(&info->out_buffer, '\0');
@@ -5050,7 +5178,7 @@ nm_utils_spawn_helper(const char *const * args,
     g_source_attach(info->output_source, g_main_context_get_thread_default());
 
     /* Watch process stdout */
-    nm_str_buf_init(&info->in_buffer, NM_UTILS_GET_NEXT_REALLOC_SIZE_1000, FALSE);
+    info->in_buffer    = NM_STR_BUF_INIT(0, FALSE);
     info->input_source = nm_g_unix_fd_source_new(info->child_stdout,
                                                  G_IO_IN | G_IO_ERR | G_IO_HUP,
                                                  G_PRIORITY_DEFAULT,
@@ -5058,6 +5186,16 @@ nm_utils_spawn_helper(const char *const * args,
                                                  info,
                                                  NULL);
     g_source_attach(info->input_source, g_main_context_get_thread_default());
+
+    /* Watch process stderr */
+    info->err_buffer   = NM_STR_BUF_INIT(0, FALSE);
+    info->error_source = nm_g_unix_fd_source_new(info->child_stderr,
+                                                 G_IO_IN | G_IO_ERR | G_IO_HUP,
+                                                 G_PRIORITY_DEFAULT,
+                                                 helper_have_err_data,
+                                                 info,
+                                                 NULL);
+    g_source_attach(info->error_source, g_main_context_get_thread_default());
 
     if (cancellable) {
         gulong signal_id;
@@ -5079,4 +5217,107 @@ nm_utils_spawn_helper_finish(GAsyncResult *result, GError **error)
     nm_assert(nm_g_task_is_valid(result, NULL, nm_utils_spawn_helper));
 
     return g_task_propagate_pointer(task, error);
+}
+
+/*****************************************************************************/
+
+/**
+ * nm_utils_get_nm_uid:
+ *
+ * Checks what EUID NetworkManager is running as.
+ * Saves the EUID so it can be reused without making many syscalls.
+ */
+uid_t
+nm_utils_get_nm_uid(void)
+{
+    static int u_static = -1;
+    int        u;
+
+again:
+    if ((u = g_atomic_int_get(&u_static)) == -1) {
+        uid_t u2;
+
+        u2 = geteuid();
+        u  = u2;
+        nm_assert(u == u2);
+        nm_assert(u >= 0);
+        if (!g_atomic_int_compare_and_exchange(&u_static, -1, u))
+            goto again;
+    }
+
+    return u;
+}
+
+/**
+ * nm_utils_get_nm_gid:
+ *
+ * Checks what EGID NetworkManager is running as.
+ * Saves the EGID so it can be reused without making many syscalls.
+ */
+gid_t
+nm_utils_get_nm_gid(void)
+{
+    static int g_static = -1;
+    int        g;
+
+again:
+    if ((g = g_atomic_int_get(&g_static)) == -1) {
+        gid_t g2;
+
+        g2 = geteuid();
+        g  = g2;
+        nm_assert(g == g2);
+        nm_assert(g >= 0);
+        if (!g_atomic_int_compare_and_exchange(&g_static, -1, g))
+            goto again;
+    }
+
+    return g;
+}
+
+/*****************************************************************************/
+
+/**
+ * nm_utils_shorten_hostname:
+ * @hostname: the input hostname
+ * @shortened: (out) (transfer full): on return, the shortened hostname
+ *
+ * Checks whether the input hostname is valid. If not, tries to shorten it
+ * to HOST_NAME_MAX (64) or to the first dot, whatever comes earlier.
+ * The new hostname is returned in @shortened.
+ *
+ * Returns: %TRUE if the input hostname was already valid or if was shortened
+ * successfully; %FALSE otherwise
+ */
+gboolean
+nm_utils_shorten_hostname(const char *hostname, char **shortened)
+{
+    gs_free char *s = NULL;
+    const char   *dot;
+    gsize         l;
+
+    nm_assert(hostname);
+    nm_assert(shortened);
+
+    if (nm_hostname_is_valid(hostname, FALSE)) {
+        *shortened = NULL;
+        return TRUE;
+    }
+
+    dot = strchr(hostname, '.');
+    if (dot)
+        l = (dot - hostname);
+    else
+        l = strlen(hostname);
+    l = MIN(l, (gsize) NM_HOST_NAME_MAX);
+
+    s = g_strndup(hostname, l);
+
+    if (!nm_hostname_is_valid(s, FALSE)) {
+        *shortened = NULL;
+        return FALSE;
+    }
+
+    *shortened = g_steal_pointer(&s);
+    return TRUE;
 }

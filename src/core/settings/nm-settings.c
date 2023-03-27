@@ -17,7 +17,7 @@
 #include <pwd.h>
 
 #if HAVE_SELINUX
-    #include <selinux/selinux.h>
+#include <selinux/selinux.h>
 #endif
 
 #include "libnm-core-aux-intern/nm-common-macros.h"
@@ -79,7 +79,7 @@ static NM_CACHED_QUARK_FCN("default-wired-connection-blocked",
 typedef struct _StorageData {
     CList              sd_lst;
     NMSettingsStorage *storage;
-    NMConnection *     connection;
+    NMConnection      *connection;
     bool               prioritize : 1;
 } StorageData;
 
@@ -123,9 +123,9 @@ static void
 nm_assert_storage_data_lst(CList *head)
 {
 #if NM_MORE_ASSERTS > 5
-    const char * uuid = NULL;
+    const char  *uuid = NULL;
     StorageData *sd;
-    CList *      iter;
+    CList       *iter;
 
     nm_assert(head);
 
@@ -166,9 +166,9 @@ _storage_data_is_alive(StorageData *sd)
 /*****************************************************************************/
 
 typedef struct {
-    const char *          uuid;
+    const char           *uuid;
     NMSettingsConnection *sett_conn;
-    NMSettingsStorage *   storage;
+    NMSettingsStorage    *storage;
     CList                 sd_lst_head;
     CList                 dirty_sd_lst_head;
 
@@ -236,13 +236,17 @@ _sett_conn_entry_get_conn(SettConnEntry *sett_conn_entry)
  * update-connection. If this parameter is omitted, then it's about what happens
  * when adding a new profile (add-connection).
  *
+ * @storage_check_ignore is optional, and if given then it skips this particular
+ * storage.
+ *
  * Returns: the conflicting storage or %NULL if there is none.
  */
 static NMSettingsStorage *
-_sett_conn_entry_storage_find_conflicting_storage(SettConnEntry *    sett_conn_entry,
-                                                  NMSettingsPlugin * target_plugin,
+_sett_conn_entry_storage_find_conflicting_storage(SettConnEntry     *sett_conn_entry,
+                                                  NMSettingsPlugin  *target_plugin,
                                                   NMSettingsStorage *storage_check_including,
-                                                  const GSList *     plugins)
+                                                  NMSettingsStorage *storage_check_ignore,
+                                                  const GSList      *plugins)
 {
     StorageData *sd;
 
@@ -266,6 +270,12 @@ _sett_conn_entry_storage_find_conflicting_storage(SettConnEntry *    sett_conn_e
             /* We only consider storages with connection. In particular,
              * tombstones are not relevant, because we can delete them to
              * resolve the conflict. */
+            continue;
+        }
+
+        if (sd->storage == storage_check_ignore) {
+            /* We ignore this one, because we're in the process of
+             * replacing it. */
             continue;
         }
 
@@ -294,8 +304,8 @@ _sett_conn_entry_storage_find_conflicting_storage(SettConnEntry *    sett_conn_e
 }
 
 static NMSettingsStorage *
-_sett_conn_entry_find_shadowed_storage(SettConnEntry *    sett_conn_entry,
-                                       const char *       shadowed_storage_filename,
+_sett_conn_entry_find_shadowed_storage(SettConnEntry     *sett_conn_entry,
+                                       const char        *shadowed_storage_filename,
                                        NMSettingsStorage *blacklisted_storage)
 {
     StorageData *sd;
@@ -327,7 +337,7 @@ _sett_conn_entry_find_shadowed_storage(SettConnEntry *    sett_conn_entry,
 NM_GOBJECT_PROPERTIES_DEFINE(NMSettings,
                              PROP_MANAGER,
                              PROP_UNMANAGED_SPECS,
-                             PROP_HOSTNAME,
+                             PROP_STATIC_HOSTNAME,
                              PROP_CAN_MODIFY,
                              PROP_CONNECTIONS,
                              PROP_STARTUP_COMPLETE, );
@@ -366,6 +376,8 @@ typedef struct {
 
     GHashTable *sce_idx;
 
+    GCancellable *shutdown_cancellable;
+
     CList sce_dirty_lst_head;
 
     CList connections_lst_head;
@@ -379,14 +391,14 @@ typedef struct {
     gint64      startup_complete_start_timestamp_msec;
     GHashTable *startup_complete_idx;
     CList       startup_complete_scd_lst_head;
-    guint       startup_complete_timeout_id;
+    GSource    *startup_complete_timeout_source;
+
+    GSource *kf_db_flush_idle_source_timestamps;
+    GSource *kf_db_flush_idle_source_seen_bssids;
 
     guint connections_len;
 
     guint connections_generation;
-
-    guint kf_db_flush_idle_id_timestamps;
-    guint kf_db_flush_idle_id_seen_bssids;
 
     bool kf_db_pruned_timestamps;
     bool kf_db_pruned_seen_bssid;
@@ -428,8 +440,8 @@ static const NMDBusInterfaceInfoExtended interface_info_settings;
 static const GDBusSignalInfo             signal_info_new_connection;
 static const GDBusSignalInfo             signal_info_connection_removed;
 
-static void default_wired_clear_tag(NMSettings *          self,
-                                    NMDevice *            device,
+static void default_wired_clear_tag(NMSettings           *self,
+                                    NMDevice             *device,
                                     NMSettingsConnection *sett_conn,
                                     gboolean              add_to_no_auto_default);
 
@@ -446,8 +458,8 @@ _emit_connection_added(NMSettings *self, NMSettingsConnection *sett_conn)
 }
 
 static void
-_emit_connection_updated(NMSettings *                     self,
-                         NMSettingsConnection *           sett_conn,
+_emit_connection_updated(NMSettings                      *self,
+                         NMSettingsConnection            *sett_conn,
                          NMSettingsConnectionUpdateReason update_reason)
 {
     _nm_settings_connection_emit_signal_updated_internal(sett_conn, update_reason);
@@ -483,14 +495,14 @@ _startup_complete_data_destroy(StartupCompleteData *scd)
 }
 
 static gboolean
-_startup_complete_check_is_ready(NMSettings *          self,
+_startup_complete_check_is_ready(NMSettings           *self,
                                  NMSettingsConnection *sett_conn,
                                  gboolean              ignore_pending_actions)
 {
     NMSettingsPrivate *priv = NM_SETTINGS_GET_PRIVATE(self);
-    NMConnection *     conn;
-    const CList *      tmp_lst;
-    NMDevice *         device;
+    NMConnection      *conn;
+    const CList       *tmp_lst;
+    NMDevice          *device;
 
     if (!priv->manager)
         return TRUE;
@@ -528,18 +540,18 @@ _startup_complete_check_is_ready(NMSettings *          self,
 static gboolean
 _startup_complete_timeout_cb(gpointer user_data)
 {
-    NMSettings *       self = user_data;
+    NMSettings        *self = user_data;
     NMSettingsPrivate *priv = NM_SETTINGS_GET_PRIVATE(self);
 
-    priv->startup_complete_timeout_id = 0;
+    nm_clear_g_source_inst(&priv->startup_complete_timeout_source);
     _startup_complete_check(self, 0);
-    return G_SOURCE_REMOVE;
+    return G_SOURCE_CONTINUE;
 }
 
 static void
 _startup_complete_check(NMSettings *self, gint64 now_msec)
 {
-    NMSettingsPrivate *  priv = NM_SETTINGS_GET_PRIVATE(self);
+    NMSettingsPrivate   *priv = NM_SETTINGS_GET_PRIVATE(self);
     StartupCompleteData *scd_not_ready;
     StartupCompleteData *scd_safe;
     StartupCompleteData *scd;
@@ -556,6 +568,8 @@ _startup_complete_check(NMSettings *self, gint64 now_msec)
          * we are anyway blocking startup-complete. */
         return;
     }
+
+    nm_clear_g_source_inst(&priv->startup_complete_timeout_source);
 
     if (c_list_is_empty(&priv->startup_complete_scd_lst_head))
         goto ready;
@@ -592,15 +606,15 @@ next_with_ready:
     }
     c_list_splice(&priv->startup_complete_scd_lst_head, &ready_lst);
 
-    nm_clear_g_source(&priv->startup_complete_timeout_id);
-
     if (scd_not_ready) {
         gint64 timeout_msec;
 
         timeout_msec = priv->startup_complete_start_timestamp_msec + scd_not_ready->timeout_msec
                        - nm_utils_get_monotonic_timestamp_msec();
-        priv->startup_complete_timeout_id =
-            g_timeout_add(NM_CLAMP(0, timeout_msec, 60000), _startup_complete_timeout_cb, self);
+        priv->startup_complete_timeout_source =
+            nm_g_timeout_add_source(NM_CLAMP(0, timeout_msec, 60000),
+                                    _startup_complete_timeout_cb,
+                                    self);
         _LOGT("startup-complete: wait for suitable device for connection \"%s\" (%s) which has "
               "\"connection.wait-device-timeout\" set",
               nm_settings_connection_get_id(scd_not_ready->sett_conn),
@@ -627,16 +641,16 @@ ready:
     _LOGT("startup-complete: ready, no more profiles to wait for");
     priv->startup_complete_start_timestamp_msec = 0;
     nm_assert(!priv->startup_complete_idx);
-    nm_assert(priv->startup_complete_timeout_id == 0);
+    nm_assert(!priv->startup_complete_timeout_source);
     _notify(self, PROP_STARTUP_COMPLETE);
 }
 
 static void
-_startup_complete_notify_connection(NMSettings *          self,
+_startup_complete_notify_connection(NMSettings           *self,
                                     NMSettingsConnection *sett_conn,
                                     gboolean              forget)
 {
-    NMSettingsPrivate *  priv = NM_SETTINGS_GET_PRIVATE(self);
+    NMSettingsPrivate   *priv = NM_SETTINGS_GET_PRIVATE(self);
     StartupCompleteData *scd;
     gint64               timeout_msec;
     gint64               now_msec = 0;
@@ -697,9 +711,9 @@ check:
 const char *
 nm_settings_get_startup_complete_blocked_reason(NMSettings *self, gboolean force_reload)
 {
-    NMSettingsPrivate *  priv = NM_SETTINGS_GET_PRIVATE(self);
+    NMSettingsPrivate   *priv = NM_SETTINGS_GET_PRIVATE(self);
     StartupCompleteData *scd;
-    const char *         uuid;
+    const char          *uuid;
 
     if (priv->startup_complete_start_timestamp_msec == 0)
         goto out_done;
@@ -776,7 +790,7 @@ update_specs(NMSettings *self, GSList **specs_ptr, GSList *(*get_specs_func)(NMS
 static void
 _plugin_unmanaged_specs_changed(NMSettingsPlugin *config, gpointer user_data)
 {
-    NMSettings *       self = NM_SETTINGS(user_data);
+    NMSettings        *self = NM_SETTINGS(user_data);
     NMSettingsPrivate *priv = NM_SETTINGS_GET_PRIVATE(self);
 
     if (update_specs(self, &priv->unmanaged_specs, nm_settings_plugin_get_unmanaged_specs))
@@ -786,7 +800,7 @@ _plugin_unmanaged_specs_changed(NMSettingsPlugin *config, gpointer user_data)
 static void
 _plugin_unrecognized_specs_changed(NMSettingsPlugin *config, gpointer user_data)
 {
-    NMSettings *       self = NM_SETTINGS(user_data);
+    NMSettings        *self = NM_SETTINGS(user_data);
     NMSettingsPrivate *priv = NM_SETTINGS_GET_PRIVATE(self);
 
     update_specs(self, &priv->unrecognized_specs, nm_settings_plugin_get_unrecognized_specs);
@@ -813,7 +827,7 @@ static SettConnEntry *
 _sett_conn_entries_create_and_add(NMSettings *self, const char *uuid)
 {
     NMSettingsPrivate *priv = NM_SETTINGS_GET_PRIVATE(self);
-    SettConnEntry *    sett_conn_entry;
+    SettConnEntry     *sett_conn_entry;
 
     sett_conn_entry = _sett_conn_entry_new(uuid);
 
@@ -841,7 +855,7 @@ _sett_conn_entries_remove_and_destroy(NMSettings *self, SettConnEntry *sett_conn
 static int
 _sett_conn_entry_sds_update_cmp_ascending(const StorageData *sd_a,
                                           const StorageData *sd_b,
-                                          const GSList *     plugins)
+                                          const GSList      *plugins)
 {
     const NMSettingsMetaData *meta_data_a;
     const NMSettingsMetaData *meta_data_b;
@@ -997,13 +1011,13 @@ _sett_conn_entry_sds_update(NMSettings *self, SettConnEntry *sett_conn_entry)
 
 static NMConnection *
 _connection_changed_normalize_connection(NMSettingsStorage *storage,
-                                         NMConnection *     connection,
-                                         GVariant *         secrets_to_merge,
-                                         NMConnection **    out_connection_cloned)
+                                         NMConnection      *connection,
+                                         GVariant          *secrets_to_merge,
+                                         NMConnection     **out_connection_cloned)
 {
     gs_unref_object NMConnection *connection_cloned = NULL;
-    gs_free_error GError *error                     = NULL;
-    const char *          uuid;
+    gs_free_error GError         *error             = NULL;
+    const char                   *uuid;
 
     nm_assert(NM_IS_SETTINGS_STORAGE(storage));
     nm_assert(out_connection_cloned && !*out_connection_cloned);
@@ -1047,18 +1061,18 @@ _connection_changed_normalize_connection(NMSettingsStorage *storage,
 /*****************************************************************************/
 
 static void
-_connection_changed_update(NMSettings *                     self,
-                           SettConnEntry *                  sett_conn_entry,
-                           NMConnection *                   connection,
+_connection_changed_update(NMSettings                      *self,
+                           SettConnEntry                   *sett_conn_entry,
+                           NMConnection                    *connection,
                            NMSettingsConnectionIntFlags     sett_flags,
                            NMSettingsConnectionIntFlags     sett_mask,
                            NMSettingsConnectionUpdateReason update_reason)
 {
-    NMSettingsPrivate *priv                         = NM_SETTINGS_GET_PRIVATE(self);
-    gs_unref_object NMConnection *connection_old    = NULL;
-    NMSettingsStorage *           storage           = sett_conn_entry->storage;
-    gs_unref_object NMSettingsConnection *sett_conn = g_object_ref(sett_conn_entry->sett_conn);
-    const char *                          path;
+    NMSettingsPrivate                    *priv           = NM_SETTINGS_GET_PRIVATE(self);
+    gs_unref_object NMConnection         *connection_old = NULL;
+    NMSettingsStorage                    *storage        = sett_conn_entry->storage;
+    gs_unref_object NMSettingsConnection *sett_conn      = g_object_ref(sett_conn_entry->sett_conn);
+    const char                           *path;
     gboolean                              is_new;
 
     nm_assert(!NM_FLAGS_ANY(sett_mask, ~_NM_SETTINGS_CONNECTION_INT_FLAGS_PERSISTENT_MASK));
@@ -1162,15 +1176,15 @@ _connection_changed_update(NMSettings *                     self,
 }
 
 static void
-_connection_changed_delete(NMSettings *          self,
-                           NMSettingsStorage *   storage,
+_connection_changed_delete(NMSettings           *self,
+                           NMSettingsStorage    *storage,
                            NMSettingsConnection *sett_conn,
                            gboolean              allow_add_to_no_auto_default)
 {
-    NMSettingsPrivate *priv                             = NM_SETTINGS_GET_PRIVATE(self);
+    NMSettingsPrivate            *priv                  = NM_SETTINGS_GET_PRIVATE(self);
     gs_unref_object NMConnection *connection_for_agents = NULL;
-    NMDevice *                    device;
-    const char *                  uuid;
+    NMDevice                     *device;
+    const char                   *uuid;
 
     nm_assert(NM_IS_SETTINGS_CONNECTION(sett_conn));
     nm_assert(c_list_contains(&priv->connections_lst_head, &sett_conn->_connections_lst));
@@ -1235,8 +1249,8 @@ _connection_changed_delete(NMSettings *          self,
 }
 
 static void
-_connection_changed_process_one(NMSettings *                     self,
-                                SettConnEntry *                  sett_conn_entry,
+_connection_changed_process_one(NMSettings                      *self,
+                                SettConnEntry                   *sett_conn_entry,
                                 gboolean                         allow_add_to_no_auto_default,
                                 NMSettingsConnectionIntFlags     sett_flags,
                                 NMSettingsConnectionIntFlags     sett_mask,
@@ -1253,7 +1267,7 @@ _connection_changed_process_one(NMSettings *                     self,
 
     if (!sd_best || !sd_best->connection) {
         gs_unref_object NMSettingsConnection *sett_conn = NULL;
-        gs_unref_object NMSettingsStorage *storage      = NULL;
+        gs_unref_object NMSettingsStorage    *storage   = NULL;
 
         if (!sett_conn_entry->sett_conn) {
             if (!sd_best) {
@@ -1310,7 +1324,7 @@ _connection_changed_process_one(NMSettings *                     self,
 }
 
 static void
-_connection_changed_process_all_dirty(NMSettings *                     self,
+_connection_changed_process_all_dirty(NMSettings                      *self,
                                       gboolean                         allow_add_to_no_auto_default,
                                       NMSettingsConnectionIntFlags     sett_flags,
                                       NMSettingsConnectionIntFlags     sett_mask,
@@ -1318,7 +1332,7 @@ _connection_changed_process_all_dirty(NMSettings *                     self,
                                       NMSettingsConnectionUpdateReason update_reason)
 {
     NMSettingsPrivate *priv = NM_SETTINGS_GET_PRIVATE(self);
-    SettConnEntry *    sett_conn_entry;
+    SettConnEntry     *sett_conn_entry;
 
     while ((sett_conn_entry =
                 c_list_first_entry(&priv->sce_dirty_lst_head, SettConnEntry, sce_dirty_lst))) {
@@ -1333,15 +1347,15 @@ _connection_changed_process_all_dirty(NMSettings *                     self,
 }
 
 static SettConnEntry *
-_connection_changed_track(NMSettings *       self,
+_connection_changed_track(NMSettings        *self,
                           NMSettingsStorage *storage,
-                          NMConnection *     connection,
+                          NMConnection      *connection,
                           gboolean           prioritize)
 {
     NMSettingsPrivate *priv = NM_SETTINGS_GET_PRIVATE(self);
-    SettConnEntry *    sett_conn_entry;
-    StorageData *      sd;
-    const char *       uuid;
+    SettConnEntry     *sett_conn_entry;
+    StorageData       *sd;
+    const char        *uuid;
 
     nm_assert_valid_settings_storage(NULL, storage);
 
@@ -1352,15 +1366,15 @@ _connection_changed_track(NMSettings *       self,
               || (_nm_connection_verify(connection, NULL) == NM_SETTING_VERIFY_SUCCESS));
     nm_assert(!connection || nm_streq0(uuid, nm_connection_get_uuid(connection)));
 
-    nmtst_connection_assert_unchanging(connection);
+    nm_assert_connection_unchanging(connection);
 
     sett_conn_entry =
         _sett_conn_entries_get(self, uuid) ?: _sett_conn_entries_create_and_add(self, uuid);
 
     if (_LOGT_ENABLED()) {
-        const char *              filename;
+        const char               *filename;
         const NMSettingsMetaData *meta_data;
-        const char *              shadowed_storage;
+        const char               *shadowed_storage;
         gboolean                  shadowed_owned;
 
         filename = nm_settings_storage_get_filename(storage);
@@ -1427,9 +1441,9 @@ _connection_changed_track(NMSettings *       self,
 /*****************************************************************************/
 
 static void
-_plugin_connections_reload_cb(NMSettingsPlugin * plugin,
+_plugin_connections_reload_cb(NMSettingsPlugin  *plugin,
                               NMSettingsStorage *storage,
-                              NMConnection *     connection,
+                              NMConnection      *connection,
                               gpointer           user_data)
 {
     _connection_changed_track(user_data, storage, connection, FALSE);
@@ -1439,7 +1453,7 @@ static void
 _plugin_connections_reload(NMSettings *self)
 {
     NMSettingsPrivate *priv = NM_SETTINGS_GET_PRIVATE(self);
-    GSList *           iter;
+    GSList            *iter;
 
     for (iter = priv->plugins; iter; iter = iter->next) {
         nm_settings_plugin_reload_connections(iter->data, _plugin_connections_reload_cb, self);
@@ -1462,36 +1476,44 @@ _plugin_connections_reload(NMSettings *self)
 /*****************************************************************************/
 
 static gboolean
-_add_connection_to_first_plugin(NMSettings *                 self,
-                                SettConnEntry *              sett_conn_entry,
-                                NMConnection *               new_connection,
+_add_connection_to_first_plugin(NMSettings                  *self,
+                                const char                  *plugin_name,
+                                SettConnEntry               *sett_conn_entry,
+                                NMConnection                *new_connection,
                                 gboolean                     in_memory,
                                 NMSettingsConnectionIntFlags sett_flags,
-                                const char *                 shadowed_storage,
+                                const char                  *shadowed_storage,
                                 gboolean                     shadowed_owned,
-                                NMSettingsStorage **         out_new_storage,
-                                NMConnection **              out_new_connection,
-                                GError **                    error)
+                                NMSettingsStorage          **out_new_storage,
+                                NMConnection               **out_new_connection,
+                                NMSettingsStorage           *drop_storage,
+                                GError                     **error)
 {
-    NMSettingsPrivate *priv           = NM_SETTINGS_GET_PRIVATE(self);
+    NMSettingsPrivate    *priv        = NM_SETTINGS_GET_PRIVATE(self);
     gs_free_error GError *first_error = NULL;
-    GSList *              iter;
-    const char *          uuid;
+    GSList               *iter;
+    const char           *uuid;
+    gboolean              no_plugin = TRUE;
 
     uuid = nm_connection_get_uuid(new_connection);
 
     nm_assert(nm_uuid_is_normalized(uuid));
 
     for (iter = priv->plugins; iter; iter = iter->next) {
-        NMSettingsPlugin *plugin                               = NM_SETTINGS_PLUGIN(iter->data);
-        gs_unref_object NMSettingsStorage *storage             = NULL;
-        gs_unref_object NMConnection *connection_to_add        = NULL;
-        gs_unref_object NMConnection *connection_to_add_cloned = NULL;
-        NMConnection *                connection_to_add_real   = NULL;
-        gs_unref_variant GVariant *agent_owned_secrets         = NULL;
-        gs_free_error GError *add_error                        = NULL;
-        gboolean              success;
-        const char *          filename;
+        NMSettingsPlugin                  *plugin            = NM_SETTINGS_PLUGIN(iter->data);
+        gs_unref_object NMSettingsStorage *storage           = NULL;
+        gs_unref_object NMConnection      *connection_to_add = NULL;
+        gs_unref_object NMConnection      *connection_to_add_cloned = NULL;
+        NMConnection                      *connection_to_add_real   = NULL;
+        gs_unref_variant GVariant         *agent_owned_secrets      = NULL;
+        gs_free_error GError              *add_error                = NULL;
+        gboolean                           success;
+        const char                        *filename;
+
+        if (plugin_name && strcmp(plugin_name, nm_settings_plugin_get_plugin_name(plugin))) {
+            /* Not the plugin we're confined to. Ignore. */
+            continue;
+        }
 
         if (!in_memory) {
             NMSettingsStorage *conflicting_storage;
@@ -1499,6 +1521,7 @@ _add_connection_to_first_plugin(NMSettings *                 self,
             conflicting_storage = _sett_conn_entry_storage_find_conflicting_storage(sett_conn_entry,
                                                                                     plugin,
                                                                                     NULL,
+                                                                                    drop_storage,
                                                                                     priv->plugins);
             if (conflicting_storage) {
                 /* we have a connection provided by a plugin with higher priority than the one
@@ -1545,6 +1568,8 @@ _add_connection_to_first_plugin(NMSettings *                 self,
                                                         &add_error);
         }
 
+        no_plugin = FALSE;
+
         if (!success) {
             _LOGT("add-connection: failed to add %s/'%s': %s",
                   nm_connection_get_uuid(new_connection),
@@ -1588,25 +1613,35 @@ _add_connection_to_first_plugin(NMSettings *                 self,
         return TRUE;
     }
 
-    nm_assert(first_error);
-    g_propagate_error(error, g_steal_pointer(&first_error));
+    if (no_plugin) {
+        nm_assert(plugin_name);
+        nm_assert(!first_error);
+        g_set_error(error,
+                    NM_SETTINGS_ERROR,
+                    NM_SETTINGS_ERROR_INVALID_ARGUMENTS,
+                    "a plugin by the name of '%s' is not available",
+                    plugin_name);
+    } else {
+        nm_assert(first_error);
+        g_propagate_error(error, g_steal_pointer(&first_error));
+    }
     return FALSE;
 }
 
 static gboolean
-_update_connection_to_plugin(NMSettings *                 self,
-                             NMSettingsStorage *          storage,
-                             NMConnection *               connection,
+_update_connection_to_plugin(NMSettings                  *self,
+                             NMSettingsStorage           *storage,
+                             NMConnection                *connection,
                              NMSettingsConnectionIntFlags sett_flags,
                              gboolean                     force_rename,
-                             const char *                 shadowed_storage,
+                             const char                  *shadowed_storage,
                              gboolean                     shadowed_owned,
-                             NMSettingsStorage **         out_new_storage,
-                             NMConnection **              out_new_connection,
-                             GError **                    error)
+                             NMSettingsStorage          **out_new_storage,
+                             NMConnection               **out_new_connection,
+                             GError                     **error)
 {
     NMSettingsPrivate *priv = NM_SETTINGS_GET_PRIVATE(self);
-    NMSettingsPlugin * plugin;
+    NMSettingsPlugin  *plugin;
     gboolean           success;
 
     plugin = nm_settings_storage_get_plugin(storage);
@@ -1646,7 +1681,7 @@ _set_nmmeta_tombstone(NMSettings *self,
                       gboolean    tombstone_in_memory,
                       const char *shadowed_storage)
 {
-    NMSettingsPrivate *priv                                = NM_SETTINGS_GET_PRIVATE(self);
+    NMSettingsPrivate                 *priv                = NM_SETTINGS_GET_PRIVATE(self);
     gs_unref_object NMSettingsStorage *tombstone_1_storage = NULL;
     gs_unref_object NMSettingsStorage *tombstone_2_storage = NULL;
 
@@ -1703,27 +1738,28 @@ _set_nmmeta_tombstone(NMSettings *self,
  * Returns: TRUE on success.
  */
 gboolean
-nm_settings_add_connection(NMSettings *                    self,
-                           NMConnection *                  connection,
+nm_settings_add_connection(NMSettings                     *self,
+                           const char                     *plugin,
+                           NMConnection                   *connection,
                            NMSettingsConnectionPersistMode persist_mode,
                            NMSettingsConnectionAddReason   add_reason,
                            NMSettingsConnectionIntFlags    sett_flags,
-                           NMSettingsConnection **         out_sett_conn,
-                           GError **                       error)
+                           NMSettingsConnection          **out_sett_conn,
+                           GError                        **error)
 {
-    NMSettingsPrivate *priv;
-    gs_unref_object NMConnection *connection_cloned_1   = NULL;
-    gs_unref_object NMConnection *new_connection        = NULL;
-    gs_unref_object NMSettingsStorage *new_storage      = NULL;
-    gs_unref_object NMSettingsStorage *shadowed_storage = NULL;
-    NMSettingsStorage *                update_storage   = NULL;
-    gs_free_error GError *local                         = NULL;
-    SettConnEntry *       sett_conn_entry;
-    const char *          uuid;
-    StorageData *         sd;
-    gboolean              new_in_memory;
-    gboolean              success;
-    const char *          shadowed_storage_filename = NULL;
+    NMSettingsPrivate                 *priv;
+    gs_unref_object NMConnection      *connection_cloned_1 = NULL;
+    gs_unref_object NMConnection      *new_connection      = NULL;
+    gs_unref_object NMSettingsStorage *new_storage         = NULL;
+    gs_unref_object NMSettingsStorage *shadowed_storage    = NULL;
+    NMSettingsStorage                 *update_storage      = NULL;
+    gs_free_error GError              *local               = NULL;
+    SettConnEntry                     *sett_conn_entry;
+    const char                        *uuid;
+    StorageData                       *sd;
+    gboolean                           new_in_memory;
+    gboolean                           success;
+    const char                        *shadowed_storage_filename = NULL;
 
     priv = NM_SETTINGS_GET_PRIVATE(self);
 
@@ -1800,6 +1836,7 @@ nm_settings_add_connection(NMSettings *                    self,
             sett_conn_entry,
             nm_settings_storage_get_plugin(shadowed_storage),
             shadowed_storage,
+            NULL,
             priv->plugins);
         if (conflicting_storage) {
             /* We cannot add the profile as @shadowed_storage, because there is another, existing storage
@@ -1824,6 +1861,7 @@ again_add_connection:
 
     if (!update_storage) {
         success = _add_connection_to_first_plugin(self,
+                                                  plugin,
                                                   sett_conn_entry,
                                                   connection,
                                                   new_in_memory,
@@ -1832,6 +1870,7 @@ again_add_connection:
                                                   FALSE,
                                                   &new_storage,
                                                   &new_connection,
+                                                  NULL,
                                                   &local);
     } else {
         success = _update_connection_to_plugin(self,
@@ -1882,7 +1921,7 @@ again_add_connection:
     sett_conn_entry = _connection_changed_track(self, new_storage, new_connection, TRUE);
 
     c_list_for_each_entry (sd, &sett_conn_entry->sd_lst_head, sd_lst) {
-        const NMSettingsMetaData *meta_data;
+        const NMSettingsMetaData          *meta_data;
         gs_unref_object NMSettingsStorage *new_tombstone_storage = NULL;
         gboolean                           in_memory;
         gboolean                           simulate;
@@ -1946,29 +1985,31 @@ again_delete_tombstone:
 /*****************************************************************************/
 
 gboolean
-nm_settings_update_connection(NMSettings *                     self,
-                              NMSettingsConnection *           sett_conn,
-                              NMConnection *                   connection,
+nm_settings_update_connection(NMSettings                      *self,
+                              NMSettingsConnection            *sett_conn,
+                              const char                      *plugin_name,
+                              NMConnection                    *connection,
                               NMSettingsConnectionPersistMode  persist_mode,
                               NMSettingsConnectionIntFlags     sett_flags,
                               NMSettingsConnectionIntFlags     sett_mask,
                               NMSettingsConnectionUpdateReason update_reason,
-                              const char *                     log_context_name,
-                              GError **                        error)
+                              const char                      *log_context_name,
+                              GError                         **error)
 {
-    gs_unref_object NMConnection *connection_cloned_1   = NULL;
-    gs_unref_object NMConnection *new_connection_cloned = NULL;
-    gs_unref_object NMConnection *new_connection        = NULL;
-    NMConnection *                new_connection_real;
+    gs_unref_object NMConnection      *connection_cloned_1   = NULL;
+    gs_unref_object NMConnection      *new_connection_cloned = NULL;
+    gs_unref_object NMConnection      *new_connection        = NULL;
+    NMConnection                      *new_connection_real;
     gs_unref_object NMSettingsStorage *cur_storage  = NULL;
     gs_unref_object NMSettingsStorage *new_storage  = NULL;
-    NMSettingsStorage *                drop_storage = NULL;
-    SettConnEntry *                    sett_conn_entry;
+    NMSettingsStorage                 *drop_storage = NULL;
+    SettConnEntry                     *sett_conn_entry;
     gboolean                           cur_in_memory;
     gboolean                           new_in_memory;
-    const char *                       uuid;
+    const char                        *uuid;
     gboolean                           tombstone_in_memory = FALSE;
     gboolean                           tombstone_on_disk   = FALSE;
+    NMSettingsConnectionIntFlags       new_flags;
 
     g_return_val_if_fail(NM_IS_SETTINGS(self), FALSE);
     g_return_val_if_fail(NM_IS_SETTINGS_CONNECTION(sett_conn), FALSE);
@@ -2112,13 +2153,13 @@ nm_settings_update_connection(NMSettings *                     self,
               log_context_name,
               nm_connection_get_id(connection));
     } else {
-        NMSettingsStorage *shadowed_storage;
-        const char *       cur_shadowed_storage_filename;
-        const char *       new_shadowed_storage_filename = NULL;
-        gboolean           cur_shadowed_owned;
-        gboolean           new_shadowed_owned = FALSE;
-        NMSettingsStorage *update_storage     = NULL;
-        gs_free_error GError *local           = NULL;
+        NMSettingsStorage    *shadowed_storage;
+        const char           *cur_shadowed_storage_filename;
+        const char           *new_shadowed_storage_filename = NULL;
+        gboolean              cur_shadowed_owned;
+        gboolean              new_shadowed_owned = FALSE;
+        NMSettingsStorage    *update_storage     = NULL;
+        gs_free_error GError *local              = NULL;
         gboolean              success;
 
         cur_shadowed_storage_filename =
@@ -2154,8 +2195,9 @@ nm_settings_update_connection(NMSettings *                     self,
         } else if (nm_settings_storage_is_keyfile_lib(cur_storage)) {
             /* the profile is a keyfile in /usr/lib. It cannot be overwritten, we must migrate it
              * from /usr/lib to /etc. */
-        } else
+        } else {
             update_storage = cur_storage;
+        }
 
         if (new_in_memory) {
             if (persist_mode == NM_SETTINGS_CONNECTION_PERSIST_MODE_IN_MEMORY_ONLY) {
@@ -2174,22 +2216,40 @@ nm_settings_update_connection(NMSettings *                     self,
             }
         }
 
+        if (update_storage && plugin_name) {
+            NMSettingsPlugin *plugin = nm_settings_storage_get_plugin(update_storage);
+
+            if (strcmp(plugin_name, nm_settings_plugin_get_plugin_name(plugin))) {
+                /* We're updating a connection, we're confined to a particular
+                 * plugin, but the connection is currently using a different one.
+                 * We need to migrate. Drop the existing storage and look out for
+                 * a new one. */
+                drop_storage   = update_storage;
+                update_storage = NULL;
+            }
+        }
+
+        new_flags = nm_settings_connection_get_flags(sett_conn);
+        new_flags = NM_FLAGS_ASSIGN_MASK(new_flags, sett_mask, sett_flags);
+
         if (!update_storage) {
             success = _add_connection_to_first_plugin(self,
+                                                      plugin_name,
                                                       sett_conn_entry,
                                                       connection,
                                                       new_in_memory,
-                                                      sett_flags,
+                                                      new_flags,
                                                       new_shadowed_storage_filename,
                                                       new_shadowed_owned,
                                                       &new_storage,
                                                       &new_connection,
+                                                      drop_storage,
                                                       &local);
         } else {
             success = _update_connection_to_plugin(self,
                                                    update_storage,
                                                    connection,
-                                                   sett_flags,
+                                                   new_flags,
                                                    update_reason,
                                                    new_shadowed_storage_filename,
                                                    new_shadowed_owned,
@@ -2287,20 +2347,20 @@ nm_settings_update_connection(NMSettings *                     self,
 }
 
 void
-nm_settings_delete_connection(NMSettings *          self,
+nm_settings_delete_connection(NMSettings           *self,
                               NMSettingsConnection *sett_conn,
                               gboolean              allow_add_to_no_auto_default)
 {
-    NMSettingsStorage *cur_storage;
-    NMSettingsStorage *shadowed_storage;
-    NMSettingsStorage *shadowed_storage_unowned = NULL;
-    NMSettingsStorage *drop_storages[2]         = {};
-    gs_free_error GError *local                 = NULL;
-    SettConnEntry *       sett_conn_entry;
-    const char *          cur_shadowed_storage_filename;
-    const char *          new_shadowed_storage_filename = NULL;
+    NMSettingsStorage    *cur_storage;
+    NMSettingsStorage    *shadowed_storage;
+    NMSettingsStorage    *shadowed_storage_unowned = NULL;
+    NMSettingsStorage    *drop_storages[2]         = {};
+    gs_free_error GError *local                    = NULL;
+    SettConnEntry        *sett_conn_entry;
+    const char           *cur_shadowed_storage_filename;
+    const char           *new_shadowed_storage_filename = NULL;
     gboolean              cur_shadowed_owned;
-    const char *          uuid;
+    const char           *uuid;
     gboolean              tombstone_in_memory = FALSE;
     gboolean              tombstone_on_disk   = FALSE;
     int                   i;
@@ -2346,7 +2406,7 @@ nm_settings_delete_connection(NMSettings *          self,
 
     for (i = 0; i < (int) G_N_ELEMENTS(drop_storages); i++) {
         NMSettingsStorage *storage;
-        StorageData *      sd;
+        StorageData       *sd;
 
         storage = drop_storages[i];
         if (!storage)
@@ -2415,7 +2475,7 @@ nm_settings_delete_connection(NMSettings *          self,
 static void
 send_agent_owned_secrets(NMSettings *self, NMSettingsConnection *sett_conn, NMAuthSubject *subject)
 {
-    NMSettingsPrivate *priv                 = NM_SETTINGS_GET_PRIVATE(self);
+    NMSettingsPrivate            *priv      = NM_SETTINGS_GET_PRIVATE(self);
     gs_unref_object NMConnection *for_agent = NULL;
 
     /* Dupe the connection so we can clear out non-agent-owned secrets,
@@ -2433,15 +2493,15 @@ send_agent_owned_secrets(NMSettings *self, NMSettingsConnection *sett_conn, NMAu
 static void
 pk_add_cb(NMAuthChain *chain, GDBusMethodInvocation *context, gpointer user_data)
 {
-    NMSettings *     self = NM_SETTINGS(user_data);
-    NMAuthCallResult result;
-    gs_free_error GError *error                 = NULL;
-    NMConnection *        connection            = NULL;
-    gs_unref_object NMSettingsConnection *added = NULL;
+    NMSettings                           *self = NM_SETTINGS(user_data);
+    NMAuthCallResult                      result;
+    gs_free_error GError                 *error      = NULL;
+    NMConnection                         *connection = NULL;
+    gs_unref_object NMSettingsConnection *added      = NULL;
     NMSettingsAddCallback                 callback;
     gpointer                              callback_data;
-    NMAuthSubject *                       subject;
-    const char *                          perm;
+    NMAuthSubject                        *subject;
+    const char                           *perm;
 
     nm_assert(G_IS_DBUS_METHOD_INVOCATION(context));
 
@@ -2462,6 +2522,7 @@ pk_add_cb(NMAuthChain *chain, GDBusMethodInvocation *context, gpointer user_data
         nm_assert(NM_IS_CONNECTION(connection));
 
         nm_settings_add_connection(self,
+                                   nm_auth_chain_get_data(chain, "plugin"),
                                    connection,
                                    GPOINTER_TO_UINT(nm_auth_chain_get_data(chain, "persist-mode")),
                                    GPOINTER_TO_UINT(nm_auth_chain_get_data(chain, "add-reason")),
@@ -2488,21 +2549,22 @@ pk_add_cb(NMAuthChain *chain, GDBusMethodInvocation *context, gpointer user_data
 }
 
 void
-nm_settings_add_connection_dbus(NMSettings *                    self,
-                                NMConnection *                  connection,
+nm_settings_add_connection_dbus(NMSettings                     *self,
+                                const char                     *plugin,
+                                NMConnection                   *connection,
                                 NMSettingsConnectionPersistMode persist_mode,
                                 NMSettingsConnectionAddReason   add_reason,
                                 NMSettingsConnectionIntFlags    sett_flags,
-                                NMAuthSubject *                 subject,
-                                GDBusMethodInvocation *         context,
+                                NMAuthSubject                  *subject,
+                                GDBusMethodInvocation          *context,
                                 NMSettingsAddCallback           callback,
                                 gpointer                        user_data)
 {
-    NMSettingsPrivate *  priv = NM_SETTINGS_GET_PRIVATE(self);
+    NMSettingsPrivate   *priv = NM_SETTINGS_GET_PRIVATE(self);
     NMSettingConnection *s_con;
-    NMAuthChain *        chain;
-    GError *             error = NULL, *tmp_error = NULL;
-    const char *         perm;
+    NMAuthChain         *chain;
+    GError              *error = NULL, *tmp_error = NULL;
+    const char          *perm;
 
     g_return_if_fail(NM_IS_CONNECTION(connection));
     g_return_if_fail(NM_IS_AUTH_SUBJECT(subject));
@@ -2549,6 +2611,7 @@ nm_settings_add_connection_dbus(NMSettings *                    self,
     nm_auth_chain_set_data(chain, "persist-mode", GUINT_TO_POINTER(persist_mode), NULL);
     nm_auth_chain_set_data(chain, "add-reason", GUINT_TO_POINTER(add_reason), NULL);
     nm_auth_chain_set_data(chain, "sett-flags", GUINT_TO_POINTER(sett_flags), NULL);
+    nm_auth_chain_set_data(chain, "plugin", g_strdup(plugin), g_free);
     nm_auth_chain_add_call_unsafe(chain, perm, TRUE);
     return;
 
@@ -2559,11 +2622,11 @@ done:
 }
 
 static void
-settings_add_connection_add_cb(NMSettings *           self,
-                               NMSettingsConnection * connection,
-                               GError *               error,
+settings_add_connection_add_cb(NMSettings            *self,
+                               NMSettingsConnection  *connection,
+                               GError                *error,
                                GDBusMethodInvocation *context,
-                               NMAuthSubject *        subject,
+                               NMAuthSubject         *subject,
                                gpointer               user_data)
 {
     gboolean is_add_connection_2 = GPOINTER_TO_INT(user_data);
@@ -2597,15 +2660,16 @@ settings_add_connection_add_cb(NMSettings *           self,
 }
 
 static void
-settings_add_connection_helper(NMSettings *                  self,
-                               GDBusMethodInvocation *       context,
+settings_add_connection_helper(NMSettings                   *self,
+                               GDBusMethodInvocation        *context,
                                gboolean                      is_add_connection_2,
-                               GVariant *                    settings,
+                               GVariant                     *settings,
+                               const char                   *plugin,
                                NMSettingsAddConnection2Flags flags)
 {
-    gs_unref_object NMConnection *connection = NULL;
-    GError *                      error      = NULL;
-    gs_unref_object NMAuthSubject * subject  = NULL;
+    gs_unref_object NMConnection   *connection = NULL;
+    GError                         *error      = NULL;
+    gs_unref_object NMAuthSubject  *subject    = NULL;
     NMSettingsConnectionPersistMode persist_mode;
 
     connection = _nm_simple_connection_new_from_dbus(settings,
@@ -2636,6 +2700,7 @@ settings_add_connection_helper(NMSettings *                  self,
 
     nm_settings_add_connection_dbus(
         self,
+        plugin,
         connection,
         persist_mode,
         NM_FLAGS_HAS(flags, NM_SETTINGS_ADD_CONNECTION2_FLAG_BLOCK_AUTOCONNECT)
@@ -2649,15 +2714,15 @@ settings_add_connection_helper(NMSettings *                  self,
 }
 
 static void
-impl_settings_add_connection(NMDBusObject *                     obj,
+impl_settings_add_connection(NMDBusObject                      *obj,
                              const NMDBusInterfaceInfoExtended *interface_info,
-                             const NMDBusMethodInfoExtended *   method_info,
-                             GDBusConnection *                  connection,
-                             const char *                       sender,
-                             GDBusMethodInvocation *            invocation,
-                             GVariant *                         parameters)
+                             const NMDBusMethodInfoExtended    *method_info,
+                             GDBusConnection                   *connection,
+                             const char                        *sender,
+                             GDBusMethodInvocation             *invocation,
+                             GVariant                          *parameters)
 {
-    NMSettings *     self               = NM_SETTINGS(obj);
+    NMSettings                *self     = NM_SETTINGS(obj);
     gs_unref_variant GVariant *settings = NULL;
 
     g_variant_get(parameters, "(@a{sa{sv}})", &settings);
@@ -2665,19 +2730,20 @@ impl_settings_add_connection(NMDBusObject *                     obj,
                                    invocation,
                                    FALSE,
                                    settings,
+                                   NULL,
                                    NM_SETTINGS_ADD_CONNECTION2_FLAG_TO_DISK);
 }
 
 static void
-impl_settings_add_connection_unsaved(NMDBusObject *                     obj,
+impl_settings_add_connection_unsaved(NMDBusObject                      *obj,
                                      const NMDBusInterfaceInfoExtended *interface_info,
-                                     const NMDBusMethodInfoExtended *   method_info,
-                                     GDBusConnection *                  connection,
-                                     const char *                       sender,
-                                     GDBusMethodInvocation *            invocation,
-                                     GVariant *                         parameters)
+                                     const NMDBusMethodInfoExtended    *method_info,
+                                     GDBusConnection                   *connection,
+                                     const char                        *sender,
+                                     GDBusMethodInvocation             *invocation,
+                                     GVariant                          *parameters)
 {
-    NMSettings *     self               = NM_SETTINGS(obj);
+    NMSettings                *self     = NM_SETTINGS(obj);
     gs_unref_variant GVariant *settings = NULL;
 
     g_variant_get(parameters, "(@a{sa{sv}})", &settings);
@@ -2685,23 +2751,26 @@ impl_settings_add_connection_unsaved(NMDBusObject *                     obj,
                                    invocation,
                                    FALSE,
                                    settings,
+                                   NULL,
                                    NM_SETTINGS_ADD_CONNECTION2_FLAG_IN_MEMORY);
 }
 
 static void
-impl_settings_add_connection2(NMDBusObject *                     obj,
+impl_settings_add_connection2(NMDBusObject                      *obj,
                               const NMDBusInterfaceInfoExtended *interface_info,
-                              const NMDBusMethodInfoExtended *   method_info,
-                              GDBusConnection *                  connection,
-                              const char *                       sender,
-                              GDBusMethodInvocation *            invocation,
-                              GVariant *                         parameters)
+                              const NMDBusMethodInfoExtended    *method_info,
+                              GDBusConnection                   *connection,
+                              const char                        *sender,
+                              GDBusMethodInvocation             *invocation,
+                              GVariant                          *parameters)
 {
-    NMSettings *     self               = NM_SETTINGS(obj);
-    gs_unref_variant GVariant *settings = NULL;
-    gs_unref_variant GVariant *   args  = NULL;
+    NMSettings                   *self     = NM_SETTINGS(obj);
+    gs_unref_variant GVariant    *settings = NULL;
+    gs_unref_variant GVariant    *args     = NULL;
+    gs_free char                 *plugin   = NULL;
     NMSettingsAddConnection2Flags flags;
-    const char *                  args_name;
+    const char                   *args_name;
+    GVariant                     *args_value;
     GVariantIter                  iter;
     guint32                       flags_u;
 
@@ -2745,7 +2814,13 @@ impl_settings_add_connection2(NMDBusObject *                     obj,
     nm_assert(g_variant_is_of_type(args, G_VARIANT_TYPE("a{sv}")));
 
     g_variant_iter_init(&iter, args);
-    while (g_variant_iter_next(&iter, "{&sv}", &args_name, NULL)) {
+    while (g_variant_iter_next(&iter, "{&sv}", &args_name, &args_value)) {
+        if (plugin == NULL && nm_streq(args_name, "plugin")
+            && g_variant_is_of_type(args_value, G_VARIANT_TYPE_STRING)) {
+            plugin = g_variant_dup_string(args_value, NULL);
+            continue;
+        }
+
         g_dbus_method_invocation_take_error(invocation,
                                             g_error_new(NM_SETTINGS_ERROR,
                                                         NM_SETTINGS_ERROR_INVALID_ARGUMENTS,
@@ -2754,25 +2829,25 @@ impl_settings_add_connection2(NMDBusObject *                     obj,
         return;
     }
 
-    settings_add_connection_helper(self, invocation, TRUE, settings, flags);
+    settings_add_connection_helper(self, invocation, TRUE, settings, plugin, flags);
 }
 
 /*****************************************************************************/
 
 static void
-impl_settings_load_connections(NMDBusObject *                     obj,
+impl_settings_load_connections(NMDBusObject                      *obj,
                                const NMDBusInterfaceInfoExtended *interface_info,
-                               const NMDBusMethodInfoExtended *   method_info,
-                               GDBusConnection *                  dbus_connection,
-                               const char *                       sender,
-                               GDBusMethodInvocation *            invocation,
-                               GVariant *                         parameters)
+                               const NMDBusMethodInfoExtended    *method_info,
+                               GDBusConnection                   *dbus_connection,
+                               const char                        *sender,
+                               GDBusMethodInvocation             *invocation,
+                               GVariant                          *parameters)
 {
-    NMSettings *       self                    = NM_SETTINGS(obj);
-    NMSettingsPrivate *priv                    = NM_SETTINGS_GET_PRIVATE(self);
+    NMSettings                  *self          = NM_SETTINGS(obj);
+    NMSettingsPrivate           *priv          = NM_SETTINGS_GET_PRIVATE(self);
     gs_unref_ptrarray GPtrArray *failures      = NULL;
-    gs_free const char **        filenames     = NULL;
-    gs_free char *               op_result_str = NULL;
+    gs_free const char         **filenames     = NULL;
+    gs_free char                *op_result_str = NULL;
 
     g_variant_get(parameters, "(^a&s)", &filenames);
 
@@ -2791,7 +2866,7 @@ impl_settings_load_connections(NMDBusObject *                     obj,
         NMSettingsPluginConnectionLoadEntry *entries;
         gsize                                n_entries;
         gsize                                i;
-        GSList *                             iter;
+        GSList                              *iter;
 
         entries = nm_settings_plugin_create_connection_load_entries(filenames, &n_entries);
 
@@ -2857,13 +2932,13 @@ impl_settings_load_connections(NMDBusObject *                     obj,
 }
 
 static void
-impl_settings_reload_connections(NMDBusObject *                     obj,
+impl_settings_reload_connections(NMDBusObject                      *obj,
                                  const NMDBusInterfaceInfoExtended *interface_info,
-                                 const NMDBusMethodInfoExtended *   method_info,
-                                 GDBusConnection *                  connection,
-                                 const char *                       sender,
-                                 GDBusMethodInvocation *            invocation,
-                                 GVariant *                         parameters)
+                                 const NMDBusMethodInfoExtended    *method_info,
+                                 GDBusConnection                   *connection,
+                                 const char                        *sender,
+                                 GDBusMethodInvocation             *invocation,
+                                 GVariant                          *parameters)
 {
     NMSettings *self = NM_SETTINGS(obj);
 
@@ -2933,16 +3008,16 @@ _clear_connections_cached_list(NMSettingsPrivate *priv)
 }
 
 static void
-impl_settings_list_connections(NMDBusObject *                     obj,
+impl_settings_list_connections(NMDBusObject                      *obj,
                                const NMDBusInterfaceInfoExtended *interface_info,
-                               const NMDBusMethodInfoExtended *   method_info,
-                               GDBusConnection *                  dbus_connection,
-                               const char *                       sender,
-                               GDBusMethodInvocation *            invocation,
-                               GVariant *                         parameters)
+                               const NMDBusMethodInfoExtended    *method_info,
+                               GDBusConnection                   *dbus_connection,
+                               const char                        *sender,
+                               GDBusMethodInvocation             *invocation,
+                               GVariant                          *parameters)
 {
-    NMSettings *         self = NM_SETTINGS(obj);
-    NMSettingsPrivate *  priv = NM_SETTINGS_GET_PRIVATE(self);
+    NMSettings          *self = NM_SETTINGS(obj);
+    NMSettingsPrivate   *priv = NM_SETTINGS_GET_PRIVATE(self);
     gs_free const char **strv = NULL;
 
     strv =
@@ -2976,19 +3051,19 @@ nm_settings_get_dbus_path_for_uuid(NMSettings *self, const char *uuid)
 }
 
 static void
-impl_settings_get_connection_by_uuid(NMDBusObject *                     obj,
+impl_settings_get_connection_by_uuid(NMDBusObject                      *obj,
                                      const NMDBusInterfaceInfoExtended *interface_info,
-                                     const NMDBusMethodInfoExtended *   method_info,
-                                     GDBusConnection *                  dbus_connection,
-                                     const char *                       sender,
-                                     GDBusMethodInvocation *            invocation,
-                                     GVariant *                         parameters)
+                                     const NMDBusMethodInfoExtended    *method_info,
+                                     GDBusConnection                   *dbus_connection,
+                                     const char                        *sender,
+                                     GDBusMethodInvocation             *invocation,
+                                     GVariant                          *parameters)
 {
-    NMSettings *          self = NM_SETTINGS(obj);
-    NMSettingsConnection *sett_conn;
+    NMSettings                    *self = NM_SETTINGS(obj);
+    NMSettingsConnection          *sett_conn;
     gs_unref_object NMAuthSubject *subject = NULL;
-    GError *                       error   = NULL;
-    const char *                   uuid;
+    GError                        *error   = NULL;
+    const char                    *uuid;
 
     g_variant_get(parameters, "(&s)", &uuid);
 
@@ -3039,9 +3114,9 @@ error:
 NMSettingsConnection *const *
 nm_settings_get_connections(NMSettings *self, guint *out_len)
 {
-    NMSettingsPrivate *    priv;
+    NMSettingsPrivate     *priv;
     NMSettingsConnection **v;
-    NMSettingsConnection * con;
+    NMSettingsConnection  *con;
     guint                  i;
 
     g_return_val_if_fail(NM_IS_SETTINGS(self), NULL);
@@ -3145,15 +3220,15 @@ nm_settings_get_connections_sorted_by_autoconnect_priority(NMSettings *self, gui
  *   the contained values do not need to be unrefed.
  */
 NMSettingsConnection **
-nm_settings_get_connections_clone(NMSettings *                   self,
-                                  guint *                        out_len,
+nm_settings_get_connections_clone(NMSettings                    *self,
+                                  guint                         *out_len,
                                   NMSettingsConnectionFilterFunc func,
                                   gpointer                       func_data,
                                   GCompareDataFunc               sort_compare_func,
                                   gpointer                       sort_data)
 {
     NMSettingsConnection *const *list_cached;
-    NMSettingsConnection **      list;
+    NMSettingsConnection       **list;
     guint                        len, i, j;
 
     g_return_val_if_fail(NM_IS_SETTINGS(self), NULL);
@@ -3192,7 +3267,7 @@ nm_settings_get_connections_clone(NMSettings *                   self,
 NMSettingsConnection *
 nm_settings_get_connection_by_path(NMSettings *self, const char *path)
 {
-    NMSettingsPrivate *   priv;
+    NMSettingsPrivate    *priv;
     NMSettingsConnection *connection;
 
     g_return_val_if_fail(NM_IS_SETTINGS(self), NULL);
@@ -3201,8 +3276,10 @@ nm_settings_get_connection_by_path(NMSettings *self, const char *path)
     priv = NM_SETTINGS_GET_PRIVATE(self);
 
     connection =
-        nm_dbus_manager_lookup_object(nm_dbus_object_get_manager(NM_DBUS_OBJECT(self)), path);
-    if (!connection || !NM_IS_SETTINGS_CONNECTION(connection))
+        nm_dbus_manager_lookup_object_with_type(nm_dbus_object_get_manager(NM_DBUS_OBJECT(self)),
+                                                NM_TYPE_SETTINGS_CONNECTION,
+                                                path);
+    if (!connection)
         return NULL;
 
     nm_assert(c_list_contains(&priv->connections_lst_head, &connection->_connections_lst));
@@ -3225,7 +3302,7 @@ nm_settings_has_connection(NMSettings *self, NMSettingsConnection *connection)
                                           _connections_lst));
     nm_assert(({
         NMSettingsConnection *candidate = NULL;
-        const char *          path;
+        const char           *path;
 
         path = nm_dbus_object_get_path(NM_DBUS_OBJECT(connection));
         if (path)
@@ -3266,12 +3343,12 @@ add_plugin(NMSettings *self, NMSettingsPlugin *plugin, const char *pname, const 
 }
 
 static gboolean
-add_plugin_load_file(NMSettings *self, const char *pname, GError **error)
+add_plugin_load_file(NMSettings *self, const char *pname, gboolean ignore_not_found, GError **error)
 {
-    gs_free char *  full_name                = NULL;
-    gs_free char *  path                     = NULL;
-    gs_unref_object NMSettingsPlugin *plugin = NULL;
-    GModule *                         module;
+    gs_free char                     *full_name = NULL;
+    gs_free char                     *path      = NULL;
+    gs_unref_object NMSettingsPlugin *plugin    = NULL;
+    GModule                          *module;
     NMSettingsPluginFactoryFunc       factory_func;
     struct stat                       st;
     int                               errsv;
@@ -3281,10 +3358,12 @@ add_plugin_load_file(NMSettings *self, const char *pname, GError **error)
 
     if (stat(path, &st) != 0) {
         errsv = errno;
-        _LOGW("could not load plugin '%s' from file '%s': %s",
-              pname,
-              path,
-              nm_strerror_native(errsv));
+        if (!ignore_not_found) {
+            _LOGW("could not load plugin '%s' from file '%s': %s",
+                  pname,
+                  path,
+                  nm_strerror_native(errsv));
+        }
         return TRUE;
     }
     if (!S_ISREG(st.st_mode)) {
@@ -3372,13 +3451,13 @@ load_plugins(NMSettings *self, const char *const *plugins, GError **error)
             continue;
         }
 
-        if (nm_utils_strv_find_first((char **) plugins, iter - plugins, pname) >= 0) {
+        if (nm_strv_find_first(plugins, iter - plugins, pname) >= 0) {
             /* the plugin is already mentioned in the list previously.
              * Don't load a duplicate. */
             continue;
         }
 
-        success = add_plugin_load_file(self, pname, error);
+        success = add_plugin_load_file(self, pname, FALSE, error);
         if (!success)
             break;
     }
@@ -3393,72 +3472,121 @@ load_plugins(NMSettings *self, const char *const *plugins, GError **error)
 /*****************************************************************************/
 
 static void
-pk_hostname_cb(NMAuthChain *chain, GDBusMethodInvocation *context, gpointer user_data)
+_save_hostname_write_cb(GObject *source, GAsyncResult *result, gpointer user_data)
 {
-    NMSettings *       self = NM_SETTINGS(user_data);
+    NMSettings                    *self;
+    GDBusMethodInvocation         *context;
+    gs_free char                  *hostname     = NULL;
+    gs_unref_object NMAuthSubject *auth_subject = NULL;
+    gs_unref_object GCancellable  *cancellable  = NULL;
+    gs_free_error GError          *error        = NULL;
+
+    nm_utils_user_data_unpack(user_data, &self, &context, &auth_subject, &hostname, &cancellable);
+
+    nm_hostname_manager_set_static_hostname_finish(NM_HOSTNAME_MANAGER(source), result, &error);
+
+    nm_audit_log_control_op(NM_AUDIT_OP_HOSTNAME_SAVE,
+                            hostname ?: "",
+                            !error,
+                            auth_subject,
+                            error ? error->message : NULL);
+
+    if (nm_utils_error_is_cancelled(error)) {
+        g_dbus_method_invocation_return_error_literal(context,
+                                                      NM_SETTINGS_ERROR,
+                                                      NM_SETTINGS_ERROR_FAILED,
+                                                      "NetworkManager is shutting down");
+        return;
+    }
+
+    if (error) {
+        g_dbus_method_invocation_take_error(context,
+                                            g_error_new(NM_SETTINGS_ERROR,
+                                                        NM_SETTINGS_ERROR_FAILED,
+                                                        "Saving the hostname failed: %s",
+                                                        error->message));
+        return;
+    }
+
+    g_dbus_method_invocation_return_value(context, NULL);
+}
+
+static void
+_save_hostname_pk_cb(NMAuthChain *chain, GDBusMethodInvocation *context, gpointer user_data)
+{
+    NMSettings        *self = NM_SETTINGS(user_data);
     NMSettingsPrivate *priv = NM_SETTINGS_GET_PRIVATE(self);
     NMAuthCallResult   result;
-    GError *           error = NULL;
-    const char *       hostname;
+    gs_free char      *hostname = NULL;
 
     nm_assert(G_IS_DBUS_METHOD_INVOCATION(context));
 
     c_list_unlink(nm_auth_chain_parent_lst_list(chain));
 
     result   = nm_auth_chain_get_result(chain, NM_AUTH_PERMISSION_SETTINGS_MODIFY_HOSTNAME);
-    hostname = nm_auth_chain_get_data(chain, "hostname");
+    hostname = nm_auth_chain_steal_data(chain, "hostname");
 
-    /* If our NMSettingsConnection is already gone, do nothing */
     if (result != NM_AUTH_CALL_RESULT_YES) {
-        error = g_error_new_literal(NM_SETTINGS_ERROR,
-                                    NM_SETTINGS_ERROR_PERMISSION_DENIED,
-                                    NM_UTILS_ERROR_MSG_INSUFF_PRIV);
-    } else {
-        if (!nm_hostname_manager_write_hostname(priv->hostname_manager, hostname)) {
-            error = g_error_new_literal(NM_SETTINGS_ERROR,
-                                        NM_SETTINGS_ERROR_FAILED,
-                                        "Saving the hostname failed.");
-        }
+        nm_audit_log_control_op(NM_AUDIT_OP_HOSTNAME_SAVE,
+                                hostname ?: "",
+                                FALSE,
+                                nm_auth_chain_get_subject(chain),
+                                NM_UTILS_ERROR_MSG_INSUFF_PRIV);
+        g_dbus_method_invocation_return_error_literal(context,
+                                                      NM_SETTINGS_ERROR,
+                                                      NM_SETTINGS_ERROR_PERMISSION_DENIED,
+                                                      NM_UTILS_ERROR_MSG_INSUFF_PRIV);
+        return;
     }
 
-    nm_audit_log_control_op(NM_AUDIT_OP_HOSTNAME_SAVE,
-                            hostname,
-                            !error,
-                            nm_auth_chain_get_subject(chain),
-                            error ? error->message : NULL);
+    if (!priv->shutdown_cancellable) {
+        /* we only keep a weak pointer on the cancellable, so we can
+         * wrap it up after use. We almost never require this, because
+         * SaveHostname is almost never called. */
+        priv->shutdown_cancellable = g_cancellable_new();
+        g_object_add_weak_pointer(G_OBJECT(priv->shutdown_cancellable),
+                                  (gpointer *) &priv->shutdown_cancellable);
+    }
 
-    if (error)
-        g_dbus_method_invocation_take_error(context, error);
-    else
-        g_dbus_method_invocation_return_value(context, NULL);
+    nm_hostname_manager_set_static_hostname(
+        priv->hostname_manager,
+        hostname,
+        priv->shutdown_cancellable,
+        _save_hostname_write_cb,
+        nm_utils_user_data_pack(self,
+                                context,
+                                g_object_ref(nm_auth_chain_get_subject(chain)),
+                                hostname,
+                                g_object_ref(priv->shutdown_cancellable)));
+    g_steal_pointer(&hostname);
 }
 
 static void
-impl_settings_save_hostname(NMDBusObject *                     obj,
+impl_settings_save_hostname(NMDBusObject                      *obj,
                             const NMDBusInterfaceInfoExtended *interface_info,
-                            const NMDBusMethodInfoExtended *   method_info,
-                            GDBusConnection *                  connection,
-                            const char *                       sender,
-                            GDBusMethodInvocation *            invocation,
-                            GVariant *                         parameters)
+                            const NMDBusMethodInfoExtended    *method_info,
+                            GDBusConnection                   *connection,
+                            const char                        *sender,
+                            GDBusMethodInvocation             *invocation,
+                            GVariant                          *parameters)
 {
-    NMSettings *       self = NM_SETTINGS(obj);
+    NMSettings        *self = NM_SETTINGS(obj);
     NMSettingsPrivate *priv = NM_SETTINGS_GET_PRIVATE(self);
-    NMAuthChain *      chain;
-    const char *       hostname;
-    const char *       error_reason;
+    NMAuthChain       *chain;
+    const char        *hostname;
+    const char        *error_reason;
     int                error_code;
 
     g_variant_get(parameters, "(&s)", &hostname);
 
     /* Minimal validation of the hostname */
-    if (!nm_hostname_manager_validate_hostname(hostname)) {
+    if (nm_str_not_empty(hostname) && !nm_utils_validate_hostname(hostname)) {
         error_code   = NM_SETTINGS_ERROR_INVALID_HOSTNAME;
         error_reason = "The hostname was too long or contained invalid characters";
         goto err;
     }
 
-    chain = nm_auth_chain_new_context(invocation, pk_hostname_cb, self);
+    chain = nm_auth_chain_new_context(invocation, _save_hostname_pk_cb, self);
     if (!chain) {
         error_code   = NM_SETTINGS_ERROR_PERMISSION_DENIED;
         error_reason = NM_UTILS_ERROR_MSG_REQ_AUTH_FAILED;
@@ -3467,7 +3595,7 @@ impl_settings_save_hostname(NMDBusObject *                     obj,
 
     c_list_link_tail(&priv->auth_lst_head, nm_auth_chain_parent_lst_list(chain));
     nm_auth_chain_add_call(chain, NM_AUTH_PERMISSION_SETTINGS_MODIFY_HOSTNAME, TRUE);
-    nm_auth_chain_set_data(chain, "hostname", g_strdup(hostname), g_free);
+    nm_auth_chain_set_data(chain, "hostname", nm_strdup_not_empty(hostname), g_free);
     return;
 err:
     nm_audit_log_control_op(NM_AUDIT_OP_HOSTNAME_SAVE, hostname, FALSE, invocation, error_reason);
@@ -3480,9 +3608,11 @@ err:
 /*****************************************************************************/
 
 static void
-_hostname_changed_cb(NMHostnameManager *hostname_manager, GParamSpec *pspec, gpointer user_data)
+_static_hostname_changed_cb(NMHostnameManager *hostname_manager,
+                            GParamSpec        *pspec,
+                            gpointer           user_data)
 {
-    _notify(user_data, PROP_HOSTNAME);
+    _notify(user_data, PROP_STATIC_HOSTNAME);
 }
 
 /*****************************************************************************/
@@ -3490,7 +3620,7 @@ _hostname_changed_cb(NMHostnameManager *hostname_manager, GParamSpec *pspec, gpo
 static gboolean
 have_connection_for_device(NMSettings *self, NMDevice *device)
 {
-    NMSettingsPrivate *   priv = NM_SETTINGS_GET_PRIVATE(self);
+    NMSettingsPrivate    *priv = NM_SETTINGS_GET_PRIVATE(self);
     NMSettingsConnection *sett_conn;
 
     g_return_val_if_fail(NM_IS_SETTINGS(self), FALSE);
@@ -3521,8 +3651,8 @@ have_connection_for_device(NMSettings *self, NMDevice *device)
 }
 
 static void
-default_wired_clear_tag(NMSettings *          self,
-                        NMDevice *            device,
+default_wired_clear_tag(NMSettings           *self,
+                        NMDevice             *device,
                         NMSettingsConnection *sett_conn,
                         gboolean              add_to_no_auto_default)
 {
@@ -3550,9 +3680,9 @@ static void
 device_realized(NMDevice *device, GParamSpec *pspec, NMSettings *self)
 {
     gs_unref_object NMConnection *connection = NULL;
-    NMSettingsPrivate *           priv;
-    NMSettingsConnection *        added;
-    GError *                      error = NULL;
+    NMSettingsPrivate            *priv;
+    NMSettingsConnection         *added;
+    GError                       *error = NULL;
 
     if (!nm_device_is_real(device))
         return;
@@ -3600,6 +3730,7 @@ device_realized(NMDevice *device, GParamSpec *pspec, NMSettings *self)
           nm_device_get_iface(device));
 
     nm_settings_add_connection(self,
+                               NULL,
                                connection,
                                NM_SETTINGS_CONNECTION_PERSIST_MODE_IN_MEMORY_ONLY,
                                NM_SETTINGS_CONNECTION_ADD_REASON_NONE,
@@ -3664,7 +3795,7 @@ nm_settings_device_removed(NMSettings *self, NMDevice *device, gboolean quitting
 static void
 session_monitor_changed_cb(NMSessionMonitor *session_monitor, NMSettings *self)
 {
-    NMSettingsPrivate *          priv = NM_SETTINGS_GET_PRIVATE(self);
+    NMSettingsPrivate           *priv = NM_SETTINGS_GET_PRIVATE(self);
     NMSettingsConnection *const *list;
     guint                        i, len;
     guint                        generation;
@@ -3705,8 +3836,8 @@ static void
 _kf_db_to_file(NMSettings *self, gboolean is_timestamps, gboolean force_write)
 {
     NMSettingsPrivate *priv = NM_SETTINGS_GET_PRIVATE(self);
-    NMKeyFileDB *      kf_db;
-    bool *             p_kf_db_pruned;
+    NMKeyFileDB       *kf_db;
+    bool              *p_kf_db_pruned;
 
     if (is_timestamps) {
         kf_db          = priv->kf_db_timestamps;
@@ -3739,9 +3870,9 @@ _kf_db_log_fcn(NMKeyFileDB *kf_db, int syslog_level, gpointer user_data, const c
 
     if (_NMLOG_ENABLED(level)) {
         NMSettingsPrivate *priv = NM_SETTINGS_GET_PRIVATE(self);
-        gs_free char *     msg  = NULL;
+        gs_free char      *msg  = NULL;
         va_list            ap;
-        const char *       prefix;
+        const char        *prefix;
 
         va_start(ap, fmt);
         msg = g_strdup_vprintf(fmt, ap);
@@ -3764,17 +3895,17 @@ static gboolean
 _kf_db_got_dirty_flush(NMSettings *self, gboolean is_timestamps)
 {
     NMSettingsPrivate *priv = NM_SETTINGS_GET_PRIVATE(self);
-    const char *       prefix;
-    NMKeyFileDB *      kf_db;
+    const char        *prefix;
+    NMKeyFileDB       *kf_db;
 
     if (is_timestamps) {
-        prefix                               = "timestamps";
-        kf_db                                = priv->kf_db_timestamps;
-        priv->kf_db_flush_idle_id_timestamps = 0;
+        prefix = "timestamps";
+        kf_db  = priv->kf_db_timestamps;
+        nm_clear_g_source_inst(&priv->kf_db_flush_idle_source_timestamps);
     } else {
-        prefix                                = "seen-bssids";
-        kf_db                                 = priv->kf_db_seen_bssids;
-        priv->kf_db_flush_idle_id_seen_bssids = 0;
+        prefix = "seen-bssids";
+        kf_db  = priv->kf_db_seen_bssids;
+        nm_clear_g_source_inst(&priv->kf_db_flush_idle_source_seen_bssids);
     }
 
     if (nm_key_file_db_is_dirty(kf_db))
@@ -3785,7 +3916,7 @@ _kf_db_got_dirty_flush(NMSettings *self, gboolean is_timestamps)
               nm_key_file_db_get_filename(kf_db));
     }
 
-    return G_SOURCE_REMOVE;
+    return G_SOURCE_CONTINUE;
 }
 
 static gboolean
@@ -3803,29 +3934,30 @@ _kf_db_got_dirty_flush_seen_bssids_cb(gpointer user_data)
 static void
 _kf_db_got_dirty_fcn(NMKeyFileDB *kf_db, gpointer user_data)
 {
-    NMSettings *       self = user_data;
+    NMSettings        *self = user_data;
     NMSettingsPrivate *priv = NM_SETTINGS_GET_PRIVATE(self);
     GSourceFunc        idle_func;
-    guint *            p_id;
-    const char *       prefix;
+    GSource          **p_source;
+    const char        *prefix;
 
     if (priv->kf_db_timestamps == kf_db) {
         prefix    = "timestamps";
-        p_id      = &priv->kf_db_flush_idle_id_timestamps;
+        p_source  = &priv->kf_db_flush_idle_source_timestamps;
         idle_func = _kf_db_got_dirty_flush_timestamps_cb;
     } else if (priv->kf_db_seen_bssids == kf_db) {
         prefix    = "seen-bssids";
-        p_id      = &priv->kf_db_flush_idle_id_seen_bssids;
+        p_source  = &priv->kf_db_flush_idle_source_seen_bssids;
         idle_func = _kf_db_got_dirty_flush_seen_bssids_cb;
     } else {
         nm_assert_not_reached();
         return;
     }
 
-    if (*p_id != 0)
+    if (*p_source)
         return;
     _LOGT("[%s-keyfile]: schedule flushing changes to disk", prefix);
-    *p_id = g_idle_add_full(G_PRIORITY_LOW, idle_func, self, NULL);
+    *p_source =
+        nm_g_source_attach(nm_g_idle_source_new(G_PRIORITY_LOW, idle_func, self, NULL), NULL);
 }
 
 void
@@ -3844,7 +3976,7 @@ nm_settings_start(NMSettings *self, GError **error)
 {
     NMSettingsPrivate *priv;
     gs_strfreev char **plugins = NULL;
-    GSList *           iter;
+    GSList            *iter;
 
     priv = NM_SETTINGS_GET_PRIVATE(self);
 
@@ -3870,8 +4002,18 @@ nm_settings_start(NMSettings *self, GError **error)
     /* Load the plugins; fail if a plugin is not found. */
     plugins = nm_config_data_get_plugins(nm_config_get_data_orig(priv->config), TRUE);
 
-    if (!load_plugins(self, (const char *const *) plugins, error))
-        return FALSE;
+    if (plugins && plugins[0]) {
+        if (!load_plugins(self, (const char *const *) plugins, error))
+            return FALSE;
+    } else {
+        add_plugin_keyfile(self);
+#if WITH_CONFIG_PLUGIN_IFCFG_RH
+        add_plugin_load_file(self, "ifcfg-rh", TRUE, NULL);
+#endif
+#if WITH_CONFIG_PLUGIN_IFUPDOWN
+        add_plugin_load_file(self, "ifupdown", TRUE, NULL);
+#endif
+    }
 
     for (iter = priv->plugins; iter; iter = iter->next) {
         NMSettingsPlugin *plugin = NM_SETTINGS_PLUGIN(iter->data);
@@ -3892,11 +4034,11 @@ nm_settings_start(NMSettings *self, GError **error)
     _plugin_connections_reload(self);
 
     g_signal_connect(priv->hostname_manager,
-                     "notify::" NM_HOSTNAME_MANAGER_HOSTNAME,
-                     G_CALLBACK(_hostname_changed_cb),
+                     "notify::" NM_HOSTNAME_MANAGER_STATIC_HOSTNAME,
+                     G_CALLBACK(_static_hostname_changed_cb),
                      self);
-    if (nm_hostname_manager_get_hostname(priv->hostname_manager))
-        _notify(self, PROP_HOSTNAME);
+    if (nm_hostname_manager_get_static_hostname(priv->hostname_manager))
+        _notify(self, PROP_STATIC_HOSTNAME);
 
     priv->started = TRUE;
     _startup_complete_check(self, 0);
@@ -3914,19 +4056,19 @@ nm_settings_start(NMSettings *self, GError **error)
 static void
 get_property(GObject *object, guint prop_id, GValue *value, GParamSpec *pspec)
 {
-    NMSettings *       self = NM_SETTINGS(object);
+    NMSettings        *self = NM_SETTINGS(object);
     NMSettingsPrivate *priv = NM_SETTINGS_GET_PRIVATE(self);
-    const char **      strv;
+    const char       **strv;
 
     switch (prop_id) {
     case PROP_UNMANAGED_SPECS:
         g_value_take_boxed(value,
                            _nm_utils_slist_to_strv(nm_settings_get_unmanaged_specs(self), TRUE));
         break;
-    case PROP_HOSTNAME:
+    case PROP_STATIC_HOSTNAME:
         g_value_set_string(value,
                            priv->hostname_manager
-                               ? nm_hostname_manager_get_hostname(priv->hostname_manager)
+                               ? nm_hostname_manager_get_static_hostname(priv->hostname_manager)
                                : NULL);
         break;
     case PROP_CAN_MODIFY:
@@ -3938,7 +4080,7 @@ get_property(GObject *object, guint prop_id, GValue *value, GParamSpec *pspec)
             priv->connections_len,
             G_STRUCT_OFFSET(NMSettingsConnection, _connections_lst),
             TRUE);
-        g_value_take_boxed(value, nm_utils_strv_make_deep_copied(strv));
+        g_value_take_boxed(value, nm_strv_make_deep_copied(strv));
         break;
     case PROP_STARTUP_COMPLETE:
         g_value_set_boolean(value, !nm_settings_get_startup_complete_blocked_reason(self, FALSE));
@@ -3952,7 +4094,7 @@ get_property(GObject *object, guint prop_id, GValue *value, GParamSpec *pspec)
 static void
 set_property(GObject *object, guint prop_id, const GValue *value, GParamSpec *pspec)
 {
-    NMSettings *       self = NM_SETTINGS(object);
+    NMSettings        *self = NM_SETTINGS(object);
     NMSettingsPrivate *priv = NM_SETTINGS_GET_PRIVATE(self);
 
     switch (prop_id) {
@@ -4009,14 +4151,14 @@ nm_settings_new(NMManager *manager)
 static void
 dispose(GObject *object)
 {
-    NMSettings *       self = NM_SETTINGS(object);
+    NMSettings        *self = NM_SETTINGS(object);
     NMSettingsPrivate *priv = NM_SETTINGS_GET_PRIVATE(self);
-    CList *            iter;
+    CList             *iter;
 
     nm_assert(c_list_is_empty(&priv->sce_dirty_lst_head));
     nm_assert(g_hash_table_size(priv->sce_idx) == 0);
 
-    nm_clear_g_source(&priv->startup_complete_timeout_id);
+    nm_clear_g_source_inst(&priv->startup_complete_timeout_source);
     nm_clear_pointer(&priv->startup_complete_idx, g_hash_table_destroy);
     nm_assert(c_list_is_empty(&priv->startup_complete_scd_lst_head));
 
@@ -4025,7 +4167,7 @@ dispose(GObject *object)
 
     if (priv->hostname_manager) {
         g_signal_handlers_disconnect_by_func(priv->hostname_manager,
-                                             G_CALLBACK(_hostname_changed_cb),
+                                             G_CALLBACK(_static_hostname_changed_cb),
                                              self);
         g_clear_object(&priv->hostname_manager);
     }
@@ -4037,15 +4179,21 @@ dispose(GObject *object)
         g_clear_object(&priv->session_monitor);
     }
 
+    if (priv->shutdown_cancellable) {
+        g_object_remove_weak_pointer(G_OBJECT(priv->shutdown_cancellable),
+                                     (gpointer *) &priv->shutdown_cancellable);
+        g_cancellable_cancel(g_steal_pointer(&priv->shutdown_cancellable));
+    }
+
     G_OBJECT_CLASS(nm_settings_parent_class)->dispose(object);
 }
 
 static void
 finalize(GObject *object)
 {
-    NMSettings *       self = NM_SETTINGS(object);
+    NMSettings        *self = NM_SETTINGS(object);
     NMSettingsPrivate *priv = NM_SETTINGS_GET_PRIVATE(self);
-    GSList *           iter;
+    GSList            *iter;
 
     _clear_connections_cached_list(priv);
 
@@ -4070,8 +4218,8 @@ finalize(GObject *object)
 
     g_clear_object(&priv->agent_mgr);
 
-    nm_clear_g_source(&priv->kf_db_flush_idle_id_timestamps);
-    nm_clear_g_source(&priv->kf_db_flush_idle_id_seen_bssids);
+    nm_clear_g_source_inst(&priv->kf_db_flush_idle_source_timestamps);
+    nm_clear_g_source_inst(&priv->kf_db_flush_idle_source_seen_bssids);
     _kf_db_to_file(self, TRUE, FALSE);
     _kf_db_to_file(self, FALSE, FALSE);
     nm_key_file_db_destroy(priv->kf_db_timestamps);
@@ -4167,7 +4315,9 @@ static const NMDBusInterfaceInfoExtended interface_info_settings = {
             NM_DEFINE_DBUS_PROPERTY_INFO_EXTENDED_READABLE("Connections",
                                                            "ao",
                                                            NM_SETTINGS_CONNECTIONS),
-            NM_DEFINE_DBUS_PROPERTY_INFO_EXTENDED_READABLE("Hostname", "s", NM_SETTINGS_HOSTNAME),
+            NM_DEFINE_DBUS_PROPERTY_INFO_EXTENDED_READABLE("Hostname",
+                                                           "s",
+                                                           NM_SETTINGS_STATIC_HOSTNAME),
             NM_DEFINE_DBUS_PROPERTY_INFO_EXTENDED_READABLE("CanModify",
                                                            "b",
                                                            NM_SETTINGS_CAN_MODIFY), ), ),
@@ -4176,7 +4326,7 @@ static const NMDBusInterfaceInfoExtended interface_info_settings = {
 static void
 nm_settings_class_init(NMSettingsClass *class)
 {
-    GObjectClass *     object_class      = G_OBJECT_CLASS(class);
+    GObjectClass      *object_class      = G_OBJECT_CLASS(class);
     NMDBusObjectClass *dbus_object_class = NM_DBUS_OBJECT_CLASS(class);
 
     dbus_object_class->export_path     = NM_DBUS_EXPORT_PATH_STATIC(NM_DBUS_PATH_SETTINGS);
@@ -4200,11 +4350,12 @@ nm_settings_class_init(NMSettingsClass *class)
                            G_TYPE_STRV,
                            G_PARAM_READABLE | G_PARAM_STATIC_STRINGS);
 
-    obj_properties[PROP_HOSTNAME] = g_param_spec_string(NM_SETTINGS_HOSTNAME,
-                                                        "",
-                                                        "",
-                                                        NULL,
-                                                        G_PARAM_READABLE | G_PARAM_STATIC_STRINGS);
+    obj_properties[PROP_STATIC_HOSTNAME] =
+        g_param_spec_string(NM_SETTINGS_STATIC_HOSTNAME,
+                            "",
+                            "",
+                            NULL,
+                            G_PARAM_READABLE | G_PARAM_STATIC_STRINGS);
 
     obj_properties[PROP_CAN_MODIFY] =
         g_param_spec_boolean(NM_SETTINGS_CAN_MODIFY,

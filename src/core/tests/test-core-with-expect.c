@@ -98,7 +98,7 @@ test_nm_utils_kill_child_async_do(const char *name,
                                   int         sig,
                                   guint32     wait_before_kill_msec,
                                   gboolean    expected_success,
-                                  const int * expected_child_status)
+                                  const int  *expected_child_status)
 {
     gboolean                                   success;
     struct test_nm_utils_kill_child_async_data data = {};
@@ -135,7 +135,7 @@ test_nm_utils_kill_child_sync_do(const char *name,
                                  int         sig,
                                  guint32     wait_before_kill_msec,
                                  gboolean    expected_success,
-                                 const int * expected_child_status)
+                                 const int  *expected_child_status)
 {
     gboolean success;
     int      child_status = -1;
@@ -226,11 +226,11 @@ static void
 do_test_nm_utils_kill_child(void)
 {
     GLogLevelFlags fatal_mask;
-    char *         argv_watchdog[] = {
+    char          *argv_watchdog[] = {
         "bash",
         "-c",
         "sleep 4; "
-        "kill -KILL 0; #watchdog for #" TEST_TOKEN,
+                 "kill -KILL 0; #watchdog for #" TEST_TOKEN,
         NULL,
     };
     char *argv1[] = {
@@ -282,7 +282,7 @@ do_test_nm_utils_kill_child(void)
     pid4a   = test_nm_utils_kill_child_spawn(argv4, TRUE);
 
     /* give processes time to start (and potentially block signals) ... */
-    g_usleep(G_USEC_PER_SEC / 10);
+    g_usleep(G_USEC_PER_SEC / 5);
 
     fatal_mask = g_log_set_always_fatal(G_LOG_FATAL_MASK);
 
@@ -338,12 +338,12 @@ do_test_nm_utils_kill_child(void)
         "(No child process*, 10) after sending no signal (0)");
     test_nm_utils_kill_child_sync_do("test-s-3-2", pid3s, 0, 0, FALSE, NULL);
 
-    NMTST_EXPECT_NM_DEBUG("kill child process 'test-s-4' (*): waiting up to 1 milliseconds for "
+    NMTST_EXPECT_NM_DEBUG("kill child process 'test-s-4' (*): waiting up to 50 milliseconds for "
                           "process to terminate normally after sending SIGTERM (15)...");
     NMTST_EXPECT_NM_DEBUG("kill child process 'test-s-4' (*): sending SIGKILL...");
     NMTST_EXPECT_NM_DEBUG("kill child process 'test-s-4' (*): after sending SIGTERM (15) and "
                           "SIGKILL, process * exited by signal 9 (* usec elapsed)");
-    test_nm_utils_kill_child_sync_do("test-s-4", pid4s, SIGTERM, 1, TRUE, &expected_signal_KILL);
+    test_nm_utils_kill_child_sync_do("test-s-4", pid4s, SIGTERM, 50, TRUE, &expected_signal_KILL);
 
     NMTST_EXPECT_NM_DEBUG("kill child process 'test-a-1-1' (*): wait for process to terminate "
                           "after sending SIGTERM (15) (send SIGKILL in 3000 milliseconds)...");
@@ -464,7 +464,7 @@ test_nm_utils_kill_child(void)
 static void
 _remove_at_indexes_init_random_idx(GArray *idx, guint array_len, guint idx_len)
 {
-    GRand *       rand = nmtst_get_rand();
+    GRand        *rand = nmtst_get_rand();
     gs_free char *mask = NULL;
     guint         i, max_test_idx;
 
@@ -515,7 +515,7 @@ _remove_at_indexes_init_random_idx(GArray *idx, guint array_len, guint idx_len)
 static void
 test_nm_utils_array_remove_at_indexes(void)
 {
-    gs_unref_array GArray *idx = NULL, *array = NULL;
+    gs_unref_array GArray         *idx = NULL, *array = NULL;
     gs_unref_hashtable GHashTable *unique = NULL;
     guint                          i_len, i_idx_len, i_rnd, i;
 
@@ -528,27 +528,27 @@ test_nm_utils_array_remove_at_indexes(void)
                 _remove_at_indexes_init_random_idx(idx, i_len, i_idx_len);
                 g_array_set_size(array, i_len);
                 for (i = 0; i < i_len; i++)
-                    g_array_index(array, gssize, i) = i;
+                    nm_g_array_index(array, gssize, i) = i;
 
-                nm_utils_array_remove_at_indexes(array, &g_array_index(idx, guint, 0), i_idx_len);
+                nm_utils_array_remove_at_indexes(array, nm_g_array_first_p(idx, guint), i_idx_len);
 
                 g_hash_table_remove_all(unique);
                 /* ensure that all the indexes are still unique */
                 for (i = 0; i < array->len; i++)
-                    g_hash_table_add(unique, GUINT_TO_POINTER(g_array_index(array, gssize, i)));
+                    g_hash_table_add(unique, GUINT_TO_POINTER(nm_g_array_index(array, gssize, i)));
                 g_assert_cmpint(g_hash_table_size(unique), ==, array->len);
 
                 for (i = 0; i < idx->len; i++)
-                    g_hash_table_add(unique, GUINT_TO_POINTER(g_array_index(idx, guint, i)));
+                    g_hash_table_add(unique, GUINT_TO_POINTER(nm_g_array_index(idx, guint, i)));
                 g_assert_cmpint(g_hash_table_size(unique), ==, i_len);
 
                 /* ensure proper sort order in array */
                 for (i = 0; i < array->len; i++) {
-                    gssize i1 = g_array_index(array, gssize, i);
+                    gssize i1 = nm_g_array_index(array, gssize, i);
 
                     g_assert(i1 >= 0 && i1 < i_len);
                     if (i > 0) {
-                        gsize i0 = g_array_index(array, gssize, i - 1);
+                        gsize i0 = nm_g_array_index(array, gssize, i - 1);
                         g_assert_cmpint(i0, <, i1);
                     }
                 }

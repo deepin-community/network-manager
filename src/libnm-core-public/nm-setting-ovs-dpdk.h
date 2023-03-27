@@ -7,7 +7,7 @@
 #define __NM_SETTING_OVS_DPDK_H__
 
 #if !defined(__NETWORKMANAGER_H_INSIDE__) && !defined(NETWORKMANAGER_COMPILATION)
-    #error "Only <NetworkManager.h> can be included directly."
+#error "Only <NetworkManager.h> can be included directly."
 #endif
 
 #include "nm-setting.h"
@@ -27,7 +27,10 @@ G_BEGIN_DECLS
 
 #define NM_SETTING_OVS_DPDK_SETTING_NAME "ovs-dpdk"
 
-#define NM_SETTING_OVS_DPDK_DEVARGS "devargs"
+#define NM_SETTING_OVS_DPDK_DEVARGS    "devargs"
+#define NM_SETTING_OVS_DPDK_N_RXQ      "n-rxq"
+#define NM_SETTING_OVS_DPDK_N_RXQ_DESC "n-rxq-desc"
+#define NM_SETTING_OVS_DPDK_N_TXQ_DESC "n-txq-desc"
 
 typedef struct _NMSettingOvsDpdkClass NMSettingOvsDpdkClass;
 
@@ -38,6 +41,12 @@ NMSetting *nm_setting_ovs_dpdk_new(void);
 
 NM_AVAILABLE_IN_1_20
 const char *nm_setting_ovs_dpdk_get_devargs(NMSettingOvsDpdk *self);
+NM_AVAILABLE_IN_1_36
+guint32 nm_setting_ovs_dpdk_get_n_rxq(NMSettingOvsDpdk *self);
+NM_AVAILABLE_IN_1_42
+guint32 nm_setting_ovs_dpdk_get_n_rxq_desc(NMSettingOvsDpdk *self);
+NM_AVAILABLE_IN_1_42
+guint32 nm_setting_ovs_dpdk_get_n_txq_desc(NMSettingOvsDpdk *self);
 
 G_END_DECLS
 

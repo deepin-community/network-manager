@@ -87,7 +87,7 @@ nmt_newt_stack_get_components(NmtNewtWidget *widget)
 static void
 nmt_newt_stack_size_request(NmtNewtWidget *widget, int *width, int *height)
 {
-    NmtNewtStack *       stack = NMT_NEWT_STACK(widget);
+    NmtNewtStack        *stack = NMT_NEWT_STACK(widget);
     NmtNewtStackPrivate *priv  = NMT_NEWT_STACK_GET_PRIVATE(stack);
     int                  i, child_width, child_height;
 
@@ -142,7 +142,7 @@ nmt_newt_stack_add(NmtNewtStack *stack, const char *id, NmtNewtWidget *widget)
 static void
 nmt_newt_stack_remove(NmtNewtContainer *container, NmtNewtWidget *widget)
 {
-    NmtNewtStack *       stack = NMT_NEWT_STACK(container);
+    NmtNewtStack        *stack = NMT_NEWT_STACK(container);
     NmtNewtStackPrivate *priv  = NMT_NEWT_STACK_GET_PRIVATE(stack);
     int                  i;
 
@@ -166,8 +166,7 @@ nmt_newt_stack_child_validity_changed(NmtNewtContainer *container, NmtNewtWidget
         return;
 
     if (priv->children->pdata[priv->active] == (gpointer) widget) {
-        NMT_NEWT_CONTAINER_CLASS(nmt_newt_stack_parent_class)
-            ->child_validity_changed(container, widget);
+        nmt_newt_widget_set_valid(NMT_NEWT_WIDGET(container), nmt_newt_widget_get_valid(widget));
     }
 }
 
@@ -190,6 +189,7 @@ nmt_newt_stack_set_active(NmtNewtStack *stack, guint active)
     g_object_notify(G_OBJECT(stack), "active");
     g_object_notify(G_OBJECT(stack), "active-id");
     nmt_newt_widget_needs_rebuild(NMT_NEWT_WIDGET(stack));
+    nmt_newt_stack_child_validity_changed(NMT_NEWT_CONTAINER(stack), priv->children->pdata[active]);
 }
 
 /**
@@ -230,6 +230,8 @@ nmt_newt_stack_set_active_id(NmtNewtStack *stack, const char *id)
             g_object_notify(G_OBJECT(stack), "active");
             g_object_notify(G_OBJECT(stack), "active-id");
             nmt_newt_widget_needs_rebuild(NMT_NEWT_WIDGET(stack));
+            nmt_newt_stack_child_validity_changed(NMT_NEWT_CONTAINER(stack),
+                                                  priv->children->pdata[i]);
             return;
         }
     }
@@ -293,8 +295,8 @@ nmt_newt_stack_get_property(GObject *object, guint prop_id, GValue *value, GPara
 static void
 nmt_newt_stack_class_init(NmtNewtStackClass *stack_class)
 {
-    GObjectClass *         object_class    = G_OBJECT_CLASS(stack_class);
-    NmtNewtWidgetClass *   widget_class    = NMT_NEWT_WIDGET_CLASS(stack_class);
+    GObjectClass          *object_class    = G_OBJECT_CLASS(stack_class);
+    NmtNewtWidgetClass    *widget_class    = NMT_NEWT_WIDGET_CLASS(stack_class);
     NmtNewtContainerClass *container_class = NMT_NEWT_CONTAINER_CLASS(stack_class);
 
     g_type_class_add_private(stack_class, sizeof(NmtNewtStackPrivate));

@@ -7,7 +7,7 @@
 #define __NM_DEVICE_OVS_PORT_H__
 
 #if !defined(__NETWORKMANAGER_H_INSIDE__) && !defined(NETWORKMANAGER_COMPILATION)
-    #error "Only <NetworkManager.h> can be included directly."
+#error "Only <NetworkManager.h> can be included directly."
 #endif
 
 #include "nm-device.h"
@@ -29,12 +29,16 @@ G_BEGIN_DECLS
 
 /**
  * NMDeviceOvsPort:
+ *
+ * Since: 1.10
  */
+typedef struct _NMDeviceOvsPort      NMDeviceOvsPort;
 typedef struct _NMDeviceOvsPortClass NMDeviceOvsPortClass;
 
 NM_AVAILABLE_IN_1_10
 GType nm_device_ovs_port_get_type(void);
 
+NM_DEPRECATED_IN_1_34_FOR(nm_device_get_ports)
 NM_AVAILABLE_IN_1_14
 const GPtrArray *nm_device_ovs_port_get_slaves(NMDeviceOvsPort *device);
 

@@ -14,11 +14,11 @@
 #include <locale.h>
 
 #include <glib/gstdio.h>
-#include <glib-unix.h>
 
 #include "main-utils.h"
 #include "NetworkManagerUtils.h"
 #include "nm-config.h"
+#include "libnm-glib-aux/nm-io-utils.h"
 
 static gboolean
 sighup_handler(gpointer user_data)
@@ -77,34 +77,20 @@ nm_main_utils_setup_signals(GMainLoop *main_loop)
 gboolean
 nm_main_utils_write_pidfile(const char *pidfile)
 {
-    char     pid[16];
-    int      fd;
-    int      errsv;
-    gboolean success = FALSE;
+    gs_free_error GError *error = NULL;
+    char                  pid[16];
 
-    if ((fd = open(pidfile, O_CREAT | O_WRONLY | O_TRUNC | O_CLOEXEC, 00644)) < 0) {
-        errsv = errno;
-        fprintf(stderr, _("Opening %s failed: %s\n"), pidfile, nm_strerror_native(errsv));
+    nm_sprintf_buf(pid, "%lld", (long long) getpid());
+    if (!nm_utils_file_set_contents(pidfile, pid, -1, 00644, NULL, NULL, &error)) {
+        fprintf(stderr, _("Writing to %s failed: %s\n"), pidfile, error->message);
         return FALSE;
     }
 
-    g_snprintf(pid, sizeof(pid), "%d", getpid());
-    if (write(fd, pid, strlen(pid)) < 0) {
-        errsv = errno;
-        fprintf(stderr, _("Writing to %s failed: %s\n"), pidfile, nm_strerror_native(errsv));
-    } else
-        success = TRUE;
-
-    if (nm_close(fd)) {
-        errsv = errno;
-        fprintf(stderr, _("Closing %s failed: %s\n"), pidfile, nm_strerror_native(errsv));
-    }
-
-    return success;
+    return TRUE;
 }
 
 void
-nm_main_utils_ensure_statedir()
+nm_main_utils_ensure_statedir(void)
 {
     gs_free char *parent = NULL;
     int           errsv;
@@ -130,7 +116,7 @@ nm_main_utils_ensure_statedir()
 }
 
 void
-nm_main_utils_ensure_rundir()
+nm_main_utils_ensure_rundir(void)
 {
     int errsv;
 
@@ -173,8 +159,8 @@ nm_main_utils_ensure_not_running_pidfile(const char *pidfile)
     gs_free char *proc_cmdline = NULL;
     gsize         len          = 0;
     long          pid;
-    const char *  process_name;
-    const char *  prgname = g_get_prgname();
+    const char   *process_name;
+    const char   *prgname = g_get_prgname();
 
     g_return_if_fail(prgname);
 
@@ -210,30 +196,21 @@ nm_main_utils_ensure_not_running_pidfile(const char *pidfile)
     }
 }
 
-void
-nm_main_utils_ensure_root()
-{
-    if (getuid() != 0) {
-        fprintf(stderr, _("You must be root to run %s!\n"), g_get_prgname() ?: "");
-        exit(1);
-    }
-}
-
 gboolean
-nm_main_utils_early_setup(const char *  progname,
-                          int *         argc,
-                          char **       argv[],
+nm_main_utils_early_setup(const char   *progname,
+                          int          *argc,
+                          char        **argv[],
                           GOptionEntry *options,
                           void (*option_context_hook)(gpointer user_data, GOptionContext *opt_ctx),
                           gpointer    option_context_hook_data,
                           const char *summary)
 {
     GOptionContext *opt_ctx = NULL;
-    GError *        error   = NULL;
+    GError         *error   = NULL;
     gboolean        success = FALSE;
     int             i;
-    const char *    opt_fmt_log_level = NULL, *opt_fmt_log_domains = NULL;
-    const char **   opt_loc_log_level = NULL, **opt_loc_log_domains = NULL;
+    const char     *opt_fmt_log_level = NULL, *opt_fmt_log_domains = NULL;
+    const char    **opt_loc_log_level = NULL, **opt_loc_log_domains = NULL;
 
     /* Make GIO ignore the remote VFS service; otherwise it tries to use the
      * session bus to contact the remote service, and NM shouldn't ever be

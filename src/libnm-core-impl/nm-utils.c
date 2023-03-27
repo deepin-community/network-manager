@@ -23,12 +23,11 @@
 #include "libnm-glib-aux/nm-enum-utils.h"
 #include "libnm-glib-aux/nm-time-utils.h"
 #include "libnm-glib-aux/nm-secret-utils.h"
-#include "libnm-systemd-shared/nm-sd-utils-shared.h"
 #include "libnm-core-aux-intern/nm-common-macros.h"
 #include "nm-utils-private.h"
 #include "nm-setting-private.h"
-#include "nm-crypto.h"
 #include "nm-setting-bond.h"
+#include "nm-setting-bond-port.h"
 #include "nm-setting-bridge.h"
 #include "nm-setting-bridge-port.h"
 #include "nm-setting-infiniband.h"
@@ -78,7 +77,7 @@ NM_IS_SOCK_ADDR_ENDPOINT(const NMSockAddrEndpoint *self)
 static const char *
 _parse_endpoint(char *str, guint16 *out_port)
 {
-    char *      s;
+    char       *s;
     const char *s_port;
     gint16      port;
 
@@ -146,9 +145,9 @@ nm_sock_addr_endpoint_new(const char *endpoint)
     gsize               l_endpoint;
     gsize               l_host = 0;
     gsize               i;
-    gs_free char *      host_clone = NULL;
-    const char *        host;
-    guint16             port;
+    gs_free char       *host_clone = NULL;
+    const char         *host;
+    guint16             port = 0;
 
     g_return_val_if_fail(endpoint, NULL);
 
@@ -270,7 +269,7 @@ nm_sock_addr_endpoint_get_fixed_sockaddr(NMSockAddrEndpoint *self, gpointer sock
     if (!self->host)
         return FALSE;
 
-    if (nm_utils_parse_inaddr_bin(AF_UNSPEC, self->host, &addr_family, &addrbin))
+    if (nm_inet_parse_bin(AF_UNSPEC, self->host, &addr_family, &addrbin))
         goto good;
 
     /* See if there is an IPv6 scope-id...
@@ -293,10 +292,10 @@ nm_sock_addr_endpoint_get_fixed_sockaddr(NMSockAddrEndpoint *self, gpointer sock
 
     {
         gs_free char *tmp_str = NULL;
-        const char *  host_part;
+        const char   *host_part;
 
         host_part = nm_strndup_a(200, self->host, s - self->host, &tmp_str);
-        if (nm_utils_parse_inaddr_bin(AF_INET6, host_part, &addr_family, &addrbin))
+        if (nm_inet_parse_bin(AF_INET6, host_part, &addr_family, &addrbin))
             goto good;
     }
 
@@ -327,169 +326,181 @@ good:
 
 /*****************************************************************************/
 
-struct IsoLangToEncodings {
-    const char *       lang;
-    const char *const *encodings;
-};
+typedef const char *const StrvArray4Type[4];
 
-#define LANG_ENCODINGS(l, ...)                             \
-    {                                                      \
-        .lang = l, .encodings = NM_MAKE_STRV(__VA_ARGS__), \
+#define LL(l, ...)                               \
+    {                                            \
+        .name = l, .value = {__VA_ARGS__, NULL}, \
     }
 
 /* 5-letter language codes */
-static const struct IsoLangToEncodings isoLangEntries5[] = {
-    /* Simplified Chinese */
-    LANG_ENCODINGS("zh_cn", "euc-cn", "gb2312", "gb18030"), /* PRC */
-    LANG_ENCODINGS("zh_sg", "euc-cn", "gb2312", "gb18030"), /* Singapore */
-
-    /* Traditional Chinese */
-    LANG_ENCODINGS("zh_tw", "big5", "euc-tw"),              /* Taiwan */
-    LANG_ENCODINGS("zh_hk", "big5", "euc-tw", "big5-hkcs"), /* Hong Kong */
-    LANG_ENCODINGS("zh_mo", "big5", "euc-tw"),              /* Macau */
-
-    LANG_ENCODINGS(NULL, NULL)};
+static _NM_UTILS_STRING_TABLE_LOOKUP_DEFINE(
+    _iso_lang_entries_5_lookup,
+    StrvArray4Type,
+    const char *const *,
+    { nm_assert(name); },
+    { return NULL; },
+    ,
+    LL("zh_cn", "euc-cn", "gb2312", "gb18030"), /* Simplified Chinese, PRC */
+    LL("zh_hk", "big5", "euc-tw", "big5-hkcs"), /* Traditional Chinese, Hong Kong */
+    LL("zh_mo", "big5", "euc-tw"),              /* Traditional Chinese, Macau */
+    LL("zh_sg", "euc-cn", "gb2312", "gb18030"), /* Simplified Chinese, Singapore */
+    LL("zh_tw", "big5", "euc-tw"),              /* Traditional Chinese, Taiwan */
+);
 
 /* 2-letter language codes; we don't care about the other 3 in this table */
-static const struct IsoLangToEncodings isoLangEntries2[] = {
-    /* Japanese */
-    LANG_ENCODINGS("ja", "euc-jp", "shift_jis", "iso-2022-jp"),
+static _NM_UTILS_STRING_TABLE_LOOKUP_DEFINE(
+    _iso_lang_entries_2_lookup,
+    StrvArray4Type,
+    const char *const *,
+    { nm_assert(name); },
+    { return NULL; },
+    ,
+    LL("ar", "iso-8859-6", "windows-1256"),           /* Arabic */
+    LL("be", "koi8-r", "windows-1251", "iso-8859-5"), /* Cyrillic, Belorussian */
+    LL("bg", "windows-1251", "koi8-r", "iso-8859-5"), /* Cyrillic, Bulgarian */
+    LL("cs", "iso-8859-2", "windows-1250"),           /* Central European, Czech */
+    LL("el", "iso-8859-7", "windows-1253"),           /* Greek */
+    LL("et", "iso-8859-4", "windows-1257"),           /* Baltic, Estonian */
+    LL("he", "iso-8859-8", "windows-1255"),           /* Hebrew */
+    LL("hr", "iso-8859-2", "windows-1250"),           /* Central European, Croatian */
+    LL("hu", "iso-8859-2", "windows-1250"),           /* Central European, Hungarian */
+    LL("iw", "iso-8859-8", "windows-1255"),           /* Hebrew */
+    LL("ja", "euc-jp", "shift_jis", "iso-2022-jp"),   /* Japanese */
+    LL("ko", "euc-kr", "iso-2022-kr", "johab"),       /* Korean */
+    LL("lt", "iso-8859-4", "windows-1257"),           /* Baltic, Lithuanian */
+    LL("lv", "iso-8859-4", "windows-1257"),           /* Baltic, Latvian */
+    LL("mk", "koi8-r", "windows-1251", "iso-8859-5"), /* Cyrillic, Macedonian */
+    LL("pl", "iso-8859-2", "windows-1250"),           /* Central European, Polish */
+    LL("ro", "iso-8859-2", "windows-1250"),           /* Central European, Romanian */
+    LL("ru", "koi8-r", "windows-1251", "iso-8859-5"), /* Cyrillic, Russian */
+    LL("sh", "iso-8859-2", "windows-1250"),           /* Central European, Serbo-Croatian */
+    LL("sk", "iso-8859-2", "windows-1250"),           /* Central European, Slovakian */
+    LL("sl", "iso-8859-2", "windows-1250"),           /* Central European, Slovenian */
+    LL("sr", "koi8-r", "windows-1251", "iso-8859-5"), /* Cyrillic, Serbian */
+    LL("th", "iso-8859-11", "windows-874"),           /* Thai */
+    LL("tr", "iso-8859-9", "windows-1254"),           /* Turkish */
+    LL("uk", "koi8-u", "koi8-r", "windows-1251"),     /* Cyrillic, Ukrainian */
+);
 
-    /* Korean */
-    LANG_ENCODINGS("ko", "euc-kr", "iso-2022-kr", "johab"),
-
-    /* Thai */
-    LANG_ENCODINGS("th", "iso-8859-11", "windows-874"),
-
-    /* Central European */
-    LANG_ENCODINGS("hu", "iso-8859-2", "windows-1250"), /* Hungarian */
-    LANG_ENCODINGS("cs", "iso-8859-2", "windows-1250"), /* Czech */
-    LANG_ENCODINGS("hr", "iso-8859-2", "windows-1250"), /* Croatian */
-    LANG_ENCODINGS("pl", "iso-8859-2", "windows-1250"), /* Polish */
-    LANG_ENCODINGS("ro", "iso-8859-2", "windows-1250"), /* Romanian */
-    LANG_ENCODINGS("sk", "iso-8859-2", "windows-1250"), /* Slovakian */
-    LANG_ENCODINGS("sl", "iso-8859-2", "windows-1250"), /* Slovenian */
-    LANG_ENCODINGS("sh", "iso-8859-2", "windows-1250"), /* Serbo-Croatian */
-
-    /* Cyrillic */
-    LANG_ENCODINGS("ru", "koi8-r", "windows-1251", "iso-8859-5"), /* Russian */
-    LANG_ENCODINGS("be", "koi8-r", "windows-1251", "iso-8859-5"), /* Belorussian */
-    LANG_ENCODINGS("bg", "windows-1251", "koi8-r", "iso-8859-5"), /* Bulgarian */
-    LANG_ENCODINGS("mk", "koi8-r", "windows-1251", "iso-8859-5"), /* Macedonian */
-    LANG_ENCODINGS("sr", "koi8-r", "windows-1251", "iso-8859-5"), /* Serbian */
-    LANG_ENCODINGS("uk", "koi8-u", "koi8-r", "windows-1251"),     /* Ukrainian */
-
-    /* Arabic */
-    LANG_ENCODINGS("ar", "iso-8859-6", "windows-1256"),
-
-    /* Baltic */
-    LANG_ENCODINGS("et", "iso-8859-4", "windows-1257"), /* Estonian */
-    LANG_ENCODINGS("lt", "iso-8859-4", "windows-1257"), /* Lithuanian */
-    LANG_ENCODINGS("lv", "iso-8859-4", "windows-1257"), /* Latvian */
-
-    /* Greek */
-    LANG_ENCODINGS("el", "iso-8859-7", "windows-1253"),
-
-    /* Hebrew */
-    LANG_ENCODINGS("he", "iso-8859-8", "windows-1255"),
-    LANG_ENCODINGS("iw", "iso-8859-8", "windows-1255"),
-
-    /* Turkish */
-    LANG_ENCODINGS("tr", "iso-8859-9", "windows-1254"),
-
-    /* Table end */
-    LANG_ENCODINGS(NULL, NULL)};
-
-static GHashTable *langToEncodings5 = NULL;
-static GHashTable *langToEncodings2 = NULL;
-
-static void
-init_lang_to_encodings_hash(void)
+static const char *const *
+_system_encodings_for_lang(const char *lang)
 {
-    struct IsoLangToEncodings *enc;
+    char               tmp_lang[3];
+    const char *const *e;
 
-    if (G_UNLIKELY(langToEncodings5 == NULL)) {
-        /* Five-letter codes */
-        enc              = (struct IsoLangToEncodings *) &isoLangEntries5[0];
-        langToEncodings5 = g_hash_table_new(nm_str_hash, g_str_equal);
-        while (enc->lang) {
-            g_hash_table_insert(langToEncodings5, (gpointer) enc->lang, (gpointer) enc->encodings);
-            enc++;
-        }
+    nm_assert(lang);
+
+    if (lang[0] == '\0' || lang[1] == '\0') {
+        /* need at least two characters. */
+        nm_assert(!_iso_lang_entries_5_lookup(lang));
+        nm_assert(!_iso_lang_entries_2_lookup(lang));
+        return NULL;
     }
 
-    if (G_UNLIKELY(langToEncodings2 == NULL)) {
-        /* Two-letter codes */
-        enc              = (struct IsoLangToEncodings *) &isoLangEntries2[0];
-        langToEncodings2 = g_hash_table_new(nm_str_hash, g_str_equal);
-        while (enc->lang) {
-            g_hash_table_insert(langToEncodings2, (gpointer) enc->lang, (gpointer) enc->encodings);
-            enc++;
-        }
+    if (lang[2] != '\0') {
+        nm_assert(!_iso_lang_entries_2_lookup(lang));
+
+        if (lang[3] != '\0' && lang[4] != '\0' && lang[5] == '\0') {
+            /* lang is 5 characters long. Try it. */
+            if ((e = _iso_lang_entries_5_lookup(lang)))
+                return e;
+        } else
+            nm_assert(!_iso_lang_entries_5_lookup(lang));
+
+        /* extract the first 2 characters and ignore the rest. */
+        tmp_lang[0] = lang[0];
+        tmp_lang[1] = lang[1];
+        tmp_lang[2] = '\0';
+        lang        = tmp_lang;
     }
+
+    if ((e = _iso_lang_entries_2_lookup(lang)))
+        return e;
+
+    return NULL;
 }
 
-static gboolean
-get_encodings_for_lang(const char *lang, const char *const **encodings)
+const char *const *
+nmtst_system_encodings_for_lang(const char *lang)
 {
-    gs_free char *tmp_lang = NULL;
-
-    g_return_val_if_fail(lang, FALSE);
-    g_return_val_if_fail(encodings, FALSE);
-
-    init_lang_to_encodings_hash();
-
-    if ((*encodings = g_hash_table_lookup(langToEncodings5, lang)))
-        return TRUE;
-
-    /* Truncate tmp_lang to length of 2 */
-    if (strlen(lang) > 2) {
-        tmp_lang    = g_strdup(lang);
-        tmp_lang[2] = '\0';
-        if ((*encodings = g_hash_table_lookup(langToEncodings2, tmp_lang)))
-            return TRUE;
-    }
-
-    return FALSE;
+    return _system_encodings_for_lang(lang);
 }
 
 static const char *const *
-get_system_encodings(void)
+_system_encodings_get_default(void)
 {
-    static const char *const *cached_encodings;
-    static char *             default_encodings[4];
-    const char *const *       encodings = NULL;
-    char *                    lang;
+    static gsize       init_once = 0;
+    static const char *default_encodings[4];
 
-    if (cached_encodings)
-        return cached_encodings;
+    if (g_once_init_enter(&init_once)) {
+        const char *e_default = NULL;
+        int         i;
 
-    /* Use environment variables as encoding hint */
-    lang = getenv("LC_ALL");
-    if (!lang)
-        lang = getenv("LC_CTYPE");
-    if (!lang)
-        lang = getenv("LANG");
-    if (lang) {
-        char *dot;
+        g_get_charset(&e_default);
 
-        lang = g_ascii_strdown(lang, -1);
-        if ((dot = strchr(lang, '.')))
-            *dot = '\0';
+        i = 0;
+        if (e_default)
+            default_encodings[i++] = e_default;
+        if (!nm_streq0(e_default, "iso-8859-1"))
+            default_encodings[i++] = "iso-8859-1";
+        if (!nm_streq0(e_default, "windows-1251"))
+            default_encodings[i++] = "windows-1251";
+        default_encodings[i++] = NULL;
+        nm_assert(i <= G_N_ELEMENTS(default_encodings));
 
-        get_encodings_for_lang(lang, &encodings);
-        g_free(lang);
-    }
-    if (!encodings) {
-        g_get_charset((const char **) &default_encodings[0]);
-        default_encodings[1] = "iso-8859-1";
-        default_encodings[2] = "windows-1251";
-        default_encodings[3] = NULL;
-        encodings            = (const char *const *) default_encodings;
+        g_once_init_leave(&init_once, 1);
     }
 
-    cached_encodings = encodings;
-    return cached_encodings;
+    return default_encodings;
+}
+
+const char *const *
+nmtst_system_encodings_get_default(void)
+{
+    return _system_encodings_get_default();
+}
+
+static const char *const *
+_system_encodings_get(void)
+{
+    static const char *const *cached = NULL;
+    const char *const        *e;
+
+again:
+    if (!(e = g_atomic_pointer_get(&cached))) {
+        const char *lang;
+
+        /* Use environment variables as encoding hint */
+        lang = getenv("LC_ALL") ?: getenv("LC_CTYPE") ?: getenv("LANG");
+
+        if (lang) {
+            gs_free char *lang_down = NULL;
+            char         *dot;
+
+            lang_down = g_ascii_strdown(lang, -1);
+            if ((dot = strchr(lang_down, '.')))
+                *dot = '\0';
+            e = _system_encodings_for_lang(lang_down);
+        }
+
+        if (!e)
+            e = _system_encodings_get_default();
+
+        /* in any case, @e is now a static buffer, that we may cache. */
+        nm_assert(e);
+
+        if (!g_atomic_pointer_compare_and_exchange(&cached, NULL, e))
+            goto again;
+    }
+
+    return e;
+}
+
+const char *const *
+nmtst_system_encodings_get(void)
+{
+    return _system_encodings_get();
 }
 
 /*****************************************************************************/
@@ -559,14 +570,14 @@ nm_utils_ssid_to_utf8(const guint8 *ssid, gsize len)
 {
     const char *const *encodings;
     const char *const *e;
-    char *             converted = NULL;
+    char              *converted = NULL;
 
     g_return_val_if_fail(ssid != NULL, NULL);
 
     if (g_utf8_validate((const char *) ssid, len, NULL))
         return g_strndup((const char *) ssid, len);
 
-    encodings = get_system_encodings();
+    encodings = _system_encodings_get();
 
     for (e = encodings; *e; e++) {
         converted = g_convert((const char *) ssid, len, "UTF-8", *e, NULL, NULL, NULL);
@@ -651,7 +662,7 @@ nm_utils_escape_ssid(const guint8 *ssid, gsize len)
 {
     static char   escaped[NM_IW_ESSID_MAX_SIZE * 2 + 1];
     const guint8 *s = ssid;
-    char *        d = escaped;
+    char         *d = escaped;
 
     if (nm_utils_is_empty_ssid(ssid, len)) {
         memcpy(escaped, "<hidden>", sizeof("<hidden>"));
@@ -745,9 +756,9 @@ _nm_utils_string_slist_validate(GSList *list, const char **valid_values)
 GSList *
 _nm_utils_hash_values_to_slist(GHashTable *hash)
 {
-    GSList *       list = NULL;
+    GSList        *list = NULL;
     GHashTableIter iter;
-    void *         value;
+    void          *value;
 
     g_return_val_if_fail(hash, NULL);
 
@@ -759,30 +770,33 @@ _nm_utils_hash_values_to_slist(GHashTable *hash)
 }
 
 void
-_nm_utils_strdict_from_dbus(GVariant *dbus_value, GValue *prop_value)
+_nm_utils_strdict_from_dbus(_NM_SETT_INFO_PROP_FROM_DBUS_GPROP_FCN_ARGS _nm_nil)
 {
     GVariantIter iter;
-    const char * key, *value;
-    GHashTable * hash;
+    const char  *key, *value;
+    GHashTable  *hash;
 
     hash = g_hash_table_new_full(nm_str_hash, g_str_equal, g_free, g_free);
-    g_variant_iter_init(&iter, dbus_value);
+    g_variant_iter_init(&iter, from);
     while (g_variant_iter_next(&iter, "{&s&s}", &key, &value))
         g_hash_table_insert(hash, g_strdup(key), g_strdup(value));
 
-    g_value_take_boxed(prop_value, hash);
+    g_value_take_boxed(to, hash);
 }
 
 const NMSettInfoPropertType nm_sett_info_propert_type_strdict =
     NM_SETT_INFO_PROPERT_TYPE_GPROP_INIT(NM_G_VARIANT_TYPE("a{ss}"),
-                                         .gprop_from_dbus_fcn = _nm_utils_strdict_from_dbus,
+                                         .typdata_from_dbus.gprop_fcn = _nm_utils_strdict_from_dbus,
                                          .typdata_to_dbus.gprop_type =
-                                             NM_SETTING_PROPERTY_TO_DBUS_FCN_GPROP_TYPE_STRDICT);
+                                             NM_SETTING_PROPERTY_TO_DBUS_FCN_GPROP_TYPE_STRDICT,
+                                         .compare_fcn   = _nm_setting_property_compare_fcn_default,
+                                         .from_dbus_fcn = _nm_setting_property_from_dbus_fcn_gprop,
+                                         .from_dbus_is_full = TRUE);
 
 GHashTable *
 _nm_utils_copy_strdict(GHashTable *strdict)
 {
-    GHashTable *   copy;
+    GHashTable    *copy;
     GHashTableIter iter;
     gpointer       key, value;
 
@@ -835,7 +849,7 @@ _nm_utils_bytes_from_dbus(GVariant *dbus_value, GValue *prop_value)
 /*****************************************************************************/
 
 GSList *
-_nm_utils_strv_to_slist(char **strv, gboolean deep_copy)
+nm_strv_to_gslist(char **strv, gboolean deep_copy)
 {
     GSList *list = NULL;
     gsize   i;
@@ -857,7 +871,7 @@ char **
 _nm_utils_slist_to_strv(const GSList *slist, gboolean deep_copy)
 {
     const GSList *iter;
-    char **       strv;
+    char        **strv;
     guint         len, i;
 
     if (!slist)
@@ -884,7 +898,7 @@ _nm_utils_slist_to_strv(const GSList *slist, gboolean deep_copy)
 }
 
 GPtrArray *
-_nm_utils_strv_to_ptrarray(char **strv)
+nm_strv_to_ptrarray(char **strv)
 {
     GPtrArray *ptrarray;
     gsize      i, l;
@@ -1283,18 +1297,53 @@ nm_utils_wpa_psk_valid(const char *psk)
 GVariant *
 nm_utils_ip4_dns_to_variant(char **dns)
 {
+    return nm_utils_dns_to_variant(AF_INET, NM_CAST_STRV_CC(dns), -1);
+}
+
+/**
+ * nm_utils_ip6_dns_to_variant:
+ * @dns: (type utf8): an array of IP address strings
+ *
+ * Utility function to convert an array of IP address strings int a #GVariant of
+ * type 'aay' representing an array of IPv6 addresses.
+ *
+ * If a string cannot be parsed, it will be silently ignored.
+ *
+ * Returns: (transfer none): a new floating #GVariant representing @dns.
+ **/
+GVariant *
+nm_utils_ip6_dns_to_variant(char **dns)
+{
+    return nm_utils_dns_to_variant(AF_INET6, NM_CAST_STRV_CC(dns), -1);
+}
+
+GVariant *
+nm_utils_dns_to_variant(int addr_family, const char *const *dns, gssize len)
+{
+    const int       IS_IPv4 = NM_IS_IPv4(addr_family);
     GVariantBuilder builder;
+    gsize           l;
     gsize           i;
 
-    g_variant_builder_init(&builder, G_VARIANT_TYPE("au"));
+    if (len < 0)
+        l = NM_PTRARRAY_LEN(dns);
+    else
+        l = len;
 
-    if (dns) {
-        for (i = 0; dns[i]; i++) {
-            guint32 ip = 0;
+    g_variant_builder_init(&builder, IS_IPv4 ? G_VARIANT_TYPE("au") : G_VARIANT_TYPE("aay"));
 
-            inet_pton(AF_INET, dns[i], &ip);
+    for (i = 0; i < l; i++) {
+        NMIPAddr ip;
+
+        /* We can only represent the IP address on the legacy property "ipv[46].dns".
+         * Expose what we can. */
+        if (!nm_utils_dnsname_parse(addr_family, dns[i], NULL, &ip, NULL))
+            continue;
+
+        if (IS_IPv4)
             g_variant_builder_add(&builder, "u", ip);
-        }
+        else
+            g_variant_builder_add(&builder, "@ay", nm_g_variant_new_ay_in6addr(&ip.addr6));
     }
 
     return g_variant_builder_end(&builder);
@@ -1314,7 +1363,7 @@ nm_utils_ip4_dns_from_variant(GVariant *value)
 {
     const guint32 *array;
     gsize          length;
-    char **        dns;
+    char         **dns;
     gsize          i;
 
     g_return_val_if_fail(g_variant_is_of_type(value, G_VARIANT_TYPE("au")), NULL);
@@ -1322,7 +1371,7 @@ nm_utils_ip4_dns_from_variant(GVariant *value)
     array = g_variant_get_fixed_array(value, &length, sizeof(guint32));
     dns   = g_new(char *, length + 1u);
     for (i = 0; i < length; i++)
-        dns[i] = nm_utils_inet4_ntop_dup(array[i]);
+        dns[i] = nm_inet4_ntop_dup(array[i]);
     dns[i] = NULL;
 
     return dns;
@@ -1395,9 +1444,9 @@ nm_utils_ip4_addresses_to_variant(GPtrArray *addresses, const char *gateway)
 GPtrArray *
 nm_utils_ip4_addresses_from_variant(GVariant *value, char **out_gateway)
 {
-    GPtrArray *  addresses;
+    GPtrArray   *addresses;
     GVariantIter iter;
-    GVariant *   addr_var;
+    GVariant    *addr_var;
 
     g_return_val_if_fail(g_variant_is_of_type(value, G_VARIANT_TYPE("aau")), NULL);
 
@@ -1410,8 +1459,8 @@ nm_utils_ip4_addresses_from_variant(GVariant *value, char **out_gateway)
     while (g_variant_iter_next(&iter, "@au", &addr_var)) {
         const guint32 *addr_array;
         gsize          length;
-        NMIPAddress *  addr;
-        GError *       error = NULL;
+        NMIPAddress   *addr;
+        GError        *error = NULL;
 
         addr_array = g_variant_get_fixed_array(addr_var, &length, sizeof(guint32));
         if (length < 3) {
@@ -1425,7 +1474,7 @@ nm_utils_ip4_addresses_from_variant(GVariant *value, char **out_gateway)
             g_ptr_array_add(addresses, addr);
 
             if (addr_array[2] && out_gateway && !*out_gateway)
-                *out_gateway = nm_utils_inet4_ntop_dup(addr_array[2]);
+                *out_gateway = nm_inet4_ntop_dup(addr_array[2]);
         } else {
             g_warning("Ignoring invalid IP4 address: %s", error->message);
             g_clear_error(&error);
@@ -1492,8 +1541,8 @@ GPtrArray *
 nm_utils_ip4_routes_from_variant(GVariant *value)
 {
     GVariantIter iter;
-    GVariant *   route_var;
-    GPtrArray *  routes;
+    GVariant    *route_var;
+    GPtrArray   *routes;
 
     g_return_val_if_fail(g_variant_is_of_type(value, G_VARIANT_TYPE("aau")), NULL);
 
@@ -1503,8 +1552,8 @@ nm_utils_ip4_routes_from_variant(GVariant *value)
     while (g_variant_iter_next(&iter, "@au", &route_var)) {
         const guint32 *route_array;
         gsize          length;
-        NMIPRoute *    route;
-        GError *       error = NULL;
+        NMIPRoute     *route;
+        GError        *error = NULL;
 
         route_array = g_variant_get_fixed_array(route_var, &length, sizeof(guint32));
         if (length < 4) {
@@ -1534,30 +1583,34 @@ nm_utils_ip4_routes_from_variant(GVariant *value)
 
 /**
  * nm_utils_ip4_netmask_to_prefix:
- * @netmask: an IPv4 netmask in network byte order
+ * @netmask: an IPv4 netmask in network byte order.
+ *   Usually the netmask has all leading bits up to the prefix
+ *   set so that the netmask is identical to having the first
+ *   prefix bits of the address set.
+ *   If that is not the case and there are "holes" in the
+ *   mask, the prefix is determined based on the lowest bit
+ *   set.
  *
  * Returns: the CIDR prefix represented by the netmask
  **/
 guint32
 nm_utils_ip4_netmask_to_prefix(guint32 netmask)
 {
-    G_STATIC_ASSERT_EXPR(__SIZEOF_INT__ == 4);
-    G_STATIC_ASSERT_EXPR(sizeof(int) == 4);
-    G_STATIC_ASSERT_EXPR(sizeof(netmask) == 4);
-
-    return ((netmask != 0u) ? (guint32) (32 - __builtin_ctz(ntohl(netmask))) : 0u);
+    return nm_ip4_addr_netmask_to_prefix(netmask);
 }
 
 /**
  * nm_utils_ip4_prefix_to_netmask:
- * @prefix: a CIDR prefix
+ * @prefix: a CIDR prefix, must be not larger than 32.
  *
  * Returns: the netmask represented by the prefix, in network byte order
  **/
 guint32
 nm_utils_ip4_prefix_to_netmask(guint32 prefix)
 {
-    return _nm_utils_ip4_prefix_to_netmask(prefix);
+    g_return_val_if_fail(prefix <= 32, 0xffffffffu);
+
+    return nm_ip4_addr_netmask_from_prefix(prefix);
 }
 
 /**
@@ -1575,37 +1628,7 @@ nm_utils_ip4_prefix_to_netmask(guint32 prefix)
 guint32
 nm_utils_ip4_get_default_prefix(guint32 ip)
 {
-    return _nm_utils_ip4_get_default_prefix(ip);
-}
-
-/**
- * nm_utils_ip6_dns_to_variant:
- * @dns: (type utf8): an array of IP address strings
- *
- * Utility function to convert an array of IP address strings int a #GVariant of
- * type 'aay' representing an array of IPv6 addresses.
- *
- * If a string cannot be parsed, it will be silently ignored.
- *
- * Returns: (transfer none): a new floating #GVariant representing @dns.
- **/
-GVariant *
-nm_utils_ip6_dns_to_variant(char **dns)
-{
-    GVariantBuilder builder;
-    gsize           i;
-
-    g_variant_builder_init(&builder, G_VARIANT_TYPE("aay"));
-    if (dns) {
-        for (i = 0; dns[i]; i++) {
-            struct in6_addr ip;
-
-            if (inet_pton(AF_INET6, dns[i], &ip) != 1)
-                continue;
-            g_variant_builder_add(&builder, "@ay", nm_g_variant_new_ay_in6addr(&ip));
-        }
-    }
-    return g_variant_builder_end(&builder);
+    return nm_ip4_addr_get_default_prefix(ip);
 }
 
 /**
@@ -1623,8 +1646,8 @@ char **
 nm_utils_ip6_dns_from_variant(GVariant *value)
 {
     GVariantIter iter;
-    GVariant *   ip_var;
-    char **      dns;
+    GVariant    *ip_var;
+    char       **dns;
     gsize        i;
 
     g_return_val_if_fail(g_variant_is_of_type(value, G_VARIANT_TYPE("aay")), NULL);
@@ -1638,7 +1661,7 @@ nm_utils_ip6_dns_from_variant(GVariant *value)
         const struct in6_addr *ip = g_variant_get_fixed_array(ip_var, &length, 1);
 
         if (length == sizeof(struct in6_addr))
-            dns[i++] = nm_utils_inet6_ntop_dup(ip);
+            dns[i++] = nm_inet6_ntop_dup(ip);
 
         g_variant_unref(ip_var);
     }
@@ -1671,7 +1694,7 @@ nm_utils_ip6_addresses_to_variant(GPtrArray *addresses, const char *gateway)
 
     if (addresses) {
         for (i = 0; i < addresses->len; i++) {
-            NMIPAddress *          addr = addresses->pdata[i];
+            NMIPAddress           *addr = addresses->pdata[i];
             struct in6_addr        address_bin;
             struct in6_addr        gateway_bin_data;
             const struct in6_addr *gateway_bin;
@@ -1717,9 +1740,9 @@ GPtrArray *
 nm_utils_ip6_addresses_from_variant(GVariant *value, char **out_gateway)
 {
     GVariantIter iter;
-    GVariant *   addr_var, *gateway_var;
+    GVariant    *addr_var, *gateway_var;
     guint32      prefix;
-    GPtrArray *  addresses;
+    GPtrArray   *addresses;
 
     g_return_val_if_fail(g_variant_is_of_type(value, G_VARIANT_TYPE("a(ayuay)")), NULL);
 
@@ -1730,10 +1753,10 @@ nm_utils_ip6_addresses_from_variant(GVariant *value, char **out_gateway)
     addresses = g_ptr_array_new_with_free_func((GDestroyNotify) nm_ip_address_unref);
 
     while (g_variant_iter_next(&iter, "(@ayu@ay)", &addr_var, &prefix, &gateway_var)) {
-        NMIPAddress *          addr;
+        NMIPAddress           *addr;
         const struct in6_addr *addr_bytes, *gateway_bytes;
         gsize                  addr_len, gateway_len;
-        GError *               error = NULL;
+        GError                *error = NULL;
 
         if (!g_variant_is_of_type(addr_var, G_VARIANT_TYPE_BYTESTRING)
             || !g_variant_is_of_type(gateway_var, G_VARIANT_TYPE_BYTESTRING)) {
@@ -1760,7 +1783,7 @@ nm_utils_ip6_addresses_from_variant(GVariant *value, char **out_gateway)
                     goto next;
                 }
                 if (!IN6_IS_ADDR_UNSPECIFIED(gateway_bytes))
-                    *out_gateway = nm_utils_inet6_ntop_dup(gateway_bytes);
+                    *out_gateway = nm_inet6_ntop_dup(gateway_bytes);
             }
         } else {
             g_warning("Ignoring invalid IP6 address: %s", error->message);
@@ -1796,7 +1819,7 @@ nm_utils_ip6_routes_to_variant(GPtrArray *routes)
 
     if (routes) {
         for (i = 0; i < routes->len; i++) {
-            NMIPRoute *     route = routes->pdata[i];
+            NMIPRoute      *route = routes->pdata[i];
             struct in6_addr dest_bytes;
             struct in6_addr next_hop_bytes;
             guint32         metric;
@@ -1836,9 +1859,9 @@ nm_utils_ip6_routes_to_variant(GPtrArray *routes)
 GPtrArray *
 nm_utils_ip6_routes_from_variant(GVariant *value)
 {
-    GPtrArray *            routes;
+    GPtrArray             *routes;
     GVariantIter           iter;
-    GVariant *             dest_var, *next_hop_var;
+    GVariant              *dest_var, *next_hop_var;
     const struct in6_addr *dest, *next_hop;
     gsize                  dest_len, next_hop_len;
     guint32                prefix, metric;
@@ -1850,7 +1873,7 @@ nm_utils_ip6_routes_from_variant(GVariant *value)
     g_variant_iter_init(&iter, value);
     while (g_variant_iter_next(&iter, "(@ayu@ayu)", &dest_var, &prefix, &next_hop_var, &metric)) {
         NMIPRoute *route;
-        GError *   error = NULL;
+        GError    *error = NULL;
 
         if (!g_variant_is_of_type(dest_var, G_VARIANT_TYPE_BYTESTRING)
             || !g_variant_is_of_type(next_hop_var, G_VARIANT_TYPE_BYTESTRING)) {
@@ -1904,6 +1927,8 @@ next:
  * include additional attributes.
  *
  * Returns: (transfer none): a new floating #GVariant representing @addresses.
+ *
+ * Since: 1.42
  **/
 GVariant *
 nm_utils_ip_addresses_to_variant(GPtrArray *addresses)
@@ -1915,7 +1940,7 @@ nm_utils_ip_addresses_to_variant(GPtrArray *addresses)
 
     if (addresses) {
         for (i = 0; i < addresses->len; i++) {
-            NMIPAddress *        addr = addresses->pdata[i];
+            NMIPAddress         *addr = addresses->pdata[i];
             GVariantBuilder      addr_builder;
             gs_free const char **names = NULL;
             guint                j, len;
@@ -1957,19 +1982,21 @@ nm_utils_ip_addresses_to_variant(GPtrArray *addresses)
  *
  * Returns: (transfer full) (element-type NMIPAddress): a newly allocated
  *   #GPtrArray of #NMIPAddress objects
+ *
+ * Since: 1.42
  **/
 GPtrArray *
 nm_utils_ip_addresses_from_variant(GVariant *value, int family)
 {
-    GPtrArray *  addresses;
+    GPtrArray   *addresses;
     GVariantIter iter, attrs_iter;
-    GVariant *   addr_var;
-    const char * ip;
+    GVariant    *addr_var;
+    const char  *ip;
     guint32      prefix;
-    const char * attr_name;
-    GVariant *   attr_val;
+    const char  *attr_name;
+    GVariant    *attr_val;
     NMIPAddress *addr;
-    GError *     error = NULL;
+    GError      *error = NULL;
 
     g_return_val_if_fail(g_variant_is_of_type(value, G_VARIANT_TYPE("aa{sv}")), NULL);
 
@@ -2016,6 +2043,8 @@ nm_utils_ip_addresses_from_variant(GVariant *value, int family)
  * prefix, next hop, metric, and additional attributes).
  *
  * Returns: (transfer none): a new floating #GVariant representing @routes.
+ *
+ * Since: 1.42
  **/
 GVariant *
 nm_utils_ip_routes_to_variant(GPtrArray *routes)
@@ -2027,7 +2056,7 @@ nm_utils_ip_routes_to_variant(GPtrArray *routes)
 
     if (routes) {
         for (i = 0; i < routes->len; i++) {
-            NMIPRoute *          route = routes->pdata[i];
+            NMIPRoute           *route = routes->pdata[i];
             GVariantBuilder      route_builder;
             gs_free const char **names = NULL;
             guint                j, len;
@@ -2082,20 +2111,22 @@ nm_utils_ip_routes_to_variant(GPtrArray *routes)
  *
  * Returns: (transfer full) (element-type NMIPRoute): a newly allocated
  *   #GPtrArray of #NMIPRoute objects
+ *
+ * Since: 1.42
  **/
 GPtrArray *
 nm_utils_ip_routes_from_variant(GVariant *value, int family)
 {
-    GPtrArray *  routes;
+    GPtrArray   *routes;
     GVariantIter iter, attrs_iter;
-    GVariant *   route_var;
-    const char * dest, *next_hop;
+    GVariant    *route_var;
+    const char  *dest, *next_hop;
     guint32      prefix, metric32;
     gint64       metric;
-    const char * attr_name;
-    GVariant *   attr_val;
-    NMIPRoute *  route;
-    GError *     error = NULL;
+    const char  *attr_name;
+    GVariant    *attr_val;
+    NMIPRoute   *route;
+    GError      *error = NULL;
 
     g_return_val_if_fail(g_variant_is_of_type(value, G_VARIANT_TYPE("aa{sv}")), NULL);
 
@@ -2273,7 +2304,7 @@ static const NMVariantAttributeSpec *const tc_qdisc_fq_codel_spec[] = {
 };
 
 typedef struct {
-    const char *                         kind;
+    const char                          *kind;
     const NMVariantAttributeSpec *const *attrs;
 } NMQdiscAttributeSpec;
 
@@ -2299,7 +2330,7 @@ void
 _nm_utils_string_append_tc_qdisc_rest(GString *string, NMTCQdisc *qdisc)
 {
     guint32       handle = nm_tc_qdisc_get_handle(qdisc);
-    const char *  kind   = nm_tc_qdisc_get_kind(qdisc);
+    const char   *kind   = nm_tc_qdisc_get_kind(qdisc);
     gs_free char *str    = NULL;
 
     if (handle != TC_H_UNSPEC && !NM_IN_STRSET(kind, "ingress", "clsact")) {
@@ -2344,14 +2375,14 @@ nm_utils_tc_qdisc_to_str(NMTCQdisc *qdisc, GError **error)
 
 static gboolean
 _tc_read_common_opts(const char *str,
-                     guint32 *   handle,
-                     guint32 *   parent,
-                     char **     kind,
-                     char **     rest,
-                     GError **   error)
+                     guint32    *handle,
+                     guint32    *parent,
+                     char      **kind,
+                     char      **rest,
+                     GError    **error)
 {
     gs_unref_hashtable GHashTable *ht = NULL;
-    GVariant *                     variant;
+    GVariant                      *variant;
 
     ht = nm_utils_parse_variant_attributes(str, ' ', ' ', FALSE, tc_object_attribute_spec, error);
     if (!ht)
@@ -2432,11 +2463,11 @@ _tc_read_common_opts(const char *str,
 NMTCQdisc *
 nm_utils_tc_qdisc_from_str(const char *str, GError **error)
 {
-    guint32            handle              = TC_H_UNSPEC;
-    guint32            parent              = TC_H_UNSPEC;
-    gs_free char *     kind                = NULL;
-    gs_free char *     rest                = NULL;
-    NMTCQdisc *        qdisc               = NULL;
+    guint32                        handle  = TC_H_UNSPEC;
+    guint32                        parent  = TC_H_UNSPEC;
+    gs_free char                  *kind    = NULL;
+    gs_free char                  *rest    = NULL;
+    NMTCQdisc                     *qdisc   = NULL;
     gs_unref_hashtable GHashTable *options = NULL;
     GHashTableIter                 iter;
     gpointer                       key, value;
@@ -2517,8 +2548,8 @@ static const NMVariantAttributeSpec *const tc_action_attribute_spec[] = {
 static gboolean
 _string_append_tc_action(GString *string, NMTCAction *action, GError **error)
 {
-    const char *                         kind = nm_tc_action_get_kind(action);
-    gs_free char *                       str  = NULL;
+    const char                          *kind = nm_tc_action_get_kind(action);
+    gs_free char                        *str  = NULL;
     const NMVariantAttributeSpec *const *attrs;
 
     if (nm_streq(kind, "simple"))
@@ -2581,12 +2612,12 @@ nm_utils_tc_action_to_str(NMTCAction *action, GError **error)
 NMTCAction *
 nm_utils_tc_action_from_str(const char *str, GError **error)
 {
-    const char *            kind                 = NULL;
-    const char *            rest                 = NULL;
-    nm_auto_unref_tc_action NMTCAction *action   = NULL;
-    gs_unref_hashtable GHashTable *ht            = NULL;
-    gs_unref_hashtable GHashTable *      options = NULL;
-    GVariant *                           variant;
+    const char                          *kind    = NULL;
+    const char                          *rest    = NULL;
+    nm_auto_unref_tc_action NMTCAction  *action  = NULL;
+    gs_unref_hashtable GHashTable       *ht      = NULL;
+    gs_unref_hashtable GHashTable       *options = NULL;
+    GVariant                            *variant;
     const NMVariantAttributeSpec *const *attrs;
 
     nm_assert(str);
@@ -2729,15 +2760,15 @@ static const NMVariantAttributeSpec *const tc_tfilter_attribute_spec[] = {
 NMTCTfilter *
 nm_utils_tc_tfilter_from_str(const char *str, GError **error)
 {
-    guint32                 handle                 = TC_H_UNSPEC;
-    guint32                 parent                 = TC_H_UNSPEC;
-    gs_free char *          kind                   = NULL;
-    gs_free char *          rest                   = NULL;
+    guint32                             handle     = TC_H_UNSPEC;
+    guint32                             parent     = TC_H_UNSPEC;
+    gs_free char                       *kind       = NULL;
+    gs_free char                       *rest       = NULL;
     nm_auto_unref_tc_action NMTCAction *action     = NULL;
-    const char *                        extra_opts = NULL;
-    NMTCTfilter *                       tfilter    = NULL;
-    gs_unref_hashtable GHashTable *ht              = NULL;
-    GVariant *                     variant;
+    const char                         *extra_opts = NULL;
+    NMTCTfilter                        *tfilter    = NULL;
+    gs_unref_hashtable GHashTable      *ht         = NULL;
+    GVariant                           *variant;
 
     nm_assert(str);
     nm_assert(!error || !*error);
@@ -2802,11 +2833,11 @@ char *
 nm_utils_sriov_vf_to_str(const NMSriovVF *vf, gboolean omit_index, GError **error)
 {
     gs_free NMUtilsNamedValue *values = NULL;
-    gs_free const char **      names  = NULL;
-    const guint *              vlan_ids;
+    gs_free const char       **names  = NULL;
+    const guint               *vlan_ids;
     guint                      num_vlans, num_attrs;
     guint                      i;
-    GString *                  str;
+    GString                   *str;
 
     str = g_string_new("");
     if (!omit_index)
@@ -2859,7 +2890,7 @@ _nm_sriov_vf_parse_vlans(NMSriovVF *vf, const char *str, GError **error)
     gs_free const char **vlans = NULL;
     guint                i;
 
-    vlans = nm_utils_strsplit_set(str, ";");
+    vlans = nm_strsplit_set(str, ";");
     if (!vlans) {
         g_set_error_literal(error,
                             NM_CONNECTION_ERROR,
@@ -2963,7 +2994,7 @@ NMSriovVF *
 nm_utils_sriov_vf_from_str(const char *str, GError **error)
 {
     gs_free char *index_free = NULL;
-    const char *  detail;
+    const char   *detail;
 
     g_return_val_if_fail(str, NULL);
     g_return_val_if_fail(!error || !*error, NULL);
@@ -2984,13 +3015,13 @@ NMSriovVF *
 _nm_utils_sriov_vf_from_strparts(const char *index,
                                  const char *detail,
                                  gboolean    ignore_unknown,
-                                 GError **   error)
+                                 GError    **error)
 {
-    NMSriovVF *        vf;
-    guint32            n_index;
-    GHashTableIter     iter;
-    char *             key;
-    GVariant *         variant;
+    NMSriovVF                     *vf;
+    guint32                        n_index;
+    GHashTableIter                 iter;
+    char                          *key;
+    GVariant                      *variant;
     gs_unref_hashtable GHashTable *ht = NULL;
 
     n_index = _nm_utils_ascii_str_to_int64(index, 10, 0, G_MAXUINT32, 0);
@@ -3047,101 +3078,13 @@ nm_utils_uuid_generate(void)
 
 /*****************************************************************************/
 
-static gboolean
-file_has_extension(const char *filename, const char *extensions[])
-{
-    const char *ext;
-    gsize       i;
-
-    ext = strrchr(filename, '.');
-    if (!ext)
-        return FALSE;
-
-    for (i = 0; extensions[i]; i++) {
-        if (!g_ascii_strcasecmp(ext, extensions[i]))
-            return TRUE;
-    }
-
-    return FALSE;
-}
-
-/**
- * nm_utils_file_is_certificate:
- * @filename: name of the file to test
- *
- * Tests if @filename has a valid extension for an X.509 certificate file
- * (".cer", ".crt", ".der", or ".pem"), and contains a certificate in a format
- * recognized by NetworkManager.
- *
- * Returns: %TRUE if the file is a certificate, %FALSE if it is not
- **/
 gboolean
-nm_utils_file_is_certificate(const char *filename)
-{
-    const char *       extensions[] = {".der", ".pem", ".crt", ".cer", NULL};
-    NMCryptoFileFormat file_format;
-
-    g_return_val_if_fail(filename != NULL, FALSE);
-
-    if (!file_has_extension(filename, extensions))
-        return FALSE;
-
-    if (!nm_crypto_load_and_verify_certificate(filename, &file_format, NULL, NULL))
-        return FALSE;
-    return file_format = NM_CRYPTO_FILE_FORMAT_X509;
-}
-
-/**
- * nm_utils_file_is_private_key:
- * @filename: name of the file to test
- * @out_encrypted: (out): on return, whether the file is encrypted
- *
- * Tests if @filename has a valid extension for an X.509 private key file
- * (".der", ".key", ".pem", or ".p12"), and contains a private key in a format
- * recognized by NetworkManager.
- *
- * Returns: %TRUE if the file is a private key, %FALSE if it is not
- **/
-gboolean
-nm_utils_file_is_private_key(const char *filename, gboolean *out_encrypted)
-{
-    const char *extensions[] = {".der", ".pem", ".p12", ".key", NULL};
-
-    g_return_val_if_fail(filename != NULL, FALSE);
-
-    NM_SET_OUT(out_encrypted, FALSE);
-    if (!file_has_extension(filename, extensions))
-        return FALSE;
-
-    return nm_crypto_verify_private_key(filename, NULL, out_encrypted, NULL)
-           != NM_CRYPTO_FILE_FORMAT_UNKNOWN;
-}
-
-/**
- * nm_utils_file_is_pkcs12:
- * @filename: name of the file to test
- *
- * Tests if @filename is a PKCS#<!-- -->12 file.
- *
- * Returns: %TRUE if the file is PKCS#<!-- -->12, %FALSE if it is not
- **/
-gboolean
-nm_utils_file_is_pkcs12(const char *filename)
-{
-    g_return_val_if_fail(filename != NULL, FALSE);
-
-    return nm_crypto_is_pkcs12_file(filename, NULL);
-}
-
-/*****************************************************************************/
-
-gboolean
-_nm_utils_check_file(const char *              filename,
+_nm_utils_check_file(const char               *filename,
                      gint64                    check_owner,
                      NMUtilsCheckFilePredicate check_file,
                      gpointer                  user_data,
-                     struct stat *             out_st,
-                     GError **                 error)
+                     struct stat              *out_st,
+                     GError                  **error)
 {
     struct stat st_backup;
 
@@ -3208,11 +3151,11 @@ _nm_utils_check_file(const char *              filename,
 }
 
 gboolean
-_nm_utils_check_module_file(const char *              name,
+_nm_utils_check_module_file(const char               *name,
                             int                       check_owner,
                             NMUtilsCheckFilePredicate check_file,
                             gpointer                  user_data,
-                            GError **                 error)
+                            GError                  **error)
 {
     if (!g_path_is_absolute(name)) {
         g_set_error(error,
@@ -3286,13 +3229,13 @@ _nm_utils_check_module_file(const char *              name,
  *   invocations of the function might overwrite it.
  */
 const char *
-nm_utils_file_search_in_paths(const char *                      progname,
-                              const char *                      try_first,
-                              const char *const *               paths,
+nm_utils_file_search_in_paths(const char                       *progname,
+                              const char                       *try_first,
+                              const char *const                *paths,
                               GFileTest                         file_test_flags,
                               NMUtilsFileSearchInPathsPredicate predicate,
                               gpointer                          user_data,
-                              GError **                         error)
+                              GError                          **error)
 {
     g_return_val_if_fail(!error || !*error, NULL);
     g_return_val_if_fail(progname && progname[0] && !strchr(progname, '/'), NULL);
@@ -3625,6 +3568,23 @@ nm_utils_wifi_strength_bars(guint8 strength)
         return "    ";
 }
 
+gboolean
+_nm_property_variant_to_gvalue(GVariant *src_value, GValue *dst_value)
+{
+    GValue   tmp = G_VALUE_INIT;
+    gboolean success;
+
+    g_dbus_gvariant_to_gvalue(src_value, &tmp);
+    if (G_VALUE_TYPE(&tmp) == G_VALUE_TYPE(dst_value)) {
+        *dst_value = tmp;
+        return TRUE;
+    }
+
+    success = g_value_transform(&tmp, dst_value);
+    g_value_unset(&tmp);
+    return success;
+}
+
 /**
  * nm_utils_hwaddr_len:
  * @type: the type of address; either <literal>ARPHRD_ETHER</literal> or
@@ -3742,22 +3702,13 @@ nm_utils_hwaddr_aton(const char *asc, gpointer buffer, gsize length)
 char *
 nm_utils_bin2hexstr(gconstpointer src, gsize len, int final_len)
 {
-    char *result;
     gsize buflen = (len * 2) + 1;
 
     g_return_val_if_fail(src != NULL, NULL);
     g_return_val_if_fail(len > 0 && (buflen - 1) / 2 == len, NULL);
     g_return_val_if_fail(final_len < 0 || (gsize) final_len < buflen, NULL);
 
-    result = g_malloc(buflen);
-
-    nm_utils_bin2hexstr_full(src, len, '\0', FALSE, result);
-
-    /* Cut converted key off at the correct length for this cipher type */
-    if (final_len >= 0 && (gsize) final_len < buflen)
-        result[final_len] = '\0';
-
-    return result;
+    return _nm_utils_bin2hexstr(src, len, final_len);
 }
 
 /**
@@ -3855,6 +3806,25 @@ _nm_utils_hwaddr_canonical_or_invalid(const char *mac, gssize length)
         return canonical;
     else
         return g_strdup(mac);
+}
+
+char *
+_nm_utils_ipaddr_canonical_or_invalid(int addr_family, const char *ip, gboolean map_zero_to_null)
+{
+    NMIPAddr addr_bin;
+
+    nm_assert_addr_family_or_unspec(addr_family);
+
+    if (!ip)
+        return NULL;
+
+    if (!nm_inet_parse_bin(addr_family, ip, &addr_family, &addr_bin))
+        return g_strdup(ip);
+
+    if (map_zero_to_null && nm_ip_addr_is_null(addr_family, &addr_bin))
+        return NULL;
+
+    return nm_inet_ntop_dup(addr_family, &addr_bin);
 }
 
 /*
@@ -4002,47 +3972,41 @@ nm_utils_hwaddr_to_dbus(const char *str)
     return nm_g_variant_new_ay(buf, len);
 }
 
-static GVariant *
-_nm_utils_hwaddr_cloned_get(const NMSettInfoSetting *               sett_info,
-                            guint                                   property_idx,
-                            NMConnection *                          connection,
-                            NMSetting *                             setting,
-                            NMConnectionSerializationFlags          flags,
-                            const NMConnectionSerializationOptions *options)
+GVariant *
+_nm_sett_info_prop_to_dbus_fcn_cloned_mac_address(_NM_SETT_INFO_PROP_TO_DBUS_FCN_ARGS _nm_nil)
 {
     gs_free char *addr = NULL;
 
-    nm_assert(nm_streq(sett_info->property_infos[property_idx].name, "cloned-mac-address"));
+    nm_assert(nm_streq(property_info->name, "cloned-mac-address"));
 
     g_object_get(setting, "cloned-mac-address", &addr, NULL);
     return nm_utils_hwaddr_to_dbus(addr);
 }
 
-static gboolean
-_nm_utils_hwaddr_cloned_set(NMSetting *         setting,
-                            GVariant *          connection_dict,
-                            const char *        property,
-                            GVariant *          value,
-                            NMSettingParseFlags parse_flags,
-                            GError **           error)
+gboolean
+_nm_sett_info_prop_from_dbus_fcn_cloned_mac_address(_NM_SETT_INFO_PROP_FROM_DBUS_FCN_ARGS _nm_nil)
 {
     gsize         length;
     const guint8 *array;
-    char *        str;
+    char         *str;
 
-    nm_assert(nm_streq0(property, "cloned-mac-address"));
+    nm_assert(nm_streq0(property_info->name, "cloned-mac-address"));
 
     if (!_nm_setting_use_legacy_property(setting,
                                          connection_dict,
                                          "cloned-mac-address",
-                                         "assigned-mac-address"))
+                                         "assigned-mac-address")) {
+        *out_is_modified = FALSE;
         return TRUE;
+    }
 
     length = 0;
     array  = g_variant_get_fixed_array(value, &length, 1);
 
-    if (!length)
+    if (!length) {
+        *out_is_modified = FALSE;
         return TRUE;
+    }
 
     str = nm_utils_hwaddr_ntoa(array, length);
     g_object_set(setting, "cloned-mac-address", str, NULL);
@@ -4050,37 +4014,23 @@ _nm_utils_hwaddr_cloned_set(NMSetting *         setting,
     return TRUE;
 }
 
-static gboolean
-_nm_utils_hwaddr_cloned_not_set(NMSetting *         setting,
-                                GVariant *          connection_dict,
-                                const char *        property,
-                                NMSettingParseFlags parse_flags,
-                                GError **           error)
+gboolean
+_nm_sett_info_prop_missing_from_dbus_fcn_cloned_mac_address(
+    _NM_SETT_INFO_PROP_MISSING_FROM_DBUS_FCN_ARGS _nm_nil)
 {
     nm_assert(nm_streq0(property, "cloned-mac-address"));
     return TRUE;
 }
 
-const NMSettInfoPropertType nm_sett_info_propert_type_cloned_mac_address =
-    NM_SETT_INFO_PROPERT_TYPE_DBUS_INIT(G_VARIANT_TYPE_BYTESTRING,
-                                        .to_dbus_fcn           = _nm_utils_hwaddr_cloned_get,
-                                        .from_dbus_fcn         = _nm_utils_hwaddr_cloned_set,
-                                        .missing_from_dbus_fcn = _nm_utils_hwaddr_cloned_not_set, );
-
 static GVariant *
-_nm_utils_hwaddr_cloned_data_synth(const NMSettInfoSetting *               sett_info,
-                                   guint                                   property_idx,
-                                   NMConnection *                          connection,
-                                   NMSetting *                             setting,
-                                   NMConnectionSerializationFlags          flags,
-                                   const NMConnectionSerializationOptions *options)
+assigned_mac_address_to_dbus(_NM_SETT_INFO_PROP_TO_DBUS_FCN_ARGS _nm_nil)
 {
     gs_free char *addr = NULL;
 
     if (!_nm_connection_serialize_non_secret(flags))
         return NULL;
 
-    nm_assert(nm_streq0(sett_info->property_infos[property_idx].name, "assigned-mac-address"));
+    nm_assert(nm_streq0(property_info->name, "assigned-mac-address"));
 
     g_object_get(setting, "cloned-mac-address", &addr, NULL);
 
@@ -4102,20 +4052,17 @@ _nm_utils_hwaddr_cloned_data_synth(const NMSettInfoSetting *               sett_
 }
 
 static gboolean
-_nm_utils_hwaddr_cloned_data_set(NMSetting *         setting,
-                                 GVariant *          connection_dict,
-                                 const char *        property,
-                                 GVariant *          value,
-                                 NMSettingParseFlags parse_flags,
-                                 GError **           error)
+assigned_mac_address_from_dbus(_NM_SETT_INFO_PROP_FROM_DBUS_FCN_ARGS _nm_nil)
 {
-    nm_assert(nm_streq0(property, "assigned-mac-address"));
+    nm_assert(nm_streq0(property_info->name, "assigned-mac-address"));
 
     if (_nm_setting_use_legacy_property(setting,
                                         connection_dict,
                                         "cloned-mac-address",
-                                        "assigned-mac-address"))
+                                        "assigned-mac-address")) {
+        *out_is_modified = FALSE;
         return TRUE;
+    }
 
     g_object_set(setting,
                  "cloned-mac-address",
@@ -4126,25 +4073,9 @@ _nm_utils_hwaddr_cloned_data_set(NMSetting *         setting,
 
 const NMSettInfoPropertType nm_sett_info_propert_type_assigned_mac_address =
     NM_SETT_INFO_PROPERT_TYPE_DBUS_INIT(G_VARIANT_TYPE_STRING,
-                                        .to_dbus_fcn   = _nm_utils_hwaddr_cloned_data_synth,
-                                        .from_dbus_fcn = _nm_utils_hwaddr_cloned_data_set, );
-
-static void
-_nm_utils_hwaddr_from_dbus(GVariant *dbus_value, GValue *prop_value)
-{
-    gsize         length = 0;
-    const guint8 *array  = g_variant_get_fixed_array(dbus_value, &length, 1);
-    char *        str;
-
-    str = length ? nm_utils_hwaddr_ntoa(array, length) : NULL;
-    g_value_take_string(prop_value, str);
-}
-
-const NMSettInfoPropertType nm_sett_info_propert_type_mac_address =
-    NM_SETT_INFO_PROPERT_TYPE_GPROP_INIT(
-        G_VARIANT_TYPE_BYTESTRING,
-        .gprop_from_dbus_fcn        = _nm_utils_hwaddr_from_dbus,
-        .typdata_to_dbus.gprop_type = NM_SETTING_PROPERTY_TO_DBUS_FCN_GPROP_TYPE_MAC_ADDRESS);
+                                        .compare_fcn   = _nm_setting_property_compare_fcn_ignore,
+                                        .to_dbus_fcn   = assigned_mac_address_to_dbus,
+                                        .from_dbus_fcn = assigned_mac_address_from_dbus, );
 
 /*****************************************************************************/
 
@@ -4154,10 +4085,10 @@ const NMSettInfoPropertType nm_sett_info_propert_type_mac_address =
  * For new settings, they shall validate the secret-flags strictly. */
 gboolean
 _nm_utils_secret_flags_validate(NMSettingSecretFlags secret_flags,
-                                const char *         setting_name,
-                                const char *         property_name,
+                                const char          *setting_name,
+                                const char          *property_name,
                                 NMSettingSecretFlags disallowed_flags,
-                                GError **            error)
+                                GError             **error)
 {
     if (secret_flags == NM_SETTING_SECRET_FLAG_NONE)
         return TRUE;
@@ -4206,10 +4137,10 @@ _nm_utils_secret_flags_validate(NMSettingSecretFlags secret_flags,
 
 gboolean
 _nm_utils_wps_method_validate(NMSettingWirelessSecurityWpsMethod wps_method,
-                              const char *                       setting_name,
-                              const char *                       property_name,
+                              const char                        *setting_name,
+                              const char                        *property_name,
                               gboolean                           wps_required,
-                              GError **                          error)
+                              GError                           **error)
 {
     if (wps_method > NM_SETTING_WIRELESS_SECURITY_WPS_METHOD_PIN) {
         g_set_error_literal(error,
@@ -4263,15 +4194,15 @@ _split_word(char *s)
 }
 
 gboolean
-_nm_utils_generate_mac_address_mask_parse(const char *        value,
-                                          struct ether_addr * out_mask,
+_nm_utils_generate_mac_address_mask_parse(const char         *value,
+                                          struct ether_addr  *out_mask,
                                           struct ether_addr **out_ouis,
-                                          gsize *             out_ouis_len,
-                                          GError **           error)
+                                          gsize              *out_ouis_len,
+                                          GError            **error)
 {
-    gs_free char *    s_free = NULL;
-    char *            s, *s_next;
-    struct ether_addr mask;
+    gs_free char          *s_free = NULL;
+    char                  *s, *s_next;
+    struct ether_addr      mask;
     gs_unref_array GArray *ouis = NULL;
 
     g_return_val_if_fail(!error || !*error, FALSE);
@@ -4310,13 +4241,13 @@ _nm_utils_generate_mac_address_mask_parse(const char *        value,
         ouis = g_array_sized_new(FALSE, FALSE, sizeof(struct ether_addr), 4);
 
         do {
+            struct ether_addr *new;
+
             s      = s_next;
             s_next = _split_word(s);
 
-            g_array_set_size(ouis, ouis->len + 1);
-            if (!nm_utils_hwaddr_aton(s,
-                                      &g_array_index(ouis, struct ether_addr, ouis->len - 1),
-                                      ETH_ALEN)) {
+            new = nm_g_array_append_new(ouis, struct ether_addr);
+            if (!nm_utils_hwaddr_aton(s, new, ETH_ALEN)) {
                 g_set_error(error,
                             NM_UTILS_ERROR,
                             NM_UTILS_ERROR_UNKNOWN,
@@ -4377,6 +4308,8 @@ nm_utils_is_valid_iface_name_utf8safe(const char *utf8safe_name)
  *
  * Before 1.20, this function did not accept %NULL as @name argument. If you
  *   want to run against older versions of libnm, don't pass %NULL.
+ *
+ * Since: 1.6
  */
 gboolean
 nm_utils_is_valid_iface_name(const char *name, GError **error)
@@ -4426,13 +4359,13 @@ nm_utils_is_uuid(const char *str)
     return nm_uuid_is_valid_nmlegacy(str);
 }
 
-static _nm_thread_local char _nm_utils_inet_ntop_buffer[NM_UTILS_INET_ADDRSTRLEN];
+static _nm_thread_local char _nm_utils_inet_ntop_buffer[NM_INET_ADDRSTRLEN];
 
 /**
  * nm_utils_inet4_ntop: (skip)
  * @inaddr: the address that should be converted to string.
  * @dst: the destination buffer, it must contain at least
- *  <literal>INET_ADDRSTRLEN</literal> or %NM_UTILS_INET_ADDRSTRLEN
+ *  <literal>INET_ADDRSTRLEN</literal> or %NM_INET_ADDRSTRLEN
  *  characters. If set to %NULL, it will return a pointer to an internal, static
  *  buffer (shared with nm_utils_inet6_ntop()).  Beware, that the internal
  *  buffer will be overwritten with ever new call of nm_utils_inet4_ntop() or
@@ -4454,14 +4387,14 @@ nm_utils_inet4_ntop(in_addr_t inaddr, char *dst)
      *
      * However, still support it to be lenient against mistakes and because
      * this is public API of libnm. */
-    return _nm_utils_inet4_ntop(inaddr, dst ?: _nm_utils_inet_ntop_buffer);
+    return nm_inet4_ntop(inaddr, dst ?: _nm_utils_inet_ntop_buffer);
 }
 
 /**
  * nm_utils_inet6_ntop: (skip)
  * @in6addr: the address that should be converted to string.
  * @dst: the destination buffer, it must contain at least
- *  <literal>INET6_ADDRSTRLEN</literal> or %NM_UTILS_INET_ADDRSTRLEN
+ *  <literal>INET6_ADDRSTRLEN</literal> or %NM_INET_ADDRSTRLEN
  *  characters. If set to %NULL, it will return a pointer to an internal, static
  *  buffer (shared with nm_utils_inet4_ntop()).  Beware, that the internal
  *  buffer will be overwritten with ever new call of nm_utils_inet4_ntop() or
@@ -4485,7 +4418,7 @@ nm_utils_inet6_ntop(const struct in6_addr *in6addr, char *dst)
      * However, still support it to be lenient against mistakes and because
      * this is public API of libnm. */
     g_return_val_if_fail(in6addr, NULL);
-    return _nm_utils_inet6_ntop(in6addr, dst ?: _nm_utils_inet_ntop_buffer);
+    return nm_inet6_ntop(in6addr, dst ?: _nm_utils_inet_ntop_buffer);
 }
 
 /**
@@ -4503,7 +4436,7 @@ nm_utils_ipaddr_valid(int family, const char *ip)
 {
     g_return_val_if_fail(family == AF_INET || family == AF_INET6 || family == AF_UNSPEC, FALSE);
 
-    return nm_utils_ipaddr_is_valid(family, ip);
+    return nm_inet_is_valid(family, ip);
 }
 
 /**
@@ -4583,24 +4516,41 @@ nm_utils_check_virtual_device_compatibility(GType virtual_type, GType other_type
                          FALSE);
 
     if (virtual_type == NM_TYPE_SETTING_BOND) {
-        return (other_type == NM_TYPE_SETTING_INFINIBAND || other_type == NM_TYPE_SETTING_WIRED
-                || other_type == NM_TYPE_SETTING_BRIDGE || other_type == NM_TYPE_SETTING_BOND
-                || other_type == NM_TYPE_SETTING_TEAM || other_type == NM_TYPE_SETTING_VLAN);
-    } else if (virtual_type == NM_TYPE_SETTING_BRIDGE) {
-        return (other_type == NM_TYPE_SETTING_WIRED || other_type == NM_TYPE_SETTING_BOND
-                || other_type == NM_TYPE_SETTING_TEAM || other_type == NM_TYPE_SETTING_VLAN);
-    } else if (virtual_type == NM_TYPE_SETTING_TEAM) {
-        return (other_type == NM_TYPE_SETTING_WIRED || other_type == NM_TYPE_SETTING_BRIDGE
-                || other_type == NM_TYPE_SETTING_BOND || other_type == NM_TYPE_SETTING_TEAM
-                || other_type == NM_TYPE_SETTING_VLAN);
-    } else if (virtual_type == NM_TYPE_SETTING_VLAN) {
-        return (other_type == NM_TYPE_SETTING_WIRED || other_type == NM_TYPE_SETTING_WIRELESS
-                || other_type == NM_TYPE_SETTING_BRIDGE || other_type == NM_TYPE_SETTING_BOND
-                || other_type == NM_TYPE_SETTING_TEAM || other_type == NM_TYPE_SETTING_VLAN);
-    } else {
-        g_warn_if_reached();
-        return FALSE;
+        return NM_IN_SET(other_type,
+                         NM_TYPE_SETTING_BOND,
+                         NM_TYPE_SETTING_BRIDGE,
+                         NM_TYPE_SETTING_INFINIBAND,
+                         NM_TYPE_SETTING_TEAM,
+                         NM_TYPE_SETTING_VLAN,
+                         NM_TYPE_SETTING_WIRED,
+                         NM_TYPE_SETTING_WIRELESS);
     }
+    if (virtual_type == NM_TYPE_SETTING_BRIDGE) {
+        return NM_IN_SET(other_type,
+                         NM_TYPE_SETTING_BOND,
+                         NM_TYPE_SETTING_TEAM,
+                         NM_TYPE_SETTING_VLAN,
+                         NM_TYPE_SETTING_WIRED);
+    }
+    if (virtual_type == NM_TYPE_SETTING_TEAM) {
+        return NM_IN_SET(other_type,
+                         NM_TYPE_SETTING_BOND,
+                         NM_TYPE_SETTING_BRIDGE,
+                         NM_TYPE_SETTING_TEAM,
+                         NM_TYPE_SETTING_VLAN,
+                         NM_TYPE_SETTING_WIRED);
+    }
+    if (virtual_type == NM_TYPE_SETTING_VLAN) {
+        return NM_IN_SET(other_type,
+                         NM_TYPE_SETTING_BOND,
+                         NM_TYPE_SETTING_BRIDGE,
+                         NM_TYPE_SETTING_TEAM,
+                         NM_TYPE_SETTING_VLAN,
+                         NM_TYPE_SETTING_WIRED,
+                         NM_TYPE_SETTING_WIRELESS);
+    }
+
+    return FALSE;
 }
 
 /*****************************************************************************/
@@ -4657,7 +4607,7 @@ guint
 _nm_utils_strstrdictkey_hash(gconstpointer a)
 {
     const NMUtilsStrStrDictKey *k = a;
-    const char *                p;
+    const char                 *p;
     NMHashState                 h;
 
     nm_hash_init(&h, 76642997u);
@@ -4740,7 +4690,7 @@ _nm_utils_strstrdictkey_create(const char *v1, const char *v2)
 }
 
 static gboolean
-validate_dns_option(const char *                name,
+validate_dns_option(const char                 *name,
                     gboolean                    numeric,
                     gboolean                    ipv6,
                     const NMUtilsDNSOptionDesc *option_descs)
@@ -4776,16 +4726,16 @@ validate_dns_option(const char *                name,
  * %FALSE otherwise
  */
 gboolean
-_nm_utils_dns_option_validate(const char *                option,
-                              char **                     out_name,
-                              long *                      out_value,
+_nm_utils_dns_option_validate(const char                 *option,
+                              char                      **out_name,
+                              long                       *out_value,
                               gboolean                    ipv6,
                               const NMUtilsDNSOptionDesc *option_descs)
 {
     gs_free char *option0_free = NULL;
-    const char *  option0;
-    const char *  option1;
-    const char *  delim;
+    const char   *option0;
+    const char   *option1;
+    const char   *delim;
     long          option1_num;
 
     g_return_val_if_fail(option != NULL, FALSE);
@@ -4976,7 +4926,7 @@ gboolean
 nm_utils_is_json_object(const char *str, GError **error)
 {
     nm_auto_decref_json nm_json_t *json = NULL;
-    const NMJsonVt *               vt;
+    const NMJsonVt                *vt;
     nm_json_error_t                jerror;
 
     g_return_val_if_fail(!error || !*error, FALSE);
@@ -5060,17 +5010,14 @@ _nmtst_variant_attribute_spec_assert_sorted(const NMVariantAttributeSpec *const 
 const NMVariantAttributeSpec *
 _nm_variant_attribute_spec_find_binary_search(const NMVariantAttributeSpec *const *array,
                                               gsize                                len,
-                                              const char *                         name)
+                                              const char                          *name)
 {
     gssize idx;
 
     G_STATIC_ASSERT_EXPR(G_STRUCT_OFFSET(NMVariantAttributeSpec, name) == 0);
 
-    idx = nm_utils_ptrarray_find_binary_search((gconstpointer *) array,
-                                               len,
-                                               &name,
-                                               nm_strcmp_p_with_data,
-                                               NULL);
+    idx =
+        nm_ptrarray_find_bsearch((gconstpointer *) array, len, &name, nm_strcmp_p_with_data, NULL);
     if (idx < 0)
         return NULL;
     return array[idx];
@@ -5095,16 +5042,16 @@ _nm_variant_attribute_spec_find_binary_search(const NMVariantAttributeSpec *cons
  * Since: 1.8
  */
 GHashTable *
-nm_utils_parse_variant_attributes(const char *                         string,
+nm_utils_parse_variant_attributes(const char                          *string,
                                   char                                 attr_separator,
                                   char                                 key_value_separator,
                                   gboolean                             ignore_unknown,
                                   const NMVariantAttributeSpec *const *spec,
-                                  GError **                            error)
+                                  GError                             **error)
 {
-    gs_unref_hashtable GHashTable *      ht  = NULL;
-    const char *                         ptr = string, *start = NULL, *sep;
-    GVariant *                           variant;
+    gs_unref_hashtable GHashTable       *ht  = NULL;
+    const char                          *ptr = string, *start = NULL, *sep;
+    GVariant                            *variant;
     const NMVariantAttributeSpec *const *s;
 
     g_return_val_if_fail(string, NULL);
@@ -5295,7 +5242,7 @@ next:
     return g_steal_pointer(&ht);
 }
 
-/*
+/**
  * nm_utils_format_variant_attributes:
  * @attributes: (element-type utf8 GVariant): a #GHashTable mapping attribute names to #GVariant values
  * @attr_separator: the attribute separator character
@@ -5321,8 +5268,8 @@ nm_utils_format_variant_attributes(GHashTable *attributes,
 
 /*****************************************************************************/
 
-/*
- * nm_utils_get_timestamp_msec():
+/**
+ * nm_utils_get_timestamp_msec:
  *
  * Gets current time in milliseconds of CLOCK_BOOTTIME.
  *
@@ -5360,7 +5307,7 @@ nm_utils_get_timestamp_msec(void)
  * Returns: the version ID of the libnm version. That is, the %NM_VERSION
  *   at runtime.
  *
- * Since: 1.6.0
+ * Since: 1.6
  */
 guint
 nm_utils_version(void)
@@ -5405,7 +5352,7 @@ nm_utils_base64secret_decode(const char *base64_key, gsize required_key_len, gui
 
     base64_key_len = strlen(base64_key);
 
-    r = nm_sd_utils_unbase64mem(base64_key, base64_key_len, TRUE, &bin_arr, &bin_len);
+    r = nm_unbase64mem_full(base64_key, base64_key_len, TRUE, &bin_arr, &bin_len);
     if (r < 0)
         return FALSE;
     if (bin_len != required_key_len) {
@@ -5423,11 +5370,11 @@ nm_utils_base64secret_decode(const char *base64_key, gsize required_key_len, gui
 gboolean
 nm_utils_base64secret_normalize(const char *base64_key,
                                 gsize       required_key_len,
-                                char **     out_base64_key_norm)
+                                char      **out_base64_key_norm)
 {
     gs_free guint8 *buf_free = NULL;
     guint8          buf_static[200];
-    guint8 *        buf;
+    guint8         *buf;
 
     if (required_key_len > sizeof(buf_static)) {
         buf_free = g_new(guint8, required_key_len);
@@ -5445,18 +5392,13 @@ nm_utils_base64secret_normalize(const char *base64_key,
     return TRUE;
 }
 
-static GVariant *
-_nm_utils_bridge_vlans_to_dbus(const NMSettInfoSetting *               sett_info,
-                               guint                                   property_idx,
-                               NMConnection *                          connection,
-                               NMSetting *                             setting,
-                               NMConnectionSerializationFlags          flags,
-                               const NMConnectionSerializationOptions *options)
+GVariant *
+_nm_utils_bridge_vlans_to_dbus(_NM_SETT_INFO_PROP_TO_DBUS_FCN_ARGS _nm_nil)
 {
     gs_unref_ptrarray GPtrArray *vlans = NULL;
     GVariantBuilder              builder;
     guint                        i;
-    const char *                 property_name = sett_info->property_infos[property_idx].name;
+    const char                  *property_name = property_info->name;
 
     nm_assert(property_name);
 
@@ -5465,7 +5407,7 @@ _nm_utils_bridge_vlans_to_dbus(const NMSettInfoSetting *               sett_info
 
     if (vlans) {
         for (i = 0; i < vlans->len; i++) {
-            NMBridgeVlan *  vlan = vlans->pdata[i];
+            NMBridgeVlan   *vlan = vlans->pdata[i];
             GVariantBuilder vlan_builder;
             guint16         vid_start, vid_end;
 
@@ -5492,17 +5434,12 @@ _nm_utils_bridge_vlans_to_dbus(const NMSettInfoSetting *               sett_info
     return g_variant_builder_end(&builder);
 }
 
-static gboolean
-_nm_utils_bridge_vlans_from_dbus(NMSetting *         setting,
-                                 GVariant *          connection_dict,
-                                 const char *        property,
-                                 GVariant *          value,
-                                 NMSettingParseFlags parse_flags,
-                                 GError **           error)
+gboolean
+_nm_utils_bridge_vlans_from_dbus(_NM_SETT_INFO_PROP_FROM_DBUS_FCN_ARGS _nm_nil)
 {
     gs_unref_ptrarray GPtrArray *vlans = NULL;
     GVariantIter                 vlan_iter;
-    GVariant *                   vlan_var;
+    GVariant                    *vlan_var;
 
     g_return_val_if_fail(g_variant_is_of_type(value, G_VARIANT_TYPE("aa{sv}")), FALSE);
 
@@ -5510,7 +5447,7 @@ _nm_utils_bridge_vlans_from_dbus(NMSetting *         setting,
     g_variant_iter_init(&vlan_iter, value);
     while (g_variant_iter_next(&vlan_iter, "@a{sv}", &vlan_var)) {
         _nm_unused gs_unref_variant GVariant *var_unref = vlan_var;
-        NMBridgeVlan *                        vlan;
+        NMBridgeVlan                         *vlan;
         guint16                               vid_start, vid_end;
         gboolean                              pvid = FALSE, untagged = FALSE;
 
@@ -5539,24 +5476,34 @@ _nm_utils_bridge_vlans_from_dbus(NMSetting *         setting,
         g_ptr_array_add(vlans, vlan);
     }
 
-    g_object_set(setting, property, vlans, NULL);
+    g_object_set(setting, property_info->name, vlans, NULL);
 
     return TRUE;
 }
 
-const NMSettInfoPropertType nm_sett_info_propert_type_bridge_vlans =
-    NM_SETT_INFO_PROPERT_TYPE_DBUS_INIT(NM_G_VARIANT_TYPE("aa{sv}"),
-                                        .to_dbus_fcn   = _nm_utils_bridge_vlans_to_dbus,
-                                        .from_dbus_fcn = _nm_utils_bridge_vlans_from_dbus, );
+NMTernary
+_nm_utils_bridge_compare_vlans(GPtrArray *vlans_a, GPtrArray *vlans_b)
+{
+    guint l = nm_g_ptr_array_len(vlans_a);
+    guint i;
+
+    if (l != nm_g_ptr_array_len(vlans_b))
+        return FALSE;
+    for (i = 0; i < l; i++) {
+        if (nm_bridge_vlan_cmp(vlans_a->pdata[i], vlans_b->pdata[i]))
+            return FALSE;
+    }
+    return TRUE;
+}
 
 gboolean
-_nm_utils_bridge_vlan_verify_list(GPtrArray * vlans,
+_nm_utils_bridge_vlan_verify_list(GPtrArray  *vlans,
                                   gboolean    check_normalizable,
-                                  GError **   error,
+                                  GError    **error,
                                   const char *setting,
                                   const char *property)
 {
-    guint              i;
+    guint                          i;
     gs_unref_hashtable GHashTable *h          = NULL;
     gboolean                       pvid_found = FALSE;
 
@@ -5625,10 +5572,102 @@ _nm_utils_bridge_vlan_verify_list(GPtrArray * vlans,
     return TRUE;
 }
 
+GVariant *
+_nm_utils_ranges_to_dbus(_NM_SETT_INFO_PROP_TO_DBUS_FCN_ARGS _nm_nil)
+{
+    gs_unref_ptrarray GPtrArray *ranges = NULL;
+    GVariantBuilder              builder;
+    const char                  *property_name = property_info->name;
+    guint                        i;
+
+    nm_assert(property_name);
+
+    g_object_get(setting, property_name, &ranges, NULL);
+    g_variant_builder_init(&builder, G_VARIANT_TYPE("aa{sv}"));
+
+    if (ranges) {
+        for (i = 0; i < ranges->len; i++) {
+            NMRange        *range = ranges->pdata[i];
+            GVariantBuilder range_builder;
+
+            g_variant_builder_init(&range_builder, G_VARIANT_TYPE_VARDICT);
+            g_variant_builder_add(&range_builder,
+                                  "{sv}",
+                                  "start",
+                                  g_variant_new_uint64(range->start));
+            g_variant_builder_add(&range_builder, "{sv}", "end", g_variant_new_uint64(range->end));
+
+            g_variant_builder_add(&builder, "a{sv}", &range_builder);
+        }
+    }
+
+    return g_variant_builder_end(&builder);
+}
+
+gboolean
+_nm_utils_ranges_from_dbus(_NM_SETT_INFO_PROP_FROM_DBUS_FCN_ARGS _nm_nil)
+{
+    gs_unref_ptrarray GPtrArray *ranges = NULL;
+    GVariantIter                 iter;
+    GVariant                    *range_var;
+
+    g_return_val_if_fail(g_variant_is_of_type(value, G_VARIANT_TYPE("aa{sv}")), FALSE);
+
+    ranges = g_ptr_array_new_with_free_func((GDestroyNotify) nm_range_unref);
+    g_variant_iter_init(&iter, value);
+    while (g_variant_iter_next(&iter, "@a{sv}", &range_var)) {
+        _nm_unused gs_unref_variant GVariant *var_unref = range_var;
+        gint64                                start;
+        gint64                                end;
+
+        if (!g_variant_lookup(range_var, "start", "t", &start))
+            continue;
+        if (!g_variant_lookup(range_var, "end", "t", &end))
+            continue;
+        if (start > end)
+            continue;
+
+        g_ptr_array_add(ranges, nm_range_new(start, end));
+    }
+
+    g_object_set(setting, property_info->name, ranges, NULL);
+
+    return TRUE;
+}
+
+NMTernary
+_nm_utils_ranges_cmp(_NM_SETT_INFO_PROP_COMPARE_FCN_ARGS _nm_nil)
+{
+    const GPtrArray *ranges_a = NULL;
+    const GPtrArray *ranges_b = NULL;
+    guint            len;
+    guint            i;
+
+    if (nm_streq0(nm_setting_get_name(set_a), NM_SETTING_OVS_PORT_SETTING_NAME)
+        && nm_streq0(property_info->name, NM_SETTING_OVS_PORT_TRUNKS)) {
+        ranges_a = _nm_setting_ovs_port_get_trunks_arr(NM_SETTING_OVS_PORT(set_a));
+        if (set_b)
+            ranges_b = _nm_setting_ovs_port_get_trunks_arr(NM_SETTING_OVS_PORT(set_b));
+    } else {
+        nm_assert_not_reached();
+    }
+
+    len = nm_g_ptr_array_len(ranges_a);
+    if (len != nm_g_ptr_array_len(ranges_b))
+        return FALSE;
+    for (i = 0; i < len; i++) {
+        if (nm_range_cmp(ranges_a->pdata[i], ranges_b->pdata[i]))
+            return FALSE;
+    }
+
+    return TRUE;
+}
+
 gboolean
 _nm_utils_iaid_verify(const char *str, gint64 *out_value)
 {
-    gint64 iaid;
+    gint64  i64;
+    guint32 u32;
 
     NM_SET_OUT(out_value, -1);
 
@@ -5638,10 +5677,16 @@ _nm_utils_iaid_verify(const char *str, gint64 *out_value)
     if (NM_IAID_IS_SPECIAL(str))
         return TRUE;
 
-    if (NM_STRCHAR_ALL(str, ch, ch >= '0' && ch <= '9') && (str[0] != '0' || str[1] == '\0')
-        && (iaid = _nm_utils_ascii_str_to_int64(str, 10, 0, G_MAXUINT32, -1)) != -1) {
-        NM_SET_OUT(out_value, iaid);
-        return TRUE;
+    if (NM_STRCHAR_ALL(str, ch, g_ascii_isxdigit(ch) || NM_IN_SET(ch, 'x', ':'))) {
+        if ((i64 = _nm_utils_ascii_str_to_int64(str, 0, 0, G_MAXUINT32, -1)) != -1) {
+            NM_SET_OUT(out_value, i64);
+            return TRUE;
+        }
+
+        if (nm_dhcp_iaid_from_hexstr(str, &u32)) {
+            NM_SET_OUT(out_value, u32);
+            return TRUE;
+        }
     }
 
     return FALSE;
@@ -5695,4 +5740,25 @@ _nm_utils_validate_dhcp_hostname_flags(NMDhcpHostnameFlags flags, int addr_famil
     }
 
     return TRUE;
+}
+
+/*****************************************************************************/
+
+/**
+ * nm_utils_ensure_gtypes:
+ *
+ * This ensures that all NMSetting GTypes are created. For example,
+ * after this call, g_type_from_name("NMSettingConnection") will work.
+ *
+ * This cannot fail and does nothing if the type already exists.
+ *
+ * Since: 1.42
+ */
+void
+nm_utils_ensure_gtypes(void)
+{
+    NMMetaSettingType meta_type;
+
+    for (meta_type = 0; meta_type < _NM_META_SETTING_TYPE_NUM; meta_type++)
+        nm_meta_setting_infos[meta_type].get_setting_gtype();
 }

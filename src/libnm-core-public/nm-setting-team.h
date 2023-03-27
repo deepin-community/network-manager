@@ -7,7 +7,7 @@
 #define __NM_SETTING_TEAM_H__
 
 #if !defined(__NETWORKMANAGER_H_INSIDE__) && !defined(NETWORKMANAGER_COMPILATION)
-    #error "Only <NetworkManager.h> can be included directly."
+#error "Only <NetworkManager.h> can be included directly."
 #endif
 
 #include "nm-setting.h"
@@ -25,12 +25,14 @@ G_BEGIN_DECLS
  *    option 'validate_inactive' is enabled (set to true).
  * @NM_TEAM_LINK_WATCHER_ARP_PING_FLAG_SEND_ALWAYS: the arp_ping link watcher option
  *    'send_always' is enabled (set to true).
+ *
+ * Since: 1.12
  */
-typedef enum {                                                           /*< flags >*/
-               NM_TEAM_LINK_WATCHER_ARP_PING_FLAG_NONE              = 0, /*< skip >*/
-               NM_TEAM_LINK_WATCHER_ARP_PING_FLAG_VALIDATE_ACTIVE   = 0x2,
-               NM_TEAM_LINK_WATCHER_ARP_PING_FLAG_VALIDATE_INACTIVE = 0x4,
-               NM_TEAM_LINK_WATCHER_ARP_PING_FLAG_SEND_ALWAYS       = 0x8,
+typedef enum /*< flags >*/ {
+    NM_TEAM_LINK_WATCHER_ARP_PING_FLAG_NONE              = 0, /*< skip >*/
+    NM_TEAM_LINK_WATCHER_ARP_PING_FLAG_VALIDATE_ACTIVE   = 0x2,
+    NM_TEAM_LINK_WATCHER_ARP_PING_FLAG_VALIDATE_INACTIVE = 0x4,
+    NM_TEAM_LINK_WATCHER_ARP_PING_FLAG_SEND_ALWAYS       = 0x8,
 } NMTeamLinkWatcherArpPingFlags;
 
 #define NM_TEAM_LINK_WATCHER_ETHTOOL   "ethtool"
@@ -48,24 +50,24 @@ NMTeamLinkWatcher *nm_team_link_watcher_new_nsna_ping(int         init_wait,
                                                       int         interval,
                                                       int         missed_max,
                                                       const char *target_host,
-                                                      GError **   error);
+                                                      GError    **error);
 NM_AVAILABLE_IN_1_12
 NMTeamLinkWatcher *nm_team_link_watcher_new_arp_ping(int                           init_wait,
                                                      int                           interval,
                                                      int                           missed_max,
-                                                     const char *                  target_host,
-                                                     const char *                  source_host,
+                                                     const char                   *target_host,
+                                                     const char                   *source_host,
                                                      NMTeamLinkWatcherArpPingFlags flags,
-                                                     GError **                     error);
+                                                     GError                      **error);
 NM_AVAILABLE_IN_1_16
 NMTeamLinkWatcher *nm_team_link_watcher_new_arp_ping2(int                           init_wait,
                                                       int                           interval,
                                                       int                           missed_max,
                                                       int                           vlanid,
-                                                      const char *                  target_host,
-                                                      const char *                  source_host,
+                                                      const char                   *target_host,
+                                                      const char                   *source_host,
                                                       NMTeamLinkWatcherArpPingFlags flags,
-                                                      GError **                     error);
+                                                      GError                      **error);
 NM_AVAILABLE_IN_1_12
 void nm_team_link_watcher_ref(NMTeamLinkWatcher *watcher);
 NM_AVAILABLE_IN_1_12
@@ -203,7 +205,7 @@ gboolean nm_setting_team_add_link_watcher(NMSettingTeam *setting, NMTeamLinkWatc
 NM_AVAILABLE_IN_1_12
 void nm_setting_team_remove_link_watcher(NMSettingTeam *setting, guint idx);
 NM_AVAILABLE_IN_1_12
-gboolean nm_setting_team_remove_link_watcher_by_value(NMSettingTeam *    setting,
+gboolean nm_setting_team_remove_link_watcher_by_value(NMSettingTeam     *setting,
                                                       NMTeamLinkWatcher *link_watcher);
 NM_AVAILABLE_IN_1_12
 void nm_setting_team_clear_link_watchers(NMSettingTeam *setting);

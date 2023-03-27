@@ -7,7 +7,7 @@
 #define __NM_DEVICE_MACSEC_H__
 
 #if !defined(__NETWORKMANAGER_H_INSIDE__) && !defined(NETWORKMANAGER_COMPILATION)
-    #error "Only <NetworkManager.h> can be included directly."
+#error "Only <NetworkManager.h> can be included directly."
 #endif
 
 #include "nm-device.h"
@@ -41,17 +41,20 @@ G_BEGIN_DECLS
 
 /**
  * NMDeviceMacsec:
+ *
+ * Since: 1.6
  */
+typedef struct _NMDeviceMacsec      NMDeviceMacsec;
 typedef struct _NMDeviceMacsecClass NMDeviceMacsecClass;
 
 NM_AVAILABLE_IN_1_6
 GType nm_device_macsec_get_type(void);
 
-NM_AVAILABLE_IN_1_6
+NM_AVAILABLE_IN_1_42
 NMDevice *nm_device_macsec_get_parent(NMDeviceMacsec *device);
 
-NM_AVAILABLE_IN_1_6
 NM_DEPRECATED_IN_1_24_FOR(nm_device_get_hw_address)
+NM_AVAILABLE_IN_1_6
 const char *nm_device_macsec_get_hw_address(NMDeviceMacsec *device);
 
 NM_AVAILABLE_IN_1_6

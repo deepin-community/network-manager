@@ -2,7 +2,7 @@ Index: network-manager/src/core/nm-core-utils.c
 ===================================================================
 --- network-manager.orig/src/core/nm-core-utils.c
 +++ network-manager/src/core/nm-core-utils.c
-@@ -4672,6 +4672,7 @@ get_max_rate_vht(const guint8 *bytes, gu
+@@ -4768,6 +4768,7 @@ get_max_rate_vht(const guint8 *bytes, gu
  #define WLAN_EID_HT_CAPABILITY   45
  #define WLAN_EID_VHT_CAPABILITY  191
  #define WLAN_EID_VENDOR_SPECIFIC 221
@@ -10,7 +10,7 @@ Index: network-manager/src/core/nm-core-utils.c
  
  void
  nm_wifi_utils_parse_ies(const guint8 *bytes,
-@@ -4726,6 +4727,72 @@ nm_wifi_utils_parse_ies(const guint8 *by
+@@ -4822,6 +4823,72 @@ nm_wifi_utils_parse_ies(const guint8 *by
              break;
          }
  
@@ -23,11 +23,11 @@ Index: network-manager/src/core/nm-core-utils.c
 +
 +void
 +nm_wifi_utils_parse_ies_ex(const guint8 *bytes,
-+                        gsize         len,
-+                        guint32 *     out_max_rate,
-+                        gboolean *    out_metered,
-+                        gboolean *    out_owe_transition_mode,
-+                        gboolean *    out_he_support)
++                           gsize         len,
++                           guint32      *out_max_rate,
++                           gboolean     *out_metered,
++                           gboolean     *out_owe_transition_mode,
++                           gboolean     *out_he_support)
 +{
 +    guint8  id, elem_len;
 +    guint32 m;
@@ -87,7 +87,7 @@ Index: network-manager/src/core/supplicant/nm-supplicant-interface.c
 ===================================================================
 --- network-manager.orig/src/core/supplicant/nm-supplicant-interface.c
 +++ network-manager/src/core/supplicant/nm-supplicant-interface.c
-@@ -758,10 +758,15 @@ _bss_info_properties_changed(NMSupplican
+@@ -764,10 +764,15 @@ _bss_info_properties_changed(NMSupplican
      if (v_v) {
          gboolean p_owe_transition_mode;
          gboolean p_metered;
@@ -108,7 +108,7 @@ Index: network-manager/src/libnm-core-public/nm-dbus-interface.h
 ===================================================================
 --- network-manager.orig/src/libnm-core-public/nm-dbus-interface.h
 +++ network-manager/src/libnm-core-public/nm-dbus-interface.h
-@@ -317,6 +317,7 @@ typedef enum { /*< flags >*/
+@@ -336,6 +336,7 @@ typedef enum /*< flags >*/ {
   * @NM_802_11_AP_FLAGS_WPS: access point supports some WPS method
   * @NM_802_11_AP_FLAGS_WPS_PBC: access point supports push-button WPS
   * @NM_802_11_AP_FLAGS_WPS_PIN: access point supports PIN-based WPS
@@ -116,11 +116,11 @@ Index: network-manager/src/libnm-core-public/nm-dbus-interface.h
   *
   * 802.11 access point flags.
   **/
-@@ -326,6 +327,7 @@ typedef enum { /*< underscore_name=nm_80
-                NM_802_11_AP_FLAGS_WPS     = 0x00000002,
-                NM_802_11_AP_FLAGS_WPS_PBC = 0x00000004,
-                NM_802_11_AP_FLAGS_WPS_PIN = 0x00000008,
-+               NM_802_11_AP_FLAGS_HE      = 0x00000010,
+@@ -345,6 +346,7 @@ typedef enum /*< underscore_name=nm_802_
+     NM_802_11_AP_FLAGS_WPS     = 0x00000002,
+     NM_802_11_AP_FLAGS_WPS_PBC = 0x00000004,
+     NM_802_11_AP_FLAGS_WPS_PIN = 0x00000008,
++    NM_802_11_AP_FLAGS_HE      = 0x00000010,
  } NM80211ApFlags;
  
  /**
@@ -128,17 +128,17 @@ Index: network-manager/src/core/nm-core-utils.h
 ===================================================================
 --- network-manager.orig/src/core/nm-core-utils.h
 +++ network-manager/src/core/nm-core-utils.h
-@@ -414,6 +414,15 @@ void nm_wifi_utils_parse_ies(const guint
-                              gboolean *    out_metered,
-                              gboolean *    out_owe_transition_mode);
+@@ -453,6 +453,15 @@ void nm_wifi_utils_parse_ies(const guint
+                              gboolean     *out_metered,
+                              gboolean     *out_owe_transition_mode);
  
 +//UOS add wifi6
 +void nm_wifi_utils_parse_ies_ex(const guint8 *bytes,
-+                             gsize         len,
-+                             guint32 *     out_max_rate,
-+                             gboolean *    out_metered,
-+                             gboolean *    out_owe_transition_mode,
-+                             gboolean *    out_he_support);
++                                gsize         len,
++                                guint32      *out_max_rate,
++                                gboolean     *out_metered,
++                                gboolean     *out_owe_transition_mode,
++                                gboolean     *out_he_support);
 +//---------------------------------------------------------------------------
 +
  guint8 nm_wifi_utils_level_to_quality(int val);

@@ -7,6 +7,7 @@
 #define __WIFI_UTILS_PRIVATE_H__
 
 #include "nm-wifi-utils.h"
+#include "libnm-platform/nm-platform.h"
 
 typedef struct {
     GObjectClass parent;
@@ -39,8 +40,8 @@ typedef struct {
      */
     gboolean (*get_station)(NMWifiUtils *data,
                             NMEtherAddr *out_bssid,
-                            int *        out_quality,
-                            guint32 *    out_rate);
+                            int         *out_quality,
+                            guint32     *out_rate);
 
     /* OLPC Mesh-only functions */
 
@@ -53,6 +54,10 @@ typedef struct {
     gboolean (*set_mesh_ssid)(NMWifiUtils *data, const guint8 *ssid, gsize len);
 
     gboolean (*indicate_addressing_running)(NMWifiUtils *data, gboolean running);
+
+    gboolean (*get_csme_conn_info)(NMWifiUtils *data, NMPlatformCsmeConnInfo *out_conn_info);
+
+    gboolean (*get_device_from_csme)(NMWifiUtils *data);
 } NMWifiUtilsClass;
 
 struct NMWifiUtils {

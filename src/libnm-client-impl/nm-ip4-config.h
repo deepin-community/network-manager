@@ -8,13 +8,13 @@
 #define __NM_IP4_CONFIG_H__
 
 #if !((NETWORKMANAGER_COMPILATION) &NM_NETWORKMANAGER_COMPILATION_WITH_LIBNM_PRIVATE)
-    #error Cannot use this header.
+#error Cannot use this header.
 #endif
 
 #include "nm-ip-config.h"
 
 #define NM_TYPE_IP4_CONFIG (nm_ip4_config_get_type())
-#define NM_IP4_CONFIG(obj) (G_TYPE_CHECK_INSTANCE_CAST((obj), NM_TYPE_IP4_CONFIG, NMIP4Config))
+#define NM_IP4_CONFIG(obj) (_NM_G_TYPE_CHECK_INSTANCE_CAST((obj), NM_TYPE_IP4_CONFIG, NMIP4Config))
 #define NM_IP4_CONFIG_CLASS(klass) \
     (G_TYPE_CHECK_CLASS_CAST((klass), NM_TYPE_IP4_CONFIG, NMIP4ConfigClass))
 #define NM_IS_IP4_CONFIG(obj)         (G_TYPE_CHECK_INSTANCE_TYPE((obj), NM_TYPE_IP4_CONFIG))

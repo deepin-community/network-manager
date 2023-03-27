@@ -3,7 +3,7 @@
 
   <!--
       org.freedesktop.NetworkManager.Connection.Active:
-      @short_description: Active Connection
+      @short_description: Active Connection.
 
       Objects that implement the Connection.Active interface represent an
       attempt to connect to a network using the details provided by a Connection
@@ -93,10 +93,10 @@
         StateChanged:
         @state: (<link linkend="NMActiveConnectionState">NMActiveConnectionState</link>) The new state of the active connection.
         @reason: (<link linkend="NMActiveConnectionStateReason">NMActiveConnectionStateReason</link>) Reason code describing the change to the new state.
+        @since: 1.8
 
         Emitted when the state of the active connection has changed.
 
-        Since: 1.8
     -->
     <signal name="StateChanged">
       <arg name="state" type="u"/>
@@ -163,9 +163,21 @@
     <property name="Vpn" type="b" access="read"/>
 
     <!--
+        Controller:
+        @Since: 1.44, 1.42.2
+
+        The path to the controller device if the connection is a port. This
+        property replaces the deprecated 'Master' property.
+    -->
+    <property name="Controller" type="o" access="read"/>
+
+    <!--
         Master:
 
-        The path to the master device if the connection is a slave.
+        The path to the controller device if the connection is a port.
+
+        This property is deprecated in favor of the 'Controller'
+        property since 1.44 and 1.42.2.
     -->
     <property name="Master" type="o" access="read"/>
 

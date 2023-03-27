@@ -516,7 +516,6 @@ char *cellescape(char *buf, size_t len, const char *s) {
         buf[i] = '\0';
         return buf;
 }
-#endif /* NM_IGNORED */
 
 char* strshorten(char *s, size_t l) {
         assert(s);
@@ -526,6 +525,20 @@ char* strshorten(char *s, size_t l) {
 
         return s;
 }
+
+int strgrowpad0(char **s, size_t l) {
+        assert(s);
+
+        char *q = realloc(*s, l);
+        if (!q)
+                return -ENOMEM;
+        *s = q;
+
+        size_t sz = strlen(*s);
+        memzero(*s + sz, l - sz);
+        return 0;
+}
+#endif /* NM_IGNORED */
 
 char *strreplace(const char *text, const char *old_string, const char *new_string) {
         size_t l, old_len, new_len;
@@ -1154,5 +1167,48 @@ int string_contains_word_strv(const char *string, const char *separators, char *
         if (ret_word)
                 *ret_word = found;
         return !!found;
+}
+
+bool streq_skip_trailing_chars(const char *s1, const char *s2, const char *ok) {
+        if (!s1 && !s2)
+                return true;
+        if (!s1 || !s2)
+                return false;
+
+        if (!ok)
+                ok = WHITESPACE;
+
+        for (; *s1 && *s2; s1++, s2++)
+                if (*s1 != *s2)
+                        break;
+
+        return in_charset(s1, ok) && in_charset(s2, ok);
+}
+
+char *string_replace_char(char *str, char old_char, char new_char) {
+        assert(str);
+        assert(old_char != '\0');
+        assert(new_char != '\0');
+        assert(old_char != new_char);
+
+        for (char *p = strchr(str, old_char); p; p = strchr(p + 1, old_char))
+                *p = new_char;
+
+        return str;
+}
+
+size_t strspn_from_end(const char *str, const char *accept) {
+        size_t n = 0;
+
+        if (isempty(str))
+                return 0;
+
+        if (isempty(accept))
+                return 0;
+
+        for (const char *p = str + strlen(str); p > str && strchr(accept, p[-1]); p--)
+                n++;
+
+        return n;
 }
 #endif /* NM_IGNORED */

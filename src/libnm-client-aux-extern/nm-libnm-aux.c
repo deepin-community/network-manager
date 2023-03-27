@@ -7,10 +7,10 @@
 /*****************************************************************************/
 
 NMClient *
-nmc_client_new_async_valist(GCancellable *      cancellable,
+nmc_client_new_async_valist(GCancellable       *cancellable,
                             GAsyncReadyCallback callback,
                             gpointer            user_data,
-                            const char *        first_property_name,
+                            const char         *first_property_name,
                             va_list             ap)
 {
     NMClient *nmc;
@@ -25,10 +25,10 @@ nmc_client_new_async_valist(GCancellable *      cancellable,
 }
 
 NMClient *
-nmc_client_new_async(GCancellable *      cancellable,
+nmc_client_new_async(GCancellable       *cancellable,
                      GAsyncReadyCallback callback,
                      gpointer            user_data,
-                     const char *        first_property_name,
+                     const char         *first_property_name,
                      ...)
 {
     NMClient *nmc;
@@ -44,8 +44,8 @@ nmc_client_new_async(GCancellable *      cancellable,
 
 typedef struct {
     GMainLoop *main_loop;
-    NMClient * nmc;
-    GError *   error;
+    NMClient  *nmc;
+    GError    *error;
 } ClientCreateData;
 
 static void
@@ -82,12 +82,12 @@ _nmc_client_new_waitsync_cb(GObject *source_object, GAsyncResult *result, gpoint
  */
 gboolean
 nmc_client_new_waitsync(GCancellable *cancellable,
-                        NMClient **   out_nmc,
-                        GError **     error,
-                        const char *  first_property_name,
+                        NMClient    **out_nmc,
+                        GError      **error,
+                        const char   *first_property_name,
                         ...)
 {
-    gs_unref_object NMClient *nmc = NULL;
+    gs_unref_object NMClient          *nmc = NULL;
     nm_auto_unref_gmainloop GMainLoop *main_loop =
         g_main_loop_new(g_main_context_get_thread_default(), FALSE);
     ClientCreateData data = {
@@ -134,4 +134,65 @@ nmc_client_new_waitsync(GCancellable *cancellable,
         return FALSE;
     }
     return TRUE;
+}
+
+/*****************************************************************************/
+
+guint32
+nmc_client_has_version_info_v(NMClient *nmc)
+{
+    const guint32 *ver;
+    gsize          len;
+
+    ver = nm_client_get_version_info(nmc, &len);
+    if (len < 1)
+        return 0;
+    return ver[0];
+}
+
+gboolean
+nmc_client_has_version_info_capability(NMClient *nmc, NMVersionInfoCapability capability)
+{
+    const guint32 *ver;
+    gsize          len;
+    gsize          idx;
+    gsize          idx_hi;
+    gsize          idx_lo;
+
+    ver = nm_client_get_version_info(nmc, &len);
+
+    if (len < 2)
+        return FALSE;
+
+    len--;
+    ver++;
+
+    idx = (gsize) capability;
+    if (idx >= G_MAXSIZE - 31u)
+        return FALSE;
+
+    idx_hi = ((idx + 31u) / 32u);
+    idx_lo = (idx % 32u);
+
+    if (idx_hi > len)
+        return FALSE;
+
+    return NM_FLAGS_ANY(ver[idx_hi], (1ull << idx_lo));
+}
+
+gboolean
+nmc_client_has_capability(NMClient *nmc, NMCapability capability)
+{
+    const guint32 *caps;
+    gsize          len;
+    gsize          i;
+
+    caps = nm_client_get_capabilities(nmc, &len);
+
+    for (i = 0; i < len; i++) {
+        if (caps[i] == capability)
+            return TRUE;
+    }
+
+    return FALSE;
 }

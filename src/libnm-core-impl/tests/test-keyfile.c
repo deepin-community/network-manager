@@ -5,16 +5,18 @@
 
 #include "libnm-core-impl/nm-default-libnm-core.h"
 
-#include "libnm-glib-aux/nm-json-aux.h"
-#include "libnm-core-intern/nm-keyfile-utils.h"
+#include "libnm-base/nm-ethtool-utils-base.h"
 #include "libnm-core-intern/nm-keyfile-internal.h"
-#include "nm-simple-connection.h"
-#include "nm-setting-connection.h"
-#include "nm-setting-wired.h"
+#include "libnm-core-intern/nm-keyfile-utils.h"
+#include "libnm-glib-aux/nm-json-aux.h"
 #include "nm-setting-8021x.h"
+#include "nm-setting-connection.h"
+#include "nm-setting-ethtool.h"
+#include "nm-setting-proxy.h"
 #include "nm-setting-team.h"
 #include "nm-setting-user.h"
-#include "nm-setting-proxy.h"
+#include "nm-setting-wired.h"
+#include "nm-simple-connection.h"
 
 #include "libnm-glib-aux/nm-test-utils.h"
 
@@ -26,15 +28,15 @@
 /*****************************************************************************/
 
 static void
-do_test_encode_key_full(GKeyFile *  kf,
+do_test_encode_key_full(GKeyFile   *kf,
                         const char *name,
                         const char *key,
                         const char *key_decode_encode)
 {
     gs_free char *to_free1 = NULL;
     gs_free char *to_free2 = NULL;
-    const char *  key2;
-    const char *  name2;
+    const char   *key2;
+    const char   *name2;
 
     g_assert(key);
 
@@ -105,7 +107,7 @@ test_encode_key(void)
     G_STMT_START                                      \
     {                                                 \
         NMConnection **_con     = (con);              \
-        GKeyFile **    _keyfile = (keyfile);          \
+        GKeyFile     **_keyfile = (keyfile);          \
                                                       \
         g_clear_object(_con);                         \
         nm_clear_pointer(_keyfile, g_key_file_unref); \
@@ -123,13 +125,13 @@ _assert_gbytes(GBytes *bytes, gconstpointer data, gssize len)
     if (!len)
         g_assert(!bytes);
 
-    g_assert(nm_utils_gbytes_equal_mem(bytes, data, len));
+    g_assert(nm_g_bytes_equal_mem(bytes, data, len));
 }
 
 static GKeyFile *
 _keyfile_load_from_data(const char *str)
 {
-    GError *  error = NULL;
+    GError   *error = NULL;
     gboolean  success;
     GKeyFile *keyfile;
 
@@ -146,7 +148,7 @@ _keyfile_load_from_data(const char *str)
 static GKeyFile *
 _nm_keyfile_write(NMConnection *connection, NMKeyfileWriteHandler handler, void *user_data)
 {
-    GError *  error = NULL;
+    GError   *error = NULL;
     GKeyFile *kf;
 
     g_assert(NM_IS_CONNECTION(connection));
@@ -158,13 +160,13 @@ _nm_keyfile_write(NMConnection *connection, NMKeyfileWriteHandler handler, void 
 }
 
 static NMConnection *
-_nm_keyfile_read(GKeyFile *           keyfile,
-                 const char *         keyfile_name,
+_nm_keyfile_read(GKeyFile            *keyfile,
+                 const char          *keyfile_name,
                  NMKeyfileReadHandler read_handler,
-                 void *               read_data,
+                 void                *read_data,
                  gboolean             needs_normalization)
 {
-    GError *      error = NULL;
+    GError       *error = NULL;
     NMConnection *con;
     gs_free char *filename = NULL;
     gs_free char *base_dir = NULL;
@@ -208,18 +210,18 @@ _nm_keyfile_read(GKeyFile *           keyfile,
 }
 
 static void
-_keyfile_convert(NMConnection **       con,
-                 GKeyFile **           keyfile,
-                 const char *          keyfile_name,
+_keyfile_convert(NMConnection        **con,
+                 GKeyFile            **keyfile,
+                 const char           *keyfile_name,
                  NMKeyfileReadHandler  read_handler,
-                 void *                read_data,
+                 void                 *read_data,
                  NMKeyfileWriteHandler write_handler,
-                 void *                write_data,
+                 void                 *write_data,
                  gboolean              needs_normalization)
 {
-    NMConnection *  c0;
-    GKeyFile *      k0;
-    gs_unref_object NMConnection *c0_k1_c2 = NULL, *k0_c1 = NULL, *k0_c1_k2_c3 = NULL;
+    NMConnection                   *c0;
+    GKeyFile                       *k0;
+    gs_unref_object NMConnection   *c0_k1_c2 = NULL, *k0_c1 = NULL, *k0_c1_k2_c3 = NULL;
     nm_auto_unref_keyfile GKeyFile *k0_c1_k2 = NULL, *c0_k1 = NULL, *c0_k1_c2_k3 = NULL;
 
     /* convert from @con to @keyfile and check that we can make
@@ -263,7 +265,7 @@ _keyfile_convert(NMConnection **       con,
 
                 nmtst_assert_resolve_relative_path_equals(p1, p2);
                 if (strcmp(p1, p2) != 0) {
-                    gs_free char * puri          = NULL;
+                    gs_free char          *puri  = NULL;
                     gs_unref_bytes GBytes *pfile = NULL;
 
                     g_assert(p1[0] != '/' && p2[0] == '/');
@@ -310,14 +312,14 @@ _keyfile_convert(NMConnection **       con,
 /*****************************************************************************/
 
 static void
-_test_8021x_cert_check(NMConnection *         con,
+_test_8021x_cert_check(NMConnection          *con,
                        NMSetting8021xCKScheme expected_scheme,
-                       const void *           value,
+                       const void            *value,
                        gssize                 val_len)
 {
-    GKeyFile *      keyfile = NULL;
+    GKeyFile       *keyfile = NULL;
     NMSetting8021x *s_8021x;
-    gs_free char *  kval = NULL;
+    gs_free char   *kval = NULL;
 
     _keyfile_convert(&con, &keyfile, "/_test_8021x_cert_check/foo", NULL, NULL, NULL, NULL, FALSE);
 
@@ -335,7 +337,7 @@ _test_8021x_cert_check(NMConnection *         con,
         g_assert(kval);
         g_assert_cmpstr(kval, ==, value);
     } else if (expected_scheme == NM_SETTING_802_1X_CK_SCHEME_BLOB) {
-        GBytes *      blob      = nm_setting_802_1x_get_ca_cert_blob(s_8021x);
+        GBytes       *blob      = nm_setting_802_1x_get_ca_cert_blob(s_8021x);
         gs_free char *file_blob = NULL;
 
         if (val_len == -1) {
@@ -350,7 +352,7 @@ _test_8021x_cert_check(NMConnection *         con,
         }
 
         g_assert(blob);
-        g_assert(nm_utils_gbytes_equal_mem(blob, value, val_len));
+        g_assert(nm_g_bytes_equal_mem(blob, value, val_len));
 
         kval = g_key_file_get_string(keyfile, "802-1x", "ca-cert", NULL);
         g_assert(kval);
@@ -363,7 +365,7 @@ _test_8021x_cert_check(NMConnection *         con,
 static void
 _test_8021x_cert_check_blob_full(NMConnection *con, const void *data, gsize len)
 {
-    GBytes *        bytes;
+    GBytes         *bytes;
     NMSetting8021x *s_8021x = nm_connection_get_setting_802_1x(con);
 
     bytes = g_bytes_new(data, len);
@@ -380,10 +382,10 @@ _test_8021x_cert_check_blob_full(NMConnection *con, const void *data, gsize len)
 static void
 _test_8021x_cert_from_files(const char *cert, const char *key)
 {
-    NMSetting8021x *s_8021x;
+    NMSetting8021x               *s_8021x;
     gs_unref_object NMConnection *con =
         nmtst_create_minimal_connection("test-cert", NULL, NM_SETTING_WIRED_SETTING_NAME, NULL);
-    GError *               error = NULL;
+    GError                *error = NULL;
     gboolean               success;
     NMSetting8021xCKScheme scheme             = NM_SETTING_802_1X_CK_SCHEME_PATH;
     gs_free char *full_TEST_WIRED_TLS_CA_CERT = nmtst_file_resolve_relative_path(cert, NULL);
@@ -456,9 +458,9 @@ test_8021x_cert_tpm2key(void)
 static void
 test_8021x_cert_read(void)
 {
-    GKeyFile *      keyfile           = NULL;
-    gs_unref_object NMConnection *con = NULL;
-    NMSetting8021x *              s_8021x;
+    GKeyFile                     *keyfile = NULL;
+    gs_unref_object NMConnection *con     = NULL;
+    NMSetting8021x               *s_8021x;
 
     con = nmtst_create_connection_from_keyfile("[connection]\n"
                                                "type=ethernet",
@@ -649,9 +651,9 @@ test_8021x_cert_read(void)
 static void
 test_team_conf_read_valid(void)
 {
-    GKeyFile *      keyfile           = NULL;
-    gs_unref_object NMConnection *con = NULL;
-    NMSettingTeam *               s_team;
+    GKeyFile                     *keyfile = NULL;
+    gs_unref_object NMConnection *con     = NULL;
+    NMSettingTeam                *s_team;
 
     con = nmtst_create_connection_from_keyfile("[connection]\n"
                                                "type=team\n"
@@ -671,9 +673,9 @@ test_team_conf_read_valid(void)
 static void
 test_team_conf_read_invalid(void)
 {
-    GKeyFile *      keyfile           = NULL;
-    gs_unref_object NMConnection *con = NULL;
-    NMSettingTeam *               s_team;
+    GKeyFile                     *keyfile = NULL;
+    gs_unref_object NMConnection *con     = NULL;
+    NMSettingTeam                *s_team;
 
     if (!nm_json_vt()) {
         g_test_skip("team test requires JSON validation");
@@ -701,8 +703,8 @@ static void
 test_user_1(void)
 {
     nm_auto_unref_keyfile GKeyFile *keyfile = NULL;
-    gs_unref_object NMConnection *con       = NULL;
-    NMSettingUser *               s_user;
+    gs_unref_object NMConnection   *con     = NULL;
+    NMSettingUser                  *s_user;
 
     con = nmtst_create_connection_from_keyfile("[connection]\n"
                                                "id=t\n"
@@ -728,7 +730,7 @@ test_user_1(void)
 #define _USER_SET_DATA(s_user, key, val)                                      \
     G_STMT_START                                                              \
     {                                                                         \
-        GError * _error = NULL;                                               \
+        GError  *_error = NULL;                                               \
         gboolean _success;                                                    \
                                                                               \
         _success = nm_setting_user_set_data((s_user), (key), (val), &_error); \
@@ -771,8 +773,8 @@ static void
 test_vpn_1(void)
 {
     nm_auto_unref_keyfile GKeyFile *keyfile = NULL;
-    gs_unref_object NMConnection *con       = NULL;
-    NMSettingVpn *                s_vpn;
+    gs_unref_object NMConnection   *con     = NULL;
+    NMSettingVpn                   *s_vpn;
 
     con = nmtst_create_connection_from_keyfile("[connection]\n"
                                                "id=t\n"
@@ -797,19 +799,19 @@ static void
 test_bridge_vlans(void)
 {
     nm_auto_unref_keyfile GKeyFile *keyfile = NULL;
-    gs_unref_object NMConnection *con       = NULL;
-    NMSettingBridge *             s_bridge;
-    NMBridgeVlan *                vlan;
-    guint16                       vid, vid_end;
+    gs_unref_object NMConnection   *con     = NULL;
+    NMSettingBridge                *s_bridge;
+    NMBridgeVlan                   *vlan;
+    guint16                         vid, vid_end;
 
     con      = nmtst_create_connection_from_keyfile("[connection]\n"
-                                               "id=t\n"
-                                               "type=bridge\n"
-                                               "interface-name=br4\n"
-                                               "\n"
-                                               "[bridge]\n"
-                                               "vlans=900 ,  1 pvid  untagged, 100-123 untagged\n"
-                                               "",
+                                                    "id=t\n"
+                                                    "type=bridge\n"
+                                                    "interface-name=br4\n"
+                                                    "\n"
+                                                    "[bridge]\n"
+                                                    "vlans=900 ,  1 pvid  untagged, 100-123 untagged\n"
+                                                    "",
                                                "/test_bridge_port/vlans");
     s_bridge = NM_SETTING_BRIDGE(nm_connection_get_setting(con, NM_TYPE_SETTING_BRIDGE));
     g_assert(s_bridge);
@@ -846,21 +848,21 @@ static void
 test_bridge_port_vlans(void)
 {
     nm_auto_unref_keyfile GKeyFile *keyfile = NULL;
-    gs_unref_object NMConnection *con       = NULL;
-    NMSettingBridgePort *         s_port;
-    NMBridgeVlan *                vlan;
-    guint16                       vid_start, vid_end;
+    gs_unref_object NMConnection   *con     = NULL;
+    NMSettingBridgePort            *s_port;
+    NMBridgeVlan                   *vlan;
+    guint16                         vid_start, vid_end;
 
     con    = nmtst_create_connection_from_keyfile("[connection]\n"
-                                               "id=t\n"
-                                               "type=dummy\n"
-                                               "interface-name=dummy1\n"
-                                               "master=br0\n"
-                                               "slave-type=bridge\n"
-                                               "\n"
-                                               "[bridge-port]\n"
-                                               "vlans=4094 pvid , 10-20 untagged\n"
-                                               "",
+                                                  "id=t\n"
+                                                  "type=dummy\n"
+                                                  "interface-name=dummy1\n"
+                                                  "master=br0\n"
+                                                  "slave-type=bridge\n"
+                                                  "\n"
+                                                  "[bridge-port]\n"
+                                                  "vlans=4094 pvid , 10-20 untagged\n"
+                                                  "",
                                                "/test_bridge_port/vlans");
     s_port = NM_SETTING_BRIDGE_PORT(nm_connection_get_setting(con, NM_TYPE_SETTING_BRIDGE_PORT));
     g_assert(s_port);
@@ -887,6 +889,100 @@ test_bridge_port_vlans(void)
 
 /*****************************************************************************/
 
+typedef struct {
+    bool  expect;
+    guint n_calls;
+} InvalidOptionWriteData;
+
+static gboolean
+_invalid_option_write_handler(NMConnection         *connection,
+                              GKeyFile             *keyfile,
+                              NMKeyfileHandlerType  handler_type,
+                              NMKeyfileHandlerData *handler_data,
+                              void                 *user_data)
+{
+    InvalidOptionWriteData *data = user_data;
+    const char             *message;
+    NMKeyfileWarnSeverity   severity;
+
+    g_assert(data);
+    g_assert(data->expect);
+
+    g_assert(data->n_calls == 0);
+    data->n_calls++;
+
+    switch (handler_type) {
+    case NM_KEYFILE_HANDLER_TYPE_WARN:
+        nm_keyfile_handler_data_warn_get(handler_data, &message, &severity);
+        g_assert(message && strstr(message, "ethtool.bogus"));
+        break;
+    default:
+        g_assert_not_reached();
+    }
+
+    return TRUE;
+}
+
+static void
+test_invalid_option(void)
+{
+    gs_unref_object NMConnection   *con = NULL;
+    NMSetting                      *s_ethtool;
+    nm_auto_unref_keyfile GKeyFile *kf    = NULL;
+    gs_free_error GError           *error = NULL;
+    InvalidOptionWriteData          data;
+
+    con = nmtst_create_minimal_connection("test invalid option",
+                                          NULL,
+                                          NM_SETTING_WIRED_SETTING_NAME,
+                                          NULL);
+
+    s_ethtool = nm_setting_ethtool_new();
+
+    nm_connection_add_setting(con, s_ethtool);
+
+    nm_setting_option_set_boolean(s_ethtool, NM_ETHTOOL_OPTNAME_PAUSE_RX, TRUE);
+
+    data = (InvalidOptionWriteData){};
+    kf   = nm_keyfile_write(con,
+                          NM_KEYFILE_HANDLER_FLAGS_NONE,
+                          _invalid_option_write_handler,
+                          &data,
+                          nmtst_get_rand_bool() ? &error : NULL);
+    nmtst_assert_success(kf, error);
+    nm_clear_pointer(&kf, g_key_file_unref);
+
+    nmtst_connection_normalize(con);
+
+    nmtst_assert_connection_verifies_without_normalization(con);
+
+    data = (InvalidOptionWriteData){};
+    kf   = nm_keyfile_write(con,
+                          NM_KEYFILE_HANDLER_FLAGS_NONE,
+                          _invalid_option_write_handler,
+                          &data,
+                          nmtst_get_rand_bool() ? &error : NULL);
+    nmtst_assert_success(kf, error);
+    nm_clear_pointer(&kf, g_key_file_unref);
+
+    nm_setting_option_set(s_ethtool, "bogus", g_variant_new_int64(0));
+
+    data = (InvalidOptionWriteData){
+        .expect = TRUE,
+    };
+    kf = nm_keyfile_write(con,
+                          NM_KEYFILE_HANDLER_FLAGS_NONE,
+                          _invalid_option_write_handler,
+                          &data,
+                          nmtst_get_rand_bool() ? &error : NULL);
+    nmtst_assert_success(kf, error);
+    nm_clear_pointer(&kf, g_key_file_unref);
+
+    g_assert_cmpint(data.n_calls, ==, 1);
+}
+
+/*****************************************************************************/
+
 NMTST_DEFINE();
 
 int
@@ -904,6 +1000,7 @@ main(int argc, char **argv)
     g_test_add_func("/core/keyfile/test_vpn/1", test_vpn_1);
     g_test_add_func("/core/keyfile/bridge/vlans", test_bridge_vlans);
     g_test_add_func("/core/keyfile/bridge-port/vlans", test_bridge_port_vlans);
+    g_test_add_func("/core/keyfile/invalid-option", test_invalid_option);
 
     return g_test_run();
 }

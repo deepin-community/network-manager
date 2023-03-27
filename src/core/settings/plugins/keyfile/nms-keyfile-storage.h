@@ -14,7 +14,7 @@
 
 #define NMS_TYPE_KEYFILE_STORAGE (nms_keyfile_storage_get_type())
 #define NMS_KEYFILE_STORAGE(obj) \
-    (G_TYPE_CHECK_INSTANCE_CAST((obj), NMS_TYPE_KEYFILE_STORAGE, NMSKeyfileStorage))
+    (_NM_G_TYPE_CHECK_INSTANCE_CAST((obj), NMS_TYPE_KEYFILE_STORAGE, NMSKeyfileStorage))
 #define NMS_KEYFILE_STORAGE_CLASS(klass) \
     (G_TYPE_CHECK_CLASS_CAST((klass), NMS_TYPE_KEYFILE_STORAGE, NMSKeyfileStorageClass))
 #define NMS_IS_KEYFILE_STORAGE(obj) (G_TYPE_CHECK_INSTANCE_TYPE((obj), NMS_TYPE_KEYFILE_STORAGE))
@@ -106,22 +106,22 @@ GType nms_keyfile_storage_get_type(void);
 struct _NMSKeyfilePlugin;
 
 NMSKeyfileStorage *nms_keyfile_storage_new_tombstone(struct _NMSKeyfilePlugin *self,
-                                                     const char *              uuid,
-                                                     const char *              filename,
+                                                     const char               *uuid,
+                                                     const char               *filename,
                                                      NMSKeyfileStorageType     storage_type,
-                                                     const char *              shadowed_storage);
+                                                     const char               *shadowed_storage);
 
 NMSKeyfileStorage *
 nms_keyfile_storage_new_connection(struct _NMSKeyfilePlugin *self,
-                                   NMConnection *            connection_take /* pass reference */,
-                                   const char *              filename,
+                                   NMConnection             *connection_take /* pass reference */,
+                                   const char               *filename,
                                    NMSKeyfileStorageType     storage_type,
                                    NMTernary                 is_nm_generated_opt,
                                    NMTernary                 is_volatile_opt,
                                    NMTernary                 is_external_opt,
-                                   const char *              shadowed_storage,
+                                   const char               *shadowed_storage,
                                    NMTernary                 shadowed_owned_opt,
-                                   const struct timespec *   stat_mtime);
+                                   const struct timespec    *stat_mtime);
 
 void nms_keyfile_storage_destroy(NMSKeyfileStorage *storage);
 
@@ -204,7 +204,7 @@ nm_settings_storage_is_meta_data_alive(const NMSettingsStorage *storage)
 
 static inline const char *
 nm_settings_storage_get_shadowed_storage(const NMSettingsStorage *storage,
-                                         gboolean *               out_shadowed_owned)
+                                         gboolean                *out_shadowed_owned)
 {
     if (NMS_IS_KEYFILE_STORAGE(storage)) {
         const NMSKeyfileStorage *self = (const NMSKeyfileStorage *) storage;
@@ -248,7 +248,7 @@ nm_settings_storage_get_filename_for_shadowed_storage(const NMSettingsStorage *s
 
 enum _NMSettingsConnectionIntFlags;
 
-void nm_settings_storage_load_sett_flags(NMSettingsStorage *                 self,
+void nm_settings_storage_load_sett_flags(NMSettingsStorage                  *self,
                                          enum _NMSettingsConnectionIntFlags *sett_flags,
                                          enum _NMSettingsConnectionIntFlags *sett_mask);
 

@@ -106,7 +106,7 @@ test_client_meta_check(void)
         g_assert((!!info->valid_parts) == is_base_type);
 
         if (info->valid_parts) {
-            gsize              i, l;
+            gsize                          i, l;
             gs_unref_hashtable GHashTable *dup = g_hash_table_new(nm_direct_hash, NULL);
 
             l = NM_PTRARRAY_LEN(info->valid_parts);
@@ -161,15 +161,15 @@ test_client_meta_check(void)
 static void
 test_client_import_wireguard_test0(void)
 {
-    gs_unref_object NMConnection *connection;
-    NMSettingWireGuard *          s_wg;
-    NMSettingIPConfig *           s_ip4;
-    NMSettingIPConfig *           s_ip6;
-    NMWireGuardPeer *             peer;
-    gs_free_error GError *error = NULL;
+    gs_unref_object NMConnection *connection = NULL;
+    NMSettingWireGuard           *s_wg;
+    NMSettingIPConfig            *s_ip4;
+    NMSettingIPConfig            *s_ip6;
+    NMWireGuardPeer              *peer;
+    gs_free_error GError         *error = NULL;
 
     connection =
-        nm_vpn_wireguard_import(NM_BUILD_SRCDIR "/src/libnmc-setting/tests/wg-test0.conf", &error);
+        nm_conn_wireguard_import(NM_BUILD_SRCDIR "/src/libnmc-setting/tests/wg-test0.conf", &error);
 
     g_assert_no_error(error);
 
@@ -231,7 +231,7 @@ test_client_import_wireguard_test1(void)
 {
     gs_free_error GError *error = NULL;
 
-    nm_vpn_wireguard_import(NM_BUILD_SRCDIR "/src/libnmc-setting/tests/wg-test1.conf", &error);
+    nm_conn_wireguard_import(NM_BUILD_SRCDIR "/src/libnmc-setting/tests/wg-test1.conf", &error);
     g_assert_error(error, NM_UTILS_ERROR, NM_UTILS_ERROR_INVALID_ARGUMENT);
     g_assert(g_str_has_prefix(error->message, "invalid secret 'PrivateKey'"));
     g_assert(g_str_has_suffix(error->message, "wg-test1.conf:2"));
@@ -242,7 +242,7 @@ test_client_import_wireguard_test2(void)
 {
     gs_free_error GError *error = NULL;
 
-    nm_vpn_wireguard_import(NM_BUILD_SRCDIR "/src/libnmc-setting/tests/wg-test2.conf", &error);
+    nm_conn_wireguard_import(NM_BUILD_SRCDIR "/src/libnmc-setting/tests/wg-test2.conf", &error);
 
     g_assert_error(error, NM_UTILS_ERROR, NM_UTILS_ERROR_INVALID_ARGUMENT);
     g_assert(g_str_has_prefix(error->message, "unrecognized line at"));
@@ -254,7 +254,7 @@ test_client_import_wireguard_test3(void)
 {
     gs_free_error GError *error = NULL;
 
-    nm_vpn_wireguard_import(NM_BUILD_SRCDIR "/src/libnmc-setting/tests/wg-test3.conf", &error);
+    nm_conn_wireguard_import(NM_BUILD_SRCDIR "/src/libnmc-setting/tests/wg-test3.conf", &error);
     g_assert_error(error, NM_UTILS_ERROR, NM_UTILS_ERROR_INVALID_ARGUMENT);
     g_assert(g_str_has_prefix(error->message, "invalid value for 'ListenPort'"));
     g_assert(g_str_has_suffix(error->message, "wg-test3.conf:3"));
@@ -265,54 +265,54 @@ test_client_import_wireguard_missing(void)
 {
     gs_free_error GError *error = NULL;
 
-    nm_vpn_wireguard_import(NM_BUILD_SRCDIR "/src/libnmc-setting/tests/wg-missing.conf", &error);
+    nm_conn_wireguard_import(NM_BUILD_SRCDIR "/src/libnmc-setting/tests/wg-missing.conf", &error);
     g_assert_error(error, G_FILE_ERROR, G_FILE_ERROR_NOENT);
 }
 
 /*****************************************************************************/
 
-#define _do_test_parse_passwd_file(contents, success, exp_error_line, ...)                   \
-    G_STMT_START                                                                             \
-    {                                                                                        \
-        static const NMUtilsNamedValue _values[] = {__VA_ARGS__};                            \
-        gs_free char *                 _contents = g_strndup(contents, NM_STRLEN(contents)); \
-        gs_unref_hashtable GHashTable *_secrets  = NULL;                                     \
-        gs_free_error GError *_local             = NULL;                                     \
-        gssize                _error_line;                                                   \
-        GError **             _p_local        = nmtst_get_rand_bool() ? &_local : NULL;      \
-        gssize *              _p_error_line   = nmtst_get_rand_bool() ? &_error_line : NULL; \
-        gboolean              _success        = !!(success);                                 \
-        gssize                _exp_error_line = (exp_error_line);                            \
-        int                   _i;                                                            \
-                                                                                             \
-        g_assert(_success || (G_N_ELEMENTS(_values) == 0));                                  \
-                                                                                             \
-        _secrets = nmc_utils_parse_passwd_file(_contents, _p_error_line, _p_local);          \
-                                                                                             \
-        g_assert(_success == (!!_secrets));                                                  \
-        if (!_success) {                                                                     \
-            if (_p_error_line)                                                               \
-                g_assert_cmpint(_exp_error_line, ==, *_p_error_line);                        \
-            if (_p_local)                                                                    \
-                g_assert(_local);                                                            \
-        } else {                                                                             \
-            if (_p_error_line)                                                               \
-                g_assert_cmpint(-1, ==, *_p_error_line);                                     \
-            g_assert(!_local);                                                               \
-                                                                                             \
-            for (_i = 0; _i < (int) G_N_ELEMENTS(_values); _i++) {                           \
-                const NMUtilsNamedValue *_n = &_values[_i];                                  \
-                const char *             _v;                                                 \
-                                                                                             \
-                _v = g_hash_table_lookup(_secrets, _n->name);                                \
-                if (!_v)                                                                     \
-                    g_error("cannot find key \"%s\"", _n->name);                             \
-                g_assert_cmpstr(_v, ==, _n->value_str);                                      \
-            }                                                                                \
-                                                                                             \
-            g_assert_cmpint(g_hash_table_size(_secrets), ==, G_N_ELEMENTS(_values));         \
-        }                                                                                    \
-    }                                                                                        \
+#define _do_test_parse_passwd_file(contents, success, exp_error_line, ...)                          \
+    G_STMT_START                                                                                    \
+    {                                                                                               \
+        static const NMUtilsNamedValue _values[] = {__VA_ARGS__};                                   \
+        gs_free char                  *_contents = g_strndup(contents, NM_STRLEN(contents));        \
+        gs_unref_hashtable GHashTable *_secrets  = NULL;                                            \
+        gs_free_error GError          *_local    = NULL;                                            \
+        gssize                         _error_line;                                                 \
+        GError                       **_p_local      = nmtst_get_rand_bool() ? &_local : NULL;      \
+        gssize                        *_p_error_line = nmtst_get_rand_bool() ? &_error_line : NULL; \
+        gboolean                       _success      = !!(success);                                 \
+        gssize                         _exp_error_line = (exp_error_line);                          \
+        int                            _i;                                                          \
+                                                                                                    \
+        g_assert(_success || (G_N_ELEMENTS(_values) == 0));                                         \
+                                                                                                    \
+        _secrets = nmc_utils_parse_passwd_file(_contents, _p_error_line, _p_local);                 \
+                                                                                                    \
+        g_assert(_success == (!!_secrets));                                                         \
+        if (!_success) {                                                                            \
+            if (_p_error_line)                                                                      \
+                g_assert_cmpint(_exp_error_line, ==, *_p_error_line);                               \
+            if (_p_local)                                                                           \
+                g_assert(_local);                                                                   \
+        } else {                                                                                    \
+            if (_p_error_line)                                                                      \
+                g_assert_cmpint(-1, ==, *_p_error_line);                                            \
+            g_assert(!_local);                                                                      \
+                                                                                                    \
+            for (_i = 0; _i < (int) G_N_ELEMENTS(_values); _i++) {                                  \
+                const NMUtilsNamedValue *_n = &_values[_i];                                         \
+                const char              *_v;                                                        \
+                                                                                                    \
+                _v = g_hash_table_lookup(_secrets, _n->name);                                       \
+                if (!_v)                                                                            \
+                    g_error("cannot find key \"%s\"", _n->name);                                    \
+                g_assert_cmpstr(_v, ==, _n->value_str);                                             \
+            }                                                                                       \
+                                                                                                    \
+            g_assert_cmpint(g_hash_table_size(_secrets), ==, G_N_ELEMENTS(_values));                \
+        }                                                                                           \
+    }                                                                                               \
     G_STMT_END
 
 #define _do_test_parse_passwd_file_bad(contents, exp_error_line) \

@@ -10,7 +10,8 @@
 #include "nm-active-connection.h"
 
 #define NM_TYPE_ACT_REQUEST (nm_act_request_get_type())
-#define NM_ACT_REQUEST(obj) (G_TYPE_CHECK_INSTANCE_CAST((obj), NM_TYPE_ACT_REQUEST, NMActRequest))
+#define NM_ACT_REQUEST(obj) \
+    (_NM_G_TYPE_CHECK_INSTANCE_CAST((obj), NM_TYPE_ACT_REQUEST, NMActRequest))
 #define NM_ACT_REQUEST_CLASS(klass) \
     (G_TYPE_CHECK_CLASS_CAST((klass), NM_TYPE_ACT_REQUEST, NMActRequestClass))
 #define NM_IS_ACT_REQUEST(obj)         (G_TYPE_CHECK_INSTANCE_TYPE((obj), NM_TYPE_ACT_REQUEST))
@@ -23,14 +24,14 @@ typedef struct _NMActRequestGetSecretsCallId NMActRequestGetSecretsCallId;
 
 GType nm_act_request_get_type(void);
 
-NMActRequest *nm_act_request_new(NMSettingsConnection * settings_connection,
-                                 NMConnection *         applied_connection,
-                                 const char *           specific_object,
-                                 NMAuthSubject *        subject,
+NMActRequest *nm_act_request_new(NMSettingsConnection  *settings_connection,
+                                 NMConnection          *applied_connection,
+                                 const char            *specific_object,
+                                 NMAuthSubject         *subject,
                                  NMActivationType       activation_type,
                                  NMActivationReason     activation_reason,
                                  NMActivationStateFlags initial_state_flags,
-                                 NMDevice *             device);
+                                 NMDevice              *device);
 
 NMSettingsConnection *nm_act_request_get_settings_connection(NMActRequest *req);
 
@@ -38,27 +39,19 @@ NMConnection *nm_act_request_get_applied_connection(NMActRequest *req);
 
 /*****************************************************************************/
 
-struct _NMFirewallConfig;
-
-struct _NMFirewallConfig *nm_act_request_get_shared(NMActRequest *req);
-
-void nm_act_request_set_shared(NMActRequest *req, struct _NMFirewallConfig *rules);
-
-/*****************************************************************************/
-
 /* Secrets handling */
 
-typedef void (*NMActRequestSecretsFunc)(NMActRequest *                req,
+typedef void (*NMActRequestSecretsFunc)(NMActRequest                 *req,
                                         NMActRequestGetSecretsCallId *call_id,
-                                        NMSettingsConnection *        connection,
-                                        GError *                      error,
+                                        NMSettingsConnection         *connection,
+                                        GError                       *error,
                                         gpointer                      user_data);
 
-NMActRequestGetSecretsCallId *nm_act_request_get_secrets(NMActRequest *               req,
+NMActRequestGetSecretsCallId *nm_act_request_get_secrets(NMActRequest                *req,
                                                          gboolean                     take_ref,
-                                                         const char *                 setting_name,
+                                                         const char                  *setting_name,
                                                          NMSecretAgentGetSecretsFlags flags,
-                                                         const char *const *          hints,
+                                                         const char *const           *hints,
                                                          NMActRequestSecretsFunc      callback,
                                                          gpointer callback_data);
 

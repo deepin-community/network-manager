@@ -7,7 +7,7 @@
 #define __NM_DEVICE_OLPC_MESH_H__
 
 #if !defined(__NETWORKMANAGER_H_INSIDE__) && !defined(NETWORKMANAGER_COMPILATION)
-    #error "Only <NetworkManager.h> can be included directly."
+#error "Only <NetworkManager.h> can be included directly."
 #endif
 
 #include "nm-device.h"
@@ -32,6 +32,7 @@ G_BEGIN_DECLS
 /**
  * NMDeviceOlpcMesh:
  */
+typedef struct _NMDeviceOlpcMesh      NMDeviceOlpcMesh;
 typedef struct _NMDeviceOlpcMeshClass NMDeviceOlpcMeshClass;
 
 GType nm_device_olpc_mesh_get_type(void);

@@ -19,7 +19,7 @@ NM_GOBJECT_PROPERTIES_DEFINE_BASE(PROP_PARENT, PROP_MODE, PROP_NO_PROMISC, PROP_
 
 typedef struct {
     NMLDBusPropertyO parent;
-    char *           mode;
+    char            *mode;
     bool             no_promisc;
     bool             tap;
 } NMDeviceMacvlanPrivate;
@@ -120,11 +120,11 @@ nm_device_macvlan_get_tap(NMDeviceMacvlan *device)
  * Returns: the hardware address. This is the internal string used by the
  * device, and must not be modified.
  *
- * Since: 1.2
- *
  * This property is not implemented yet, and the function always return NULL.
  *
  * Deprecated: 1.24: Use nm_device_get_hw_address() instead.
+ *
+ * Since: 1.2
  **/
 const char *
 nm_device_macvlan_get_hw_address(NMDeviceMacvlan *device)
@@ -138,7 +138,7 @@ static gboolean
 connection_compatible(NMDevice *device, NMConnection *connection, GError **error)
 {
     NMDeviceMacvlanPrivate *priv = NM_DEVICE_MACVLAN_GET_PRIVATE(device);
-    NMSettingMacvlan *      s_macvlan;
+    NMSettingMacvlan       *s_macvlan;
 
     if (!NM_DEVICE_CLASS(nm_device_macvlan_parent_class)
              ->connection_compatible(device, connection, error))
@@ -227,7 +227,7 @@ const NMLDBusMetaIface _nml_dbus_meta_iface_nm_device_macvlan = NML_DBUS_META_IF
 static void
 nm_device_macvlan_class_init(NMDeviceMacvlanClass *klass)
 {
-    GObjectClass * object_class    = G_OBJECT_CLASS(klass);
+    GObjectClass  *object_class    = G_OBJECT_CLASS(klass);
     NMObjectClass *nm_object_class = NM_OBJECT_CLASS(klass);
     NMDeviceClass *device_class    = NM_DEVICE_CLASS(klass);
 

@@ -9,13 +9,14 @@
 
 #include <netinet/in.h>
 
-#include "nm-setting-connection.h"
-#include "nm-dbus-object.h"
-#include "nm-dbus-interface.h"
-#include "nm-connection.h"
-#include "nm-rfkill-manager.h"
 #include "NetworkManagerUtils.h"
+#include "nm-connection.h"
+#include "nm-dbus-interface.h"
+#include "nm-dbus-object.h"
 #include "nm-device-utils.h"
+#include "nm-l3cfg.h"
+#include "nm-rfkill-manager.h"
+#include "nm-setting-connection.h"
 
 /* Properties */
 #define NM_DEVICE_UDI                   "udi"
@@ -45,6 +46,7 @@
 #define NM_DEVICE_PHYSICAL_PORT_ID      "physical-port-id"
 #define NM_DEVICE_MTU                   "mtu"
 #define NM_DEVICE_HW_ADDRESS            "hw-address"
+#define NM_DEVICE_PORTS                 "ports"
 
 /* "perm-hw-address" is exposed on D-Bus both for NMDeviceEthernet
  * and NMDeviceWifi. */
@@ -63,23 +65,22 @@
 #define NM_DEVICE_SLAVES "slaves" /* partially internal */
 
 #define NM_DEVICE_TYPE_DESC          "type-desc"          /* Internal only */
-#define NM_DEVICE_RFKILL_TYPE        "rfkill-type"        /* Internal only */
 #define NM_DEVICE_IFINDEX            "ifindex"            /* Internal only */
 #define NM_DEVICE_MASTER             "master"             /* Internal only */
 #define NM_DEVICE_HAS_PENDING_ACTION "has-pending-action" /* Internal only */
 
 /* Internal signals */
-#define NM_DEVICE_DNS_LOOKUP_DONE       "dns-lookup-done"
-#define NM_DEVICE_IP4_CONFIG_CHANGED    "ip4-config-changed"
-#define NM_DEVICE_IP6_CONFIG_CHANGED    "ip6-config-changed"
-#define NM_DEVICE_IP6_PREFIX_DELEGATED  "ip6-prefix-delegated"
-#define NM_DEVICE_IP6_SUBNET_NEEDED     "ip6-subnet-needed"
-#define NM_DEVICE_REMOVED               "removed"
-#define NM_DEVICE_RECHECK_AUTO_ACTIVATE "recheck-auto-activate"
-#define NM_DEVICE_RECHECK_ASSUME        "recheck-assume"
-#define NM_DEVICE_STATE_CHANGED         "state-changed"
-#define NM_DEVICE_LINK_INITIALIZED      "link-initialized"
-#define NM_DEVICE_AUTOCONNECT_ALLOWED   "autoconnect-allowed"
+#define NM_DEVICE_DNS_LOOKUP_DONE          "dns-lookup-done"
+#define NM_DEVICE_L3CD_CHANGED             "l3cd-changed"
+#define NM_DEVICE_IP6_PREFIX_DELEGATED     "ip6-prefix-delegated"
+#define NM_DEVICE_IP6_SUBNET_NEEDED        "ip6-subnet-needed"
+#define NM_DEVICE_REMOVED                  "removed"
+#define NM_DEVICE_RECHECK_AUTO_ACTIVATE    "recheck-auto-activate"
+#define NM_DEVICE_RECHECK_ASSUME           "recheck-assume"
+#define NM_DEVICE_STATE_CHANGED            "state-changed"
+#define NM_DEVICE_LINK_INITIALIZED         "link-initialized"
+#define NM_DEVICE_AUTOCONNECT_ALLOWED      "autoconnect-allowed"
+#define NM_DEVICE_PLATFORM_ADDRESS_CHANGED "platform-address-changed"
 
 #define NM_DEVICE_STATISTICS_REFRESH_RATE_MS "refresh-rate-ms"
 #define NM_DEVICE_STATISTICS_TX_BYTES        "tx-bytes"
@@ -90,7 +91,7 @@
 #define NM_DEVICE_INTERFACE_FLAGS  "interface-flags"
 
 #define NM_TYPE_DEVICE            (nm_device_get_type())
-#define NM_DEVICE(obj)            (G_TYPE_CHECK_INSTANCE_CAST((obj), NM_TYPE_DEVICE, NMDevice))
+#define NM_DEVICE(obj)            (_NM_G_TYPE_CHECK_INSTANCE_CAST((obj), NM_TYPE_DEVICE, NMDevice))
 #define NM_DEVICE_CLASS(klass)    (G_TYPE_CHECK_CLASS_CAST((klass), NM_TYPE_DEVICE, NMDeviceClass))
 #define NM_IS_DEVICE(obj)         (G_TYPE_CHECK_INSTANCE_TYPE((obj), NM_TYPE_DEVICE))
 #define NM_IS_DEVICE_CLASS(klass) (G_TYPE_CHECK_CLASS_TYPE((klass), NM_TYPE_DEVICE))
@@ -103,38 +104,38 @@ typedef enum NMActStageReturn NMActStageReturn;
  * a condition, so that adding a flag might make a connection available that would
  * not be available otherwise. Adding a flag should never make a connection
  * not available if it would be available otherwise. */
-typedef enum { /*< skip >*/
-               NM_DEVICE_CHECK_CON_AVAILABLE_NONE = 0,
+typedef enum {
+    NM_DEVICE_CHECK_CON_AVAILABLE_NONE = 0,
 
-               /* since NM_DEVICE_CHECK_CON_AVAILABLE_FOR_USER_REQUEST is a collection of flags with more fine grained
+    /* since NM_DEVICE_CHECK_CON_AVAILABLE_FOR_USER_REQUEST is a collection of flags with more fine grained
      * parts, this flag in general indicates that this is a user-request. */
-               _NM_DEVICE_CHECK_CON_AVAILABLE_FOR_USER_REQUEST = (1L << 0),
+    _NM_DEVICE_CHECK_CON_AVAILABLE_FOR_USER_REQUEST = (1L << 0),
 
-               /* we also consider devices which have no carrier but are still waiting for the driver
+    /* we also consider devices which have no carrier but are still waiting for the driver
      * to detect carrier. Usually, such devices are not yet available, however for a user-request
      * they are. They might fail later if carrier doesn't come. */
-               _NM_DEVICE_CHECK_CON_AVAILABLE_FOR_USER_REQUEST_WAITING_CARRIER = (1L << 1),
+    _NM_DEVICE_CHECK_CON_AVAILABLE_FOR_USER_REQUEST_WAITING_CARRIER = (1L << 1),
 
-               /* usually, a profile is only available if the Wi-Fi AP is in range. For an
+    /* usually, a profile is only available if the Wi-Fi AP is in range. For an
      * explicit user request, we also consider profiles for APs that are not (yet)
      * visible. */
-               _NM_DEVICE_CHECK_CON_AVAILABLE_FOR_USER_REQUEST_IGNORE_AP = (1L << 2),
+    _NM_DEVICE_CHECK_CON_AVAILABLE_FOR_USER_REQUEST_IGNORE_AP = (1L << 2),
 
-               /* a device can be marked as unmanaged for various reasons. Some of these reasons
+    /* a device can be marked as unmanaged for various reasons. Some of these reasons
      * are authoritative, others not. Non-authoritative reasons can be overruled by
      * `nmcli device set $DEVICE managed yes`. Also, for an explicit user activation
      * request we may want to consider the device as managed. This flag makes devices
      * that are unmanaged appear available. */
-               _NM_DEVICE_CHECK_CON_AVAILABLE_FOR_USER_REQUEST_OVERRULE_UNMANAGED = (1L << 3),
+    _NM_DEVICE_CHECK_CON_AVAILABLE_FOR_USER_REQUEST_OVERRULE_UNMANAGED = (1L << 3),
 
-               /* a collection of flags, that are commonly set for an explicit user-request. */
-               NM_DEVICE_CHECK_CON_AVAILABLE_FOR_USER_REQUEST =
-                   _NM_DEVICE_CHECK_CON_AVAILABLE_FOR_USER_REQUEST
-                   | _NM_DEVICE_CHECK_CON_AVAILABLE_FOR_USER_REQUEST_WAITING_CARRIER
-                   | _NM_DEVICE_CHECK_CON_AVAILABLE_FOR_USER_REQUEST_IGNORE_AP
-                   | _NM_DEVICE_CHECK_CON_AVAILABLE_FOR_USER_REQUEST_OVERRULE_UNMANAGED,
+    /* a collection of flags, that are commonly set for an explicit user-request. */
+    NM_DEVICE_CHECK_CON_AVAILABLE_FOR_USER_REQUEST =
+        _NM_DEVICE_CHECK_CON_AVAILABLE_FOR_USER_REQUEST
+        | _NM_DEVICE_CHECK_CON_AVAILABLE_FOR_USER_REQUEST_WAITING_CARRIER
+        | _NM_DEVICE_CHECK_CON_AVAILABLE_FOR_USER_REQUEST_IGNORE_AP
+        | _NM_DEVICE_CHECK_CON_AVAILABLE_FOR_USER_REQUEST_OVERRULE_UNMANAGED,
 
-               NM_DEVICE_CHECK_CON_AVAILABLE_ALL = (1L << 4) - 1,
+    NM_DEVICE_CHECK_CON_AVAILABLE_ALL = (1L << 4) - 1,
 } NMDeviceCheckConAvailableFlags;
 
 struct _NMDevicePrivate;
@@ -147,28 +148,28 @@ struct _NMDevice {
 
 /* The flags have an relaxing meaning, that means, specifying more flags, can make
  * a device appear more available. It can never make a device less available. */
-typedef enum { /*< skip >*/
-               NM_DEVICE_CHECK_DEV_AVAILABLE_NONE = 0,
+typedef enum {
+    NM_DEVICE_CHECK_DEV_AVAILABLE_NONE = 0,
 
-               /* the device is considered available, even if it has no carrier.
+    /* the device is considered available, even if it has no carrier.
      *
      * For various device types (software devices) we ignore carrier based
      * on the type. So, for them, this flag has no effect anyway. */
-               _NM_DEVICE_CHECK_DEV_AVAILABLE_IGNORE_CARRIER = (1L << 0),
+    _NM_DEVICE_CHECK_DEV_AVAILABLE_IGNORE_CARRIER = (1L << 0),
 
-               NM_DEVICE_CHECK_DEV_AVAILABLE_FOR_USER_REQUEST =
-                   _NM_DEVICE_CHECK_DEV_AVAILABLE_IGNORE_CARRIER,
+    NM_DEVICE_CHECK_DEV_AVAILABLE_FOR_USER_REQUEST = _NM_DEVICE_CHECK_DEV_AVAILABLE_IGNORE_CARRIER,
 
-               NM_DEVICE_CHECK_DEV_AVAILABLE_ALL = (1L << 1) - 1,
+    NM_DEVICE_CHECK_DEV_AVAILABLE_ALL = (1L << 1) - 1,
 } NMDeviceCheckDevAvailableFlags;
 
 typedef void (*NMDeviceDeactivateCallback)(NMDevice *self, GError *error, gpointer user_data);
+typedef void (*NMDeviceAttachPortCallback)(NMDevice *self, GError *error, gpointer user_data);
 
 typedef struct _NMDeviceClass {
     NMDBusObjectClass parent;
 
     struct _NMDeviceClass *default_type_description_klass;
-    const char *           default_type_description;
+    const char            *default_type_description;
 
     const char *connection_type_supported;
 
@@ -207,7 +208,11 @@ typedef struct _NMDeviceClass {
 
     bool can_reapply_change_ovs_external_ids : 1;
 
-    void (*state_changed)(NMDevice *          device,
+    bool allow_autoconnect_on_external : 1;
+
+    NMRfkillType rfkill_type : 4;
+
+    void (*state_changed)(NMDevice           *device,
                           NMDeviceState       new_state,
                           NMDeviceState       old_state,
                           NMDeviceStateReason reason);
@@ -231,11 +236,11 @@ typedef struct _NMDeviceClass {
      *
      * Returns: %TRUE on success, %FALSE on error
      */
-    gboolean (*create_and_realize)(NMDevice *             self,
-                                   NMConnection *         connection,
-                                   NMDevice *             parent,
+    gboolean (*create_and_realize)(NMDevice              *self,
+                                   NMConnection          *connection,
+                                   NMDevice              *parent,
                                    const NMPlatformLink **out_plink,
-                                   GError **              error);
+                                   GError               **error);
 
     /**
      * realize_start_notify():
@@ -293,13 +298,13 @@ typedef struct _NMDeviceClass {
      * which emits NM_DEVICE_RECHECK_AUTO_ACTIVATE signal. */
     gboolean (*get_autoconnect_allowed)(NMDevice *self);
 
-    gboolean (*can_auto_connect)(NMDevice *            self,
+    gboolean (*can_auto_connect)(NMDevice             *self,
                                  NMSettingsConnection *sett_conn,
-                                 char **               specific_object);
+                                 char                **specific_object);
 
-    guint32 (*get_configured_mtu)(NMDevice *         self,
+    guint32 (*get_configured_mtu)(NMDevice          *self,
                                   NMDeviceMtuSource *out_source,
-                                  gboolean *         out_force);
+                                  gboolean          *out_force);
 
     /* allow the subclass to overwrite the routing table. This is mainly useful
      * to change from partial mode (route-table=0) to full-sync mode (route-table=254). */
@@ -314,9 +319,9 @@ typedef struct _NMDeviceClass {
      * only the devices type and characteristics.  Does not use any live
      * network information like Wi-Fi scan lists etc.
      */
-    gboolean (*check_connection_compatible)(NMDevice *    self,
+    gboolean (*check_connection_compatible)(NMDevice     *self,
                                             NMConnection *connection,
-                                            GError **     error);
+                                            GError      **error);
 
     /* Checks whether the connection is likely available to be activated,
      * including any live network information like scan lists.  The connection
@@ -329,33 +334,28 @@ typedef struct _NMDeviceClass {
      *
      * Specifying @specific_object can only reduce the availability of a connection.
      */
-    gboolean (*check_connection_available)(NMDevice *                     self,
-                                           NMConnection *                 connection,
+    gboolean (*check_connection_available)(NMDevice                      *self,
+                                           NMConnection                  *connection,
                                            NMDeviceCheckConAvailableFlags flags,
-                                           const char *                   specific_object,
-                                           GError **                      error);
+                                           const char                    *specific_object,
+                                           GError                       **error);
 
-    gboolean (*complete_connection)(NMDevice *           self,
-                                    NMConnection *       connection,
-                                    const char *         specific_object,
+    gboolean (*complete_connection)(NMDevice            *self,
+                                    NMConnection        *connection,
+                                    const char          *specific_object,
                                     NMConnection *const *existing_connections,
-                                    GError **            error);
+                                    GError             **error);
 
     NMActStageReturn (*act_stage1_prepare)(NMDevice *self, NMDeviceStateReason *out_failure_reason);
     NMActStageReturn (*act_stage2_config)(NMDevice *self, NMDeviceStateReason *out_failure_reason);
-    NMActStageReturn (*act_stage3_ip_config_start)(NMDevice *           self,
-                                                   int                  addr_family,
-                                                   gpointer *           out_config,
-                                                   NMDeviceStateReason *out_failure_reason);
-    NMActStageReturn (*act_stage4_ip_config_timeout)(NMDevice *           self,
-                                                     int                  addr_family,
-                                                     NMDeviceStateReason *out_failure_reason);
+    void (*act_stage3_ip_config)(NMDevice *self, int addr_family);
+    gboolean (*ready_for_ip_config)(NMDevice *self, gboolean is_manual);
 
-    void (*ip4_config_pre_commit)(NMDevice *self, NMIP4Config *config);
+    const char *(*get_ip_method_auto)(NMDevice *self, int addr_family);
 
     /* Async deactivating (in the DEACTIVATING phase) */
-    void (*deactivate_async)(NMDevice *                 self,
-                             GCancellable *             cancellable,
+    void (*deactivate_async)(NMDevice                  *self,
+                             GCancellable              *cancellable,
                              NMDeviceDeactivateCallback callback,
                              gpointer                   user_data);
 
@@ -371,17 +371,23 @@ typedef struct _NMDeviceClass {
     /* Update the connection with currently configured L2 settings */
     void (*update_connection)(NMDevice *device, NMConnection *connection);
 
-    gboolean (*master_update_slave_connection)(NMDevice *    self,
-                                               NMDevice *    slave,
+    gboolean (*master_update_slave_connection)(NMDevice     *self,
+                                               NMDevice     *slave,
                                                NMConnection *connection,
-                                               GError **     error);
+                                               GError      **error);
 
-    gboolean (*enslave_slave)(NMDevice *    self,
-                              NMDevice *    slave,
-                              NMConnection *connection,
-                              gboolean      configure);
-
-    void (*release_slave)(NMDevice *self, NMDevice *slave, gboolean configure);
+    /* Attachs a port asynchronously. Returns TRUE/FALSE on immediate
+     * success/error; in such cases, the callback is not invoked. If the
+     * action couldn't be completed immediately, DEFAULT is returned and
+     * the callback will always be invoked asynchronously. */
+    NMTernary (*attach_port)(NMDevice                  *self,
+                             NMDevice                  *port,
+                             NMConnection              *connection,
+                             gboolean                   configure,
+                             GCancellable              *cancellable,
+                             NMDeviceAttachPortCallback callback,
+                             gpointer                   user_data);
+    void (*detach_port)(NMDevice *self, NMDevice *port, gboolean configure);
 
     void (*parent_changed_notify)(NMDevice *self,
                                   int       old_ifindex,
@@ -395,12 +401,12 @@ typedef struct _NMDeviceClass {
 
     gboolean (*unmanaged_on_quit)(NMDevice *self);
 
-    gboolean (*can_reapply_change)(NMDevice *  self,
+    gboolean (*can_reapply_change)(NMDevice   *self,
                                    const char *setting_name,
-                                   NMSetting * s_old,
-                                   NMSetting * s_new,
+                                   NMSetting  *s_old,
+                                   NMSetting  *s_new,
                                    GHashTable *diffs,
-                                   GError **   error);
+                                   GError    **error);
 
     void (*reapply_connection)(NMDevice *self, NMConnection *con_old, NMConnection *con_new);
 
@@ -413,14 +419,13 @@ typedef struct _NMDeviceClass {
     gboolean (*set_platform_mtu)(NMDevice *self, guint32 mtu);
 
     const char *(*get_dhcp_anycast_address)(NMDevice *self);
-
 } NMDeviceClass;
 
 GType nm_device_get_type(void);
 
 struct _NMDedupMultiIndex *nm_device_get_multi_index(NMDevice *self);
-NMNetns *                  nm_device_get_netns(NMDevice *self);
-NMPlatform *               nm_device_get_platform(NMDevice *self);
+NMNetns                   *nm_device_get_netns(NMDevice *self);
+NMPlatform                *nm_device_get_platform(NMDevice *self);
 
 const char *nm_device_get_udi(NMDevice *dev);
 const char *nm_device_get_iface(NMDevice *dev);
@@ -436,16 +441,18 @@ _nm_device_get_iface(NMDevice *device)
 int          nm_device_get_ifindex(NMDevice *dev);
 gboolean     nm_device_is_software(NMDevice *dev);
 gboolean     nm_device_is_real(NMDevice *dev);
-const char * nm_device_get_ip_iface(NMDevice *dev);
-const char * nm_device_get_ip_iface_from_platform(NMDevice *dev);
+const char  *nm_device_get_ip_iface(NMDevice *dev);
+const char  *nm_device_get_ip_iface_from_platform(NMDevice *dev);
 int          nm_device_get_ip_ifindex(const NMDevice *dev);
-const char * nm_device_get_driver(NMDevice *dev);
-const char * nm_device_get_driver_version(NMDevice *dev);
-const char * nm_device_get_type_desc(NMDevice *dev);
-const char * nm_device_get_type_description(NMDevice *dev);
+const char  *nm_device_get_driver(NMDevice *dev);
+const char  *nm_device_get_driver_version(NMDevice *dev);
+const char  *nm_device_get_type_desc(NMDevice *dev);
+const char  *nm_device_get_type_description(NMDevice *dev);
 NMDeviceType nm_device_get_device_type(NMDevice *dev);
 NMLinkType   nm_device_get_link_type(NMDevice *dev);
 NMMetered    nm_device_get_metered(NMDevice *dev);
+
+void nm_device_activation_state_set_preserve_external_ports(NMDevice *self, gboolean flag);
 
 guint32 nm_device_get_route_table(NMDevice *self, int addr_family);
 guint32 nm_device_get_route_metric(NMDevice *dev, int addr_family);
@@ -459,16 +466,13 @@ const char *nm_device_get_permanent_hw_address_full(NMDevice *self,
                                                     gboolean *out_is_fake);
 const char *nm_device_get_initial_hw_address(NMDevice *dev);
 
-NMProxyConfig *nm_device_get_proxy_config(NMDevice *dev);
-
 NMDhcpConfig *nm_device_get_dhcp_config(NMDevice *dev, int addr_family);
-NMIP4Config * nm_device_get_ip4_config(NMDevice *dev);
-void          nm_device_replace_vpn4_config(NMDevice *dev, NMIP4Config *old, NMIP4Config *config);
 
-NMIP6Config *nm_device_get_ip6_config(NMDevice *dev);
-void         nm_device_replace_vpn6_config(NMDevice *dev, NMIP6Config *old, NMIP6Config *config);
+NML3Cfg *nm_device_get_l3cfg(NMDevice *self);
 
-void nm_device_capture_initial_config(NMDevice *dev);
+const NML3ConfigData *nm_device_get_l3cd(NMDevice *self, gboolean get_commited);
+
+void nm_device_l3cfg_commit(NMDevice *self, NML3CfgCommitType commit_type, gboolean commit_sync);
 
 int       nm_device_parent_get_ifindex(NMDevice *dev);
 NMDevice *nm_device_parent_get_device(NMDevice *dev);
@@ -477,7 +481,7 @@ gboolean  nm_device_parent_notify_changed(NMDevice *self,
                                           NMDevice *change_candidate,
                                           gboolean  device_removed);
 
-const char *nm_device_parent_find_for_connection(NMDevice *  self,
+const char *nm_device_parent_find_for_connection(NMDevice   *self,
                                                  const char *current_setting_parent);
 
 /* Master */
@@ -486,11 +490,11 @@ gboolean nm_device_is_master(NMDevice *dev);
 /* Slave */
 NMDevice *nm_device_get_master(NMDevice *dev);
 
-NMActRequest *         nm_device_get_act_request(NMDevice *dev);
-NMSettingsConnection * nm_device_get_settings_connection(NMDevice *dev);
-NMConnection *         nm_device_get_settings_connection_get_connection(NMDevice *self);
-NMConnection *         nm_device_get_applied_connection(NMDevice *dev);
-gboolean               nm_device_has_unmodified_applied_connection(NMDevice *            self,
+NMActRequest          *nm_device_get_act_request(NMDevice *dev);
+NMSettingsConnection  *nm_device_get_settings_connection(NMDevice *dev);
+NMConnection          *nm_device_get_settings_connection_get_connection(NMDevice *self);
+NMConnection          *nm_device_get_applied_connection(NMDevice *dev);
+gboolean               nm_device_has_unmodified_applied_connection(NMDevice             *self,
                                                                    NMSettingCompareFlags compare_flags);
 NMActivationStateFlags nm_device_get_activation_state_flags(NMDevice *self);
 
@@ -506,21 +510,21 @@ gboolean nm_device_has_carrier(NMDevice *dev);
 NMConnection *nm_device_generate_connection(NMDevice *self,
                                             NMDevice *master,
                                             gboolean *out_maybe_later,
-                                            GError ** error);
+                                            GError  **error);
 
-gboolean nm_device_master_update_slave_connection(NMDevice *    master,
-                                                  NMDevice *    slave,
+gboolean nm_device_master_update_slave_connection(NMDevice     *master,
+                                                  NMDevice     *slave,
                                                   NMConnection *connection,
-                                                  GError **     error);
+                                                  GError      **error);
 
 gboolean
 nm_device_can_auto_connect(NMDevice *self, NMSettingsConnection *sett_conn, char **specific_object);
 
-gboolean nm_device_complete_connection(NMDevice *           device,
-                                       NMConnection *       connection,
-                                       const char *         specific_object,
+gboolean nm_device_complete_connection(NMDevice            *device,
+                                       NMConnection        *connection,
+                                       const char          *specific_object,
                                        NMConnection *const *existing_connections,
-                                       GError **            error);
+                                       GError             **error);
 
 gboolean
 nm_device_check_connection_compatible(NMDevice *device, NMConnection *connection, GError **error);
@@ -542,11 +546,11 @@ gboolean nm_device_get_enabled(NMDevice *device);
 
 void nm_device_set_enabled(NMDevice *device, gboolean enabled);
 
-RfKillType nm_device_get_rfkill_type(NMDevice *device);
+NMRfkillType nm_device_get_rfkill_type(NMDevice *device);
 
 /* IPv6 prefix delegation */
 
-void nm_device_request_ip6_prefixes(NMDevice *self, int needed_prefixes);
+void nm_device_request_ip6_prefixes(NMDevice *self, guint needed_prefixes);
 
 gboolean nm_device_needs_ip6_subnet(NMDevice *self);
 
@@ -559,8 +563,6 @@ void nm_device_copy_ip6_dns_config(NMDevice *self, NMDevice *from_device);
  * @NM_UNMANAGED_NONE: placeholder value
  * @NM_UNMANAGED_SLEEPING: %TRUE when unmanaged because NM is sleeping.
  * @NM_UNMANAGED_QUITTING: %TRUE when unmanaged because NM is shutting down.
- * @NM_UNMANAGED_PARENT: %TRUE when unmanaged due to parent device being unmanaged
- * @NM_UNMANAGED_BY_TYPE: %TRUE for unmanaging device by type, like loopback.
  * @NM_UNMANAGED_PLATFORM_INIT: %TRUE when unmanaged because platform link not
  *   yet initialized. Unrealized device are also unmanaged for this reason.
  * @NM_UNMANAGED_USER_EXPLICIT: %TRUE when unmanaged by explicit user decision
@@ -590,21 +592,19 @@ typedef enum {
      * the device cannot be managed. */
     NM_UNMANAGED_SLEEPING      = (1LL << 0),
     NM_UNMANAGED_QUITTING      = (1LL << 1),
-    NM_UNMANAGED_PARENT        = (1LL << 2),
-    NM_UNMANAGED_BY_TYPE       = (1LL << 3),
-    NM_UNMANAGED_PLATFORM_INIT = (1LL << 4),
-    NM_UNMANAGED_USER_EXPLICIT = (1LL << 5),
-    NM_UNMANAGED_USER_SETTINGS = (1LL << 6),
+    NM_UNMANAGED_PLATFORM_INIT = (1LL << 2),
+    NM_UNMANAGED_USER_EXPLICIT = (1LL << 3),
+    NM_UNMANAGED_USER_SETTINGS = (1LL << 4),
 
     /* These flags can be non-effective and be overwritten
      * by other flags. */
-    NM_UNMANAGED_BY_DEFAULT    = (1LL << 7),
-    NM_UNMANAGED_USER_CONF     = (1LL << 8),
-    NM_UNMANAGED_USER_UDEV     = (1LL << 9),
-    NM_UNMANAGED_EXTERNAL_DOWN = (1LL << 10),
-    NM_UNMANAGED_IS_SLAVE      = (1LL << 11),
+    NM_UNMANAGED_BY_DEFAULT    = (1LL << 5),
+    NM_UNMANAGED_USER_CONF     = (1LL << 6),
+    NM_UNMANAGED_USER_UDEV     = (1LL << 7),
+    NM_UNMANAGED_EXTERNAL_DOWN = (1LL << 8),
+    NM_UNMANAGED_IS_SLAVE      = (1LL << 9),
 
-    NM_UNMANAGED_ALL = ((1LL << 12) - 1),
+    NM_UNMANAGED_ALL = ((1LL << 10) - 1),
 } NMUnmanagedFlags;
 
 typedef enum {
@@ -619,15 +619,15 @@ gboolean         nm_device_get_managed(NMDevice *device, gboolean for_user_reque
 NMUnmanagedFlags nm_device_get_unmanaged_mask(NMDevice *device, NMUnmanagedFlags flag);
 NMUnmanagedFlags nm_device_get_unmanaged_flags(NMDevice *device, NMUnmanagedFlags flag);
 void nm_device_set_unmanaged_flags(NMDevice *device, NMUnmanagedFlags flags, NMUnmanFlagOp set_op);
-void nm_device_set_unmanaged_by_flags(NMDevice *          device,
+void nm_device_set_unmanaged_by_flags(NMDevice           *device,
                                       NMUnmanagedFlags    flags,
                                       NMUnmanFlagOp       set_op,
                                       NMDeviceStateReason reason);
-void nm_device_set_unmanaged_by_flags_queue(NMDevice *          self,
+void nm_device_set_unmanaged_by_flags_queue(NMDevice           *self,
                                             NMUnmanagedFlags    flags,
                                             NMUnmanFlagOp       set_op,
                                             NMDeviceStateReason reason);
-void nm_device_set_unmanaged_by_user_settings(NMDevice *self);
+void nm_device_set_unmanaged_by_user_settings(NMDevice *self, gboolean now);
 void nm_device_set_unmanaged_by_user_udev(NMDevice *self);
 void nm_device_set_unmanaged_by_user_conf(NMDevice *self);
 void nm_device_set_unmanaged_by_quitting(NMDevice *device);
@@ -640,26 +640,26 @@ gboolean nm_device_has_capability(NMDevice *self, NMDeviceCapabilities caps);
 
 /*****************************************************************************/
 
-void nm_device_assume_state_get(NMDevice *   self,
-                                gboolean *   out_assume_state_guess_assume,
+void nm_device_assume_state_get(NMDevice    *self,
+                                gboolean    *out_assume_state_guess_assume,
                                 const char **out_assume_state_connection_uuid);
 void nm_device_assume_state_reset(NMDevice *self);
 
 /*****************************************************************************/
 
-gboolean nm_device_realize_start(NMDevice *            device,
+gboolean nm_device_realize_start(NMDevice             *device,
                                  const NMPlatformLink *plink,
                                  gboolean              assume_state_guess_assume,
-                                 const char *          assume_state_connection_uuid,
+                                 const char           *assume_state_connection_uuid,
                                  gboolean              set_nm_owned,
                                  NMUnmanFlagOp         unmanaged_user_explicit,
-                                 gboolean *            out_compatible,
-                                 GError **             error);
+                                 gboolean             *out_compatible,
+                                 GError              **error);
 void     nm_device_realize_finish(NMDevice *self, const NMPlatformLink *plink);
-gboolean nm_device_create_and_realize(NMDevice *    self,
+gboolean nm_device_create_and_realize(NMDevice     *self,
                                       NMConnection *connection,
-                                      NMDevice *    parent,
-                                      GError **     error);
+                                      NMDevice     *parent,
+                                      GError      **error);
 gboolean nm_device_unrealize(NMDevice *device, gboolean remove_resources, GError **error);
 
 void nm_device_update_from_platform_link(NMDevice *self, const NMPlatformLink *plink);
@@ -685,7 +685,7 @@ typedef enum {
 NMDeviceAutoconnectBlockedFlags
 nm_device_autoconnect_blocked_get(NMDevice *device, NMDeviceAutoconnectBlockedFlags mask);
 
-void nm_device_autoconnect_blocked_set_full(NMDevice *                      device,
+void nm_device_autoconnect_blocked_set_full(NMDevice                       *device,
                                             NMDeviceAutoconnectBlockedFlags mask,
                                             NMDeviceAutoconnectBlockedFlags values);
 
@@ -716,7 +716,7 @@ void nm_device_queue_state(NMDevice *self, NMDeviceState state, NMDeviceStateRea
 
 gboolean nm_device_get_firmware_missing(NMDevice *self);
 
-void nm_device_disconnect_active_connection(NMActiveConnection *          active,
+void nm_device_disconnect_active_connection(NMActiveConnection           *active,
                                             NMDeviceStateReason           device_reason,
                                             NMActiveConnectionStateReason active_reason);
 
@@ -739,11 +739,11 @@ nm_device_has_pending_action(NMDevice *device)
 NMSettingsConnection *
 nm_device_get_best_connection(NMDevice *device, const char *specific_object, GError **error);
 
-gboolean nm_device_check_connection_available(NMDevice *                     device,
-                                              NMConnection *                 connection,
+gboolean nm_device_check_connection_available(NMDevice                      *device,
+                                              NMConnection                  *connection,
                                               NMDeviceCheckConAvailableFlags flags,
-                                              const char *                   specific_object,
-                                              GError **                      error);
+                                              const char                    *specific_object,
+                                              GError                       **error);
 
 void nm_device_notify_availability_maybe_changed(NMDevice *self);
 
@@ -753,44 +753,38 @@ NMConnection *nm_device_new_default_connection(NMDevice *self);
 
 const NMPObject *nm_device_get_best_default_route(NMDevice *self, int addr_family);
 
-void nm_device_spawn_iface_helper(NMDevice *self);
-
 gboolean nm_device_reapply(NMDevice *self, NMConnection *connection, GError **error);
 void     nm_device_reapply_settings_immediately(NMDevice *self);
 
 void nm_device_update_firewall_zone(NMDevice *self);
 void nm_device_update_metered(NMDevice *self);
-void nm_device_reactivate_ip_config(NMDevice *         device,
-                                    int                addr_family,
-                                    NMSettingIPConfig *s_ip_old,
-                                    NMSettingIPConfig *s_ip_new);
 
 gboolean nm_device_update_hw_address(NMDevice *self);
 void     nm_device_update_initial_hw_address(NMDevice *self);
 void     nm_device_update_permanent_hw_address(NMDevice *self, gboolean force_freeze);
-void     nm_device_update_dynamic_ip_setup(NMDevice *self);
+void     nm_device_update_dynamic_ip_setup(NMDevice *self, const char *reason);
 guint    nm_device_get_supplicant_timeout(NMDevice *self);
 
 gboolean nm_device_auth_retries_try_next(NMDevice *self);
 
-gboolean nm_device_hw_addr_get_cloned(NMDevice *    self,
+gboolean nm_device_hw_addr_get_cloned(NMDevice     *self,
                                       NMConnection *connection,
                                       gboolean      is_wifi,
-                                      char **       hwaddr,
-                                      gboolean *    preserve,
-                                      GError **     error);
+                                      char        **hwaddr,
+                                      gboolean     *preserve,
+                                      GError      **error);
 
 typedef struct _NMDeviceConnectivityHandle NMDeviceConnectivityHandle;
 
-typedef void (*NMDeviceConnectivityCallback)(NMDevice *                  self,
+typedef void (*NMDeviceConnectivityCallback)(NMDevice                   *self,
                                              NMDeviceConnectivityHandle *handle,
                                              NMConnectivityState         state,
-                                             GError *                    error,
+                                             GError                     *error,
                                              gpointer                    user_data);
 
 void nm_device_check_connectivity_update_interval(NMDevice *self);
 
-NMDeviceConnectivityHandle *nm_device_check_connectivity(NMDevice *                   self,
+NMDeviceConnectivityHandle *nm_device_check_connectivity(NMDevice                    *self,
                                                          int                          addr_family,
                                                          NMDeviceConnectivityCallback callback,
                                                          gpointer                     user_data);
@@ -805,16 +799,16 @@ typedef void (*NMBtVTableRegisterCallback)(GError *error, gpointer user_data);
 
 struct _NMBtVTableNetworkServer {
     gboolean (*is_available)(const NMBtVTableNetworkServer *vtable,
-                             const char *                   addr,
-                             NMDevice *                     device_accept_busy);
+                             const char                    *addr,
+                             NMDevice                      *device_accept_busy);
 
     gboolean (*register_bridge)(const NMBtVTableNetworkServer *vtable,
-                                const char *                   addr,
-                                NMDevice *                     device,
-                                GCancellable *                 cancellable,
+                                const char                    *addr,
+                                NMDevice                      *device,
+                                GCancellable                  *cancellable,
                                 NMBtVTableRegisterCallback     callback,
                                 gpointer                       callback_user_data,
-                                GError **                      error);
+                                GError                       **error);
     gboolean (*unregister_bridge)(const NMBtVTableNetworkServer *vtable, NMDevice *device);
 };
 
@@ -823,6 +817,8 @@ gboolean nm_device_is_vpn(NMDevice *self);
 const char *
 nm_device_get_hostname_from_dns_lookup(NMDevice *self, int addr_family, gboolean *out_pending);
 
-void nm_device_clear_dns_lookup_data(NMDevice *self);
+void nm_device_clear_dns_lookup_data(NMDevice *self, const char *reason);
+
+gboolean nm_device_get_allow_autoconnect_on_external(NMDevice *self);
 
 #endif /* __NETWORKMANAGER_DEVICE_H__ */

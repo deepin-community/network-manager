@@ -17,7 +17,7 @@
 
 #define NM_TYPE_TEAM_FACTORY (nm_team_factory_get_type())
 #define NM_TEAM_FACTORY(obj) \
-    (G_TYPE_CHECK_INSTANCE_CAST((obj), NM_TYPE_TEAM_FACTORY, NMTeamFactory))
+    (_NM_G_TYPE_CHECK_INSTANCE_CAST((obj), NM_TYPE_TEAM_FACTORY, NMTeamFactory))
 #define NM_TEAM_FACTORY_CLASS(klass) \
     (G_TYPE_CHECK_CLASS_CAST((klass), NM_TYPE_TEAM_FACTORY, NMTeamFactoryClass))
 #define NM_IS_TEAM_FACTORY(obj)         (G_TYPE_CHECK_INSTANCE_TYPE((obj), NM_TYPE_TEAM_FACTORY))
@@ -43,7 +43,7 @@ NM_DEVICE_FACTORY_DECLARE_TYPES(NM_DEVICE_FACTORY_DECLARE_LINK_TYPES(
     NM_LINK_TYPE_TEAM) NM_DEVICE_FACTORY_DECLARE_SETTING_TYPES(NM_SETTING_TEAM_SETTING_NAME))
 
 G_MODULE_EXPORT NMDeviceFactory *
-                nm_device_factory_create(GError **error)
+nm_device_factory_create(GError **error)
 {
     nm_manager_set_capability(NM_MANAGER_GET, NM_CAPABILITY_TEAM);
     return g_object_new(NM_TYPE_TEAM_FACTORY, NULL);
@@ -52,11 +52,11 @@ G_MODULE_EXPORT NMDeviceFactory *
 /*****************************************************************************/
 
 static NMDevice *
-create_device(NMDeviceFactory *     factory,
-              const char *          iface,
+create_device(NMDeviceFactory      *factory,
+              const char           *iface,
               const NMPlatformLink *plink,
-              NMConnection *        connection,
-              gboolean *            out_ignore)
+              NMConnection         *connection,
+              gboolean             *out_ignore)
 {
     return nm_device_team_new(iface);
 }

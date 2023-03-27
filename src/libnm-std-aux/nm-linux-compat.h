@@ -16,10 +16,12 @@
 #include <linux/const.h>
 
 #ifndef __KERNEL_DIV_ROUND_UP
-    #define __KERNEL_DIV_ROUND_UP(n, d) (((n) + (d) -1) / (d))
+#define __KERNEL_DIV_ROUND_UP(n, d) (((n) + (d) -1) / (d))
 #endif
 
 #include "linux-headers/ethtool.h"
 #include "linux-headers/nl802154.h"
+#include "linux-headers/nl80211-vnd-intel.h"
+#include "linux-headers/mptcp.h"
 
 #endif /* __NM_LINUX_COMPAT_H__ */

@@ -21,14 +21,14 @@
 static char *
 nmtui_hostname_run_dialog(void)
 {
-    NmtNewtForm *     form;
-    NmtNewtWidget *   widget, *ok, *cancel;
-    NmtNewtGrid *     grid;
-    NmtNewtEntry *    entry;
+    NmtNewtForm      *form;
+    NmtNewtWidget    *widget, *ok, *cancel;
+    NmtNewtGrid      *grid;
+    NmtNewtEntry     *entry;
     NmtNewtButtonBox *bbox;
-    char *            hostname, *ret = NULL;
+    char             *hostname, *ret = NULL;
 
-    form = g_object_new(NMT_TYPE_NEWT_FORM, "title", _("Set Hostname"), "escape-exits", TRUE, NULL);
+    form = g_object_new(NMT_TYPE_NEWT_FORM, "title", _("Set Hostname"), NULL);
 
     widget = nmt_newt_grid_new();
     nmt_newt_form_set_content(form, widget);
@@ -79,9 +79,9 @@ NmtNewtForm *
 nmtui_hostname(gboolean is_top, int argc, char **argv)
 {
     const char *hostname;
-    char *      tmp = NULL;
+    char       *tmp = NULL;
     NmtSyncOp   op;
-    GError *    error = NULL;
+    GError     *error = NULL;
 
     if (argc == 2)
         hostname = argv[1];

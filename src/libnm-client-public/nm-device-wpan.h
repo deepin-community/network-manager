@@ -7,7 +7,7 @@
 #define __NM_DEVICE_WPAN_H__
 
 #if !defined(__NETWORKMANAGER_H_INSIDE__) && !defined(NETWORKMANAGER_COMPILATION)
-    #error "Only <NetworkManager.h> can be included directly."
+#error "Only <NetworkManager.h> can be included directly."
 #endif
 
 #include "nm-device.h"
@@ -27,15 +27,14 @@ G_BEGIN_DECLS
 
 /**
  * NMDeviceWpan:
+ *
+ * Since: 1.14
  */
+typedef struct _NMDeviceWpan      NMDeviceWpan;
 typedef struct _NMDeviceWpanClass NMDeviceWpanClass;
 
 NM_AVAILABLE_IN_1_14
 GType nm_device_wpan_get_type(void);
-
-NM_AVAILABLE_IN_1_14
-NM_DEPRECATED_IN_1_24_FOR(nm_device_get_hw_address)
-const char *nm_device_wpan_get_hw_address(NMDeviceWpan *device);
 
 G_END_DECLS
 

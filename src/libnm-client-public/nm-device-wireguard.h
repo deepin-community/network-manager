@@ -7,7 +7,7 @@
 #define __NM_DEVICE_WIREGUARD_H__
 
 #if !defined(__NETWORKMANAGER_H_INSIDE__) && !defined(NETWORKMANAGER_COMPILATION)
-    #error "Only <NetworkManager.h> can be included directly."
+#error "Only <NetworkManager.h> can be included directly."
 #endif
 
 #include "nm-device.h"
@@ -27,7 +27,10 @@ G_BEGIN_DECLS
 
 /**
  * NMDeviceWireGuard:
+ *
+ * Since: 1.14
  */
+typedef struct _NMDeviceWireGuard      NMDeviceWireGuard;
 typedef struct _NMDeviceWireGuardClass NMDeviceWireGuardClass;
 
 #define NM_DEVICE_WIREGUARD_PUBLIC_KEY  "public-key"

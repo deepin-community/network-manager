@@ -54,56 +54,24 @@ const NMUtilsDNSOptionDesc _nm_utils_dns_option_descs[] = {
     {NULL, FALSE, FALSE}};
 
 static char *
-canonicalize_ip(int family, const char *ip, gboolean null_any)
+canonicalize_ip_binary(int family, const NMIPAddr *ip, gboolean null_any)
 {
-    guint8 addr_bytes[sizeof(struct in6_addr)];
-    char   addr_str[NM_UTILS_INET_ADDRSTRLEN];
-    int    ret;
-
     if (!ip) {
         if (null_any)
             return NULL;
-        if (family == AF_INET)
+        if (NM_IS_IPv4(family))
             return g_strdup("0.0.0.0");
-        if (family == AF_INET6)
-            return g_strdup("::");
-        g_return_val_if_reached(NULL);
+        return g_strdup("::");
     }
 
-    ret = inet_pton(family, ip, addr_bytes);
-    g_return_val_if_fail(ret == 1, NULL);
+    if (null_any && nm_ip_addr_is_null(family, ip))
+        return NULL;
 
-    if (null_any) {
-        if (!memcmp(addr_bytes, &in6addr_any, nm_utils_addr_family_to_size(family)))
-            return NULL;
-    }
-
-    return g_strdup(inet_ntop(family, addr_bytes, addr_str, sizeof(addr_str)));
-}
-
-static char *
-canonicalize_ip_binary(int family, gconstpointer ip, gboolean null_any)
-{
-    char string[NM_UTILS_INET_ADDRSTRLEN];
-
-    if (!ip) {
-        if (null_any)
-            return NULL;
-        if (family == AF_INET)
-            return g_strdup("0.0.0.0");
-        if (family == AF_INET6)
-            return g_strdup("::");
-        g_return_val_if_reached(NULL);
-    }
-    if (null_any) {
-        if (!memcmp(ip, &in6addr_any, nm_utils_addr_family_to_size(family)))
-            return NULL;
-    }
-    return g_strdup(inet_ntop(family, ip, string, sizeof(string)));
+    return nm_inet_ntop_dup(family, ip);
 }
 
 static gboolean
-valid_ip(int family, const char *ip, GError **error)
+valid_ip(int family, const char *ip, NMIPAddr *addr, GError **error)
 {
     if (!ip) {
         g_set_error(error,
@@ -112,7 +80,7 @@ valid_ip(int family, const char *ip, GError **error)
                     family == AF_INET ? _("Missing IPv4 address") : _("Missing IPv6 address"));
         return FALSE;
     }
-    if (!nm_utils_ipaddr_is_valid(family, ip)) {
+    if (!nm_inet_parse_bin(family, ip, NULL, addr)) {
         g_set_error(error,
                     NM_CONNECTION_ERROR,
                     NM_CONNECTION_ERROR_FAILED,
@@ -120,8 +88,9 @@ valid_ip(int family, const char *ip, GError **error)
                                       : _("Invalid IPv6 address '%s'"),
                     ip);
         return FALSE;
-    } else
-        return TRUE;
+    }
+
+    return TRUE;
 }
 
 static gboolean
@@ -169,9 +138,10 @@ G_DEFINE_BOXED_TYPE(NMIPAddress, nm_ip_address, nm_ip_address_dup, nm_ip_address
 struct NMIPAddress {
     guint refcount;
 
-    char *address;
-    int   prefix, family;
+    gint8  family;
+    guint8 prefix;
 
+    char       *address;
     GHashTable *attributes;
 };
 
@@ -191,21 +161,23 @@ NMIPAddress *
 nm_ip_address_new(int family, const char *addr, guint prefix, GError **error)
 {
     NMIPAddress *address;
+    NMIPAddr     addr_bin;
 
     g_return_val_if_fail(family == AF_INET || family == AF_INET6, NULL);
     g_return_val_if_fail(addr != NULL, NULL);
 
-    if (!valid_ip(family, addr, error))
+    if (!valid_ip(family, addr, &addr_bin, error))
         return NULL;
     if (!valid_prefix(family, prefix, error))
         return NULL;
 
-    address           = g_slice_new0(NMIPAddress);
-    address->refcount = 1;
-
-    address->family  = family;
-    address->address = canonicalize_ip(family, addr, FALSE);
-    address->prefix  = prefix;
+    address  = g_slice_new(NMIPAddress);
+    *address = (NMIPAddress){
+        .refcount = 1,
+        .family   = family,
+        .address  = canonicalize_ip_binary(family, &addr_bin, FALSE),
+        .prefix   = prefix,
+    };
 
     return address;
 }
@@ -227,7 +199,6 @@ NMIPAddress *
 nm_ip_address_new_binary(int family, gconstpointer addr, guint prefix, GError **error)
 {
     NMIPAddress *address;
-    char         string[NM_UTILS_INET_ADDRSTRLEN];
 
     g_return_val_if_fail(family == AF_INET || family == AF_INET6, NULL);
     g_return_val_if_fail(addr != NULL, NULL);
@@ -235,12 +206,13 @@ nm_ip_address_new_binary(int family, gconstpointer addr, guint prefix, GError **
     if (!valid_prefix(family, prefix, error))
         return NULL;
 
-    address           = g_slice_new0(NMIPAddress);
-    address->refcount = 1;
-
-    address->family  = family;
-    address->address = g_strdup(inet_ntop(family, addr, string, sizeof(string)));
-    address->prefix  = prefix;
+    address  = g_slice_new(NMIPAddress);
+    *address = (NMIPAddress){
+        .refcount = 1,
+        .family   = family,
+        .address  = nm_inet_ntop_dup(family, addr),
+        .prefix   = prefix,
+    };
 
     return address;
 }
@@ -276,9 +248,8 @@ nm_ip_address_unref(NMIPAddress *address)
     address->refcount--;
     if (address->refcount == 0) {
         g_free(address->address);
-        if (address->attributes)
-            g_hash_table_unref(address->attributes);
-        g_slice_free(NMIPAddress, address);
+        nm_g_hash_table_unref(address->attributes);
+        nm_g_slice_free(address);
     }
 }
 
@@ -295,6 +266,8 @@ nm_ip_address_unref(NMIPAddress *address)
  *
  * Returns: 0 if the two objects have the same values (according to their flags)
  *   or a integer indicating the compare order.
+ *
+ * Since: 1.22
  **/
 int
 nm_ip_address_cmp_full(const NMIPAddress *a, const NMIPAddress *b, NMIPAddressCmpFlags cmp_flags)
@@ -311,8 +284,8 @@ nm_ip_address_cmp_full(const NMIPAddress *a, const NMIPAddress *b, NMIPAddressCm
 
     if (NM_FLAGS_HAS(cmp_flags, NM_IP_ADDRESS_CMP_FLAGS_WITH_ATTRS)) {
         GHashTableIter iter;
-        const char *   key;
-        GVariant *     value, *value2;
+        const char    *key;
+        GVariant      *value, *value2;
         guint          n;
 
         n = a->attributes ? g_hash_table_size(a->attributes) : 0u;
@@ -382,8 +355,8 @@ nm_ip_address_dup(NMIPAddress *address)
     copy = nm_ip_address_new(address->family, address->address, address->prefix, NULL);
     if (address->attributes) {
         GHashTableIter iter;
-        const char *   key;
-        GVariant *     value;
+        const char    *key;
+        GVariant      *value;
 
         g_hash_table_iter_init(&iter, address->attributes);
         while (g_hash_table_iter_next(&iter, (gpointer *) &key, (gpointer *) &value))
@@ -441,12 +414,18 @@ nm_ip_address_get_address(NMIPAddress *address)
 void
 nm_ip_address_set_address(NMIPAddress *address, const char *addr)
 {
+    NMIPAddr addr_bin;
+
     g_return_if_fail(address != NULL);
-    g_return_if_fail(addr != NULL);
-    g_return_if_fail(nm_utils_ipaddr_is_valid(address->family, addr));
+
+    if (!valid_ip(address->family, addr, &addr_bin, NULL)) {
+        g_return_if_fail(addr != NULL);
+        g_return_if_fail(nm_inet_is_valid(address->family, addr));
+        nm_assert_not_reached();
+    }
 
     g_free(address->address);
-    address->address = canonicalize_ip(address->family, addr, FALSE);
+    address->address = canonicalize_ip_binary(address->family, &addr_bin, FALSE);
 }
 
 /**
@@ -479,13 +458,11 @@ nm_ip_address_get_address_binary(NMIPAddress *address, gpointer addr)
 void
 nm_ip_address_set_address_binary(NMIPAddress *address, gconstpointer addr)
 {
-    char string[NM_UTILS_INET_ADDRSTRLEN];
-
     g_return_if_fail(address != NULL);
     g_return_if_fail(addr != NULL);
 
     g_free(address->address);
-    address->address = g_strdup(inet_ntop(address->family, addr, string, sizeof(string)));
+    address->address = nm_inet_ntop_dup(address->family, addr);
 }
 
 /**
@@ -527,7 +504,7 @@ _nm_ip_address_get_attribute_names(const NMIPAddress *address, gboolean sorted, 
 {
     nm_assert(address);
 
-    return nm_utils_strdict_get_keys(address->attributes, sorted, out_length);
+    return nm_strdict_get_keys(address->attributes, sorted, out_length);
 }
 
 /**
@@ -546,7 +523,7 @@ nm_ip_address_get_attribute_names(NMIPAddress *address)
     g_return_val_if_fail(address, NULL);
 
     names = _nm_ip_address_get_attribute_names(address, TRUE, NULL);
-    return nm_utils_strv_make_deep_copied_nonnull(names);
+    return nm_strv_make_deep_copied_nonnull(names);
 }
 
 /**
@@ -608,13 +585,14 @@ G_DEFINE_BOXED_TYPE(NMIPRoute, nm_ip_route, nm_ip_route_dup, nm_ip_route_unref)
 struct NMIPRoute {
     guint refcount;
 
-    int    family;
-    char * dest;
-    guint  prefix;
-    char * next_hop;
-    gint64 metric;
+    gint8  family;
+    guint8 prefix;
 
+    char       *dest;
+    char       *next_hop;
     GHashTable *attributes;
+
+    gint64 metric;
 };
 
 /**
@@ -637,30 +615,33 @@ nm_ip_route_new(int         family,
                 guint       prefix,
                 const char *next_hop,
                 gint64      metric,
-                GError **   error)
+                GError    **error)
 {
     NMIPRoute *route;
+    NMIPAddr   dest_bin;
+    NMIPAddr   next_hop_bin;
 
     g_return_val_if_fail(family == AF_INET || family == AF_INET6, NULL);
     g_return_val_if_fail(dest, NULL);
 
-    if (!valid_ip(family, dest, error))
+    if (!valid_ip(family, dest, &dest_bin, error))
         return NULL;
     if (!valid_prefix(family, prefix, error))
         return NULL;
-    if (next_hop && !valid_ip(family, next_hop, error))
+    if (next_hop && !valid_ip(family, next_hop, &next_hop_bin, error))
         return NULL;
     if (!valid_metric(metric, error))
         return NULL;
 
-    route           = g_slice_new0(NMIPRoute);
-    route->refcount = 1;
-
-    route->family   = family;
-    route->dest     = canonicalize_ip(family, dest, FALSE);
-    route->prefix   = prefix;
-    route->next_hop = canonicalize_ip(family, next_hop, TRUE);
-    route->metric   = metric;
+    route  = g_slice_new(NMIPRoute);
+    *route = (NMIPRoute){
+        .refcount = 1,
+        .family   = family,
+        .dest     = canonicalize_ip_binary(family, &dest_bin, FALSE),
+        .prefix   = prefix,
+        .next_hop = canonicalize_ip_binary(family, next_hop ? &next_hop_bin : NULL, TRUE),
+        .metric   = metric,
+    };
 
     return route;
 }
@@ -686,7 +667,7 @@ nm_ip_route_new_binary(int           family,
                        guint         prefix,
                        gconstpointer next_hop,
                        gint64        metric,
-                       GError **     error)
+                       GError      **error)
 {
     NMIPRoute *route;
 
@@ -698,14 +679,15 @@ nm_ip_route_new_binary(int           family,
     if (!valid_metric(metric, error))
         return NULL;
 
-    route           = g_slice_new0(NMIPRoute);
-    route->refcount = 1;
-
-    route->family   = family;
-    route->dest     = canonicalize_ip_binary(family, dest, FALSE);
-    route->prefix   = prefix;
-    route->next_hop = canonicalize_ip_binary(family, next_hop, TRUE);
-    route->metric   = metric;
+    route  = g_slice_new0(NMIPRoute);
+    *route = (NMIPRoute){
+        .refcount = 1,
+        .family   = family,
+        .dest     = canonicalize_ip_binary(family, dest, FALSE),
+        .prefix   = prefix,
+        .next_hop = canonicalize_ip_binary(family, next_hop, TRUE),
+        .metric   = metric,
+    };
 
     return route;
 }
@@ -742,9 +724,8 @@ nm_ip_route_unref(NMIPRoute *route)
     if (route->refcount == 0) {
         g_free(route->dest);
         g_free(route->next_hop);
-        if (route->attributes)
-            g_hash_table_unref(route->attributes);
-        g_slice_free(NMIPRoute, route);
+        nm_g_hash_table_unref(route->attributes);
+        nm_g_slice_free(route);
     }
 }
 
@@ -783,8 +764,8 @@ nm_ip_route_equal_full(NMIPRoute *route, NMIPRoute *other, guint cmp_flags)
         return FALSE;
     if (cmp_flags == NM_IP_ROUTE_EQUAL_CMP_FLAGS_WITH_ATTRS) {
         GHashTableIter iter;
-        const char *   key;
-        GVariant *     value, *value2;
+        const char    *key;
+        GVariant      *value, *value2;
         guint          n;
 
         n = route->attributes ? g_hash_table_size(route->attributes) : 0u;
@@ -850,8 +831,8 @@ nm_ip_route_dup(NMIPRoute *route)
                            NULL);
     if (route->attributes) {
         GHashTableIter iter;
-        const char *   key;
-        GVariant *     value;
+        const char    *key;
+        GVariant      *value;
 
         g_hash_table_iter_init(&iter, route->attributes);
         while (g_hash_table_iter_next(&iter, (gpointer *) &key, (gpointer *) &value))
@@ -904,16 +885,22 @@ nm_ip_route_get_dest(NMIPRoute *route)
  * Sets the destination property of this route object.
  *
  * @dest must be a valid address of @route's family. If you aren't sure you
- * have a valid address, use nm_utils_ipaddr_is_valid() to check it.
+ * have a valid address, use nm_inet_is_valid() to check it.
  **/
 void
 nm_ip_route_set_dest(NMIPRoute *route, const char *dest)
 {
+    NMIPAddr dest_bin;
+
     g_return_if_fail(route != NULL);
-    g_return_if_fail(nm_utils_ipaddr_is_valid(route->family, dest));
+
+    if (!valid_ip(route->family, dest, &dest_bin, NULL)) {
+        g_return_if_fail(nm_inet_is_valid(route->family, dest));
+        nm_assert_not_reached();
+    }
 
     g_free(route->dest);
-    route->dest = canonicalize_ip(route->family, dest, FALSE);
+    route->dest = canonicalize_ip_binary(route->family, &dest_bin, FALSE);
 }
 
 /**
@@ -946,13 +933,11 @@ nm_ip_route_get_dest_binary(NMIPRoute *route, gpointer dest)
 void
 nm_ip_route_set_dest_binary(NMIPRoute *route, gconstpointer dest)
 {
-    char string[NM_UTILS_INET_ADDRSTRLEN];
-
     g_return_if_fail(route != NULL);
     g_return_if_fail(dest != NULL);
 
     g_free(route->dest);
-    route->dest = g_strdup(inet_ntop(route->family, dest, string, sizeof(string)));
+    route->dest = nm_inet_ntop_dup(route->family, dest);
 }
 
 /**
@@ -1020,11 +1005,17 @@ nm_ip_route_get_next_hop(NMIPRoute *route)
 void
 nm_ip_route_set_next_hop(NMIPRoute *route, const char *next_hop)
 {
+    NMIPAddr next_hop_bin;
+
     g_return_if_fail(route != NULL);
-    g_return_if_fail(!next_hop || nm_utils_ipaddr_is_valid(route->family, next_hop));
+
+    if (next_hop && !valid_ip(route->family, next_hop, &next_hop_bin, NULL)) {
+        g_return_if_fail(!next_hop || nm_inet_is_valid(route->family, next_hop));
+        nm_assert_not_reached();
+    }
 
     g_free(route->next_hop);
-    route->next_hop = canonicalize_ip(route->family, next_hop, TRUE);
+    route->next_hop = canonicalize_ip_binary(route->family, next_hop ? &next_hop_bin : NULL, TRUE);
 }
 
 /**
@@ -1134,7 +1125,7 @@ _nm_ip_route_get_attribute_names(const NMIPRoute *route, gboolean sorted, guint 
 {
     nm_assert(route);
 
-    return nm_utils_strdict_get_keys(route->attributes, sorted, out_length);
+    return nm_strdict_get_keys(route->attributes, sorted, out_length);
 }
 
 /**
@@ -1153,7 +1144,7 @@ nm_ip_route_get_attribute_names(NMIPRoute *route)
     g_return_val_if_fail(route != NULL, NULL);
 
     names = _nm_ip_route_get_attribute_names(route, TRUE, NULL);
-    return nm_utils_strv_make_deep_copied_nonnull(names);
+    return nm_strv_make_deep_copied_nonnull(names);
 }
 
 /**
@@ -1208,20 +1199,28 @@ nm_ip_route_set_attribute(NMIPRoute *route, const char *name, GVariant *value)
 }
 
 static const NMVariantAttributeSpec *const ip_route_attribute_spec[] = {
+    NM_VARIANT_ATTRIBUTE_SPEC_DEFINE(NM_IP_ROUTE_ATTRIBUTE_ADVMSS,
+                                     G_VARIANT_TYPE_UINT32,
+                                     .v4 = TRUE,
+                                     .v6 = TRUE, ),
     NM_VARIANT_ATTRIBUTE_SPEC_DEFINE(NM_IP_ROUTE_ATTRIBUTE_CWND,
                                      G_VARIANT_TYPE_UINT32,
                                      .v4 = TRUE,
                                      .v6 = TRUE, ),
     NM_VARIANT_ATTRIBUTE_SPEC_DEFINE(NM_IP_ROUTE_ATTRIBUTE_FROM,
                                      G_VARIANT_TYPE_STRING,
-                                     .v6       = TRUE,
-                                     .str_type = 'p', ),
+                                     .v6          = TRUE,
+                                     .type_detail = 'p', ),
     NM_VARIANT_ATTRIBUTE_SPEC_DEFINE(NM_IP_ROUTE_ATTRIBUTE_INITCWND,
                                      G_VARIANT_TYPE_UINT32,
                                      .v4 = TRUE,
                                      .v6 = TRUE, ),
     NM_VARIANT_ATTRIBUTE_SPEC_DEFINE(NM_IP_ROUTE_ATTRIBUTE_INITRWND,
                                      G_VARIANT_TYPE_UINT32,
+                                     .v4 = TRUE,
+                                     .v6 = TRUE, ),
+    NM_VARIANT_ATTRIBUTE_SPEC_DEFINE(NM_IP_ROUTE_ATTRIBUTE_LOCK_ADVMSS,
+                                     G_VARIANT_TYPE_BOOLEAN,
                                      .v4 = TRUE,
                                      .v6 = TRUE, ),
     NM_VARIANT_ATTRIBUTE_SPEC_DEFINE(NM_IP_ROUTE_ATTRIBUTE_LOCK_CWND,
@@ -1252,14 +1251,23 @@ static const NMVariantAttributeSpec *const ip_route_attribute_spec[] = {
                                      G_VARIANT_TYPE_BOOLEAN,
                                      .v4 = TRUE,
                                      .v6 = TRUE, ),
+    NM_VARIANT_ATTRIBUTE_SPEC_DEFINE(NM_IP_ROUTE_ATTRIBUTE_QUICKACK,
+                                     G_VARIANT_TYPE_BOOLEAN,
+                                     .v4 = TRUE,
+                                     .v6 = TRUE, ),
+    NM_VARIANT_ATTRIBUTE_SPEC_DEFINE(NM_IP_ROUTE_ATTRIBUTE_RTO_MIN,
+                                     G_VARIANT_TYPE_UINT32,
+                                     .v4 = TRUE,
+                                     .v6 = TRUE, ),
     NM_VARIANT_ATTRIBUTE_SPEC_DEFINE(NM_IP_ROUTE_ATTRIBUTE_SCOPE,
                                      G_VARIANT_TYPE_BYTE,
-                                     .v4 = TRUE, ),
+                                     .v4          = TRUE,
+                                     .type_detail = 's'),
     NM_VARIANT_ATTRIBUTE_SPEC_DEFINE(NM_IP_ROUTE_ATTRIBUTE_SRC,
                                      G_VARIANT_TYPE_STRING,
-                                     .v4       = TRUE,
-                                     .v6       = TRUE,
-                                     .str_type = 'a', ),
+                                     .v4          = TRUE,
+                                     .v6          = TRUE,
+                                     .type_detail = 'a', ),
     NM_VARIANT_ATTRIBUTE_SPEC_DEFINE(NM_IP_ROUTE_ATTRIBUTE_TABLE,
                                      G_VARIANT_TYPE_UINT32,
                                      .v4 = TRUE,
@@ -1267,9 +1275,13 @@ static const NMVariantAttributeSpec *const ip_route_attribute_spec[] = {
     NM_VARIANT_ATTRIBUTE_SPEC_DEFINE(NM_IP_ROUTE_ATTRIBUTE_TOS, G_VARIANT_TYPE_BYTE, .v4 = TRUE, ),
     NM_VARIANT_ATTRIBUTE_SPEC_DEFINE(NM_IP_ROUTE_ATTRIBUTE_TYPE,
                                      G_VARIANT_TYPE_STRING,
-                                     .v4       = TRUE,
-                                     .v6       = TRUE,
-                                     .str_type = 'T', ),
+                                     .v4          = TRUE,
+                                     .v6          = TRUE,
+                                     .type_detail = 'T', ),
+    NM_VARIANT_ATTRIBUTE_SPEC_DEFINE(NM_IP_ROUTE_ATTRIBUTE_WEIGHT,
+                                     G_VARIANT_TYPE_UINT32,
+                                     .v4          = TRUE,
+                                     .type_detail = 'w'),
     NM_VARIANT_ATTRIBUTE_SPEC_DEFINE(NM_IP_ROUTE_ATTRIBUTE_WINDOW,
                                      G_VARIANT_TYPE_UINT32,
                                      .v4 = TRUE,
@@ -1290,34 +1302,28 @@ nm_ip_route_get_variant_attribute_spec(void)
     return ip_route_attribute_spec;
 }
 
-/**
- * nm_ip_route_attribute_validate:
- * @name: the attribute name
- * @value: the attribute value
- * @family: IP address family of the route
- * @known: (out): on return, whether the attribute name is a known one
- * @error: (allow-none): return location for a #GError, or %NULL
- *
- * Validates a route attribute, i.e. checks that the attribute is a known one
- * and the value is of the correct type and well-formed.
- *
- * Returns: %TRUE if the attribute is valid, %FALSE otherwise
- *
- * Since: 1.8
- */
-gboolean
-nm_ip_route_attribute_validate(const char *name,
-                               GVariant *  value,
-                               int         family,
-                               gboolean *  known,
-                               GError **   error)
+typedef struct {
+    int    type;
+    int    scope;
+    gint16 weight;
+} IPRouteAttrParseData;
+
+static gboolean
+_ip_route_attribute_validate(const char           *name,
+                             GVariant             *value,
+                             int                   family,
+                             IPRouteAttrParseData *parse_data,
+                             gboolean             *known,
+                             GError              **error)
 {
     const NMVariantAttributeSpec *spec;
+    const char                   *string;
+    guint32                       u32;
 
-    g_return_val_if_fail(name, FALSE);
-    g_return_val_if_fail(value, FALSE);
-    g_return_val_if_fail(family == AF_INET || family == AF_INET6, FALSE);
-    g_return_val_if_fail(!error || !*error, FALSE);
+    nm_assert(name);
+    nm_assert(value);
+    nm_assert(family == AF_INET || family == AF_INET6);
+    nm_assert(!error || !*error);
 
     spec = _nm_variant_attribute_spec_find_binary_search(ip_route_attribute_spec,
                                                          G_N_ELEMENTS(ip_route_attribute_spec) - 1,
@@ -1351,80 +1357,146 @@ nm_ip_route_attribute_validate(const char *name,
         return FALSE;
     }
 
-    if (g_variant_type_equal(spec->type, G_VARIANT_TYPE_STRING)) {
-        const char *string = g_variant_get_string(value, NULL);
+    switch (spec->type_detail) {
+    case 'a': /* IP address */
+        string = g_variant_get_string(value, NULL);
+        if (!nm_inet_is_valid(family, string)) {
+            g_set_error(error,
+                        NM_CONNECTION_ERROR,
+                        NM_CONNECTION_ERROR_FAILED,
+                        family == AF_INET ? _("'%s' is not a valid IPv4 address")
+                                          : _("'%s' is not a valid IPv6 address"),
+                        string);
+            return FALSE;
+        }
+        break;
+    case 'p': /* IP address + optional prefix */
+    {
+        gs_free char *addr_free = NULL;
+        const char   *addr;
+        const char   *str;
 
-        switch (spec->str_type) {
-        case 'a': /* IP address */
-            if (!nm_utils_ipaddr_is_valid(family, string)) {
+        string = g_variant_get_string(value, NULL);
+        addr   = string;
+
+        str = strchr(addr, '/');
+        if (str) {
+            addr = nm_strndup_a(200, addr, str - addr, &addr_free);
+            str++;
+            if (_nm_utils_ascii_str_to_int64(str, 10, 0, family == AF_INET ? 32 : 128, -1) < 0) {
                 g_set_error(error,
                             NM_CONNECTION_ERROR,
                             NM_CONNECTION_ERROR_FAILED,
-                            family == AF_INET ? _("'%s' is not a valid IPv4 address")
-                                              : _("'%s' is not a valid IPv6 address"),
-                            string);
+                            _("invalid prefix %s"),
+                            str);
                 return FALSE;
             }
-            break;
-        case 'p': /* IP address + optional prefix */
-        {
-            gs_free char *addr_free = NULL;
-            const char *  addr      = string;
-            const char *  str;
+        }
+        if (!nm_inet_is_valid(family, addr)) {
+            g_set_error(error,
+                        NM_CONNECTION_ERROR,
+                        NM_CONNECTION_ERROR_FAILED,
+                        family == AF_INET ? _("'%s' is not a valid IPv4 address")
+                                          : _("'%s' is not a valid IPv6 address"),
+                        string);
+            return FALSE;
+        }
+        break;
+    }
+    case 'T': /* route type. */
+    {
+        int type;
 
-            str = strchr(addr, '/');
-            if (str) {
-                addr = nm_strndup_a(200, addr, str - addr, &addr_free);
-                str++;
-                if (_nm_utils_ascii_str_to_int64(str, 10, 0, family == AF_INET ? 32 : 128, -1)
-                    < 0) {
-                    g_set_error(error,
+        string = g_variant_get_string(value, NULL);
+        type   = nm_net_aux_rtnl_rtntype_a2n(string);
+        if (!NM_IN_SET(type,
+                       RTN_UNICAST,
+                       RTN_LOCAL,
+                       RTN_BLACKHOLE,
+                       RTN_UNREACHABLE,
+                       RTN_PROHIBIT,
+                       RTN_THROW)) {
+            g_set_error(error,
+                        NM_CONNECTION_ERROR,
+                        NM_CONNECTION_ERROR_INVALID_PROPERTY,
+                        _("%s is not a valid route type"),
+                        string);
+            return FALSE;
+        }
+
+        if (parse_data)
+            parse_data->type = type;
+        break;
+    }
+    case 's': /* scope */
+        if (parse_data)
+            parse_data->scope = g_variant_get_byte(value);
+        break;
+    case 'w': /* weight */
+        u32 = g_variant_get_uint32(value);
+        if (u32 > 256) {
+            g_set_error_literal(error,
                                 NM_CONNECTION_ERROR,
                                 NM_CONNECTION_ERROR_FAILED,
-                                _("invalid prefix %s"),
-                                str);
-                    return FALSE;
-                }
-            }
-            if (!nm_utils_ipaddr_is_valid(family, addr)) {
-                g_set_error(error,
-                            NM_CONNECTION_ERROR,
-                            NM_CONNECTION_ERROR_FAILED,
-                            family == AF_INET ? _("'%s' is not a valid IPv4 address")
-                                              : _("'%s' is not a valid IPv6 address"),
-                            string);
-                return FALSE;
-            }
-            break;
+                                _("route weight cannot be larger than 256"));
+            return FALSE;
         }
-        case 'T': /* route type. */
-            if (!NM_IN_SET(nm_net_aux_rtnl_rtntype_a2n(string), RTN_UNICAST, RTN_LOCAL)) {
-                g_set_error(error,
-                            NM_CONNECTION_ERROR,
-                            NM_CONNECTION_ERROR_INVALID_PROPERTY,
-                            _("%s is not a valid route type"),
-                            string);
-                return FALSE;
-            }
-            break;
-        default:
-            break;
-        }
+        if (parse_data)
+            parse_data->weight = (guint16) u32;
+        break;
+    case '\0':
+        break;
+    default:
+        nm_assert_not_reached();
+        break;
     }
 
     return TRUE;
 }
 
+/**
+ * nm_ip_route_attribute_validate:
+ * @name: the attribute name
+ * @value: the attribute value
+ * @family: IP address family of the route
+ * @known: (out): on return, whether the attribute name is a known one
+ * @error: (allow-none): return location for a #GError, or %NULL
+ *
+ * Validates a route attribute, i.e. checks that the attribute is a known one
+ * and the value is of the correct type and well-formed.
+ *
+ * Returns: %TRUE if the attribute is valid, %FALSE otherwise
+ *
+ * Since: 1.8
+ */
+gboolean
+nm_ip_route_attribute_validate(const char *name,
+                               GVariant   *value,
+                               int         family,
+                               gboolean   *known,
+                               GError    **error)
+{
+    g_return_val_if_fail(name, FALSE);
+    g_return_val_if_fail(value, FALSE);
+    g_return_val_if_fail(family == AF_INET || family == AF_INET6, FALSE);
+    g_return_val_if_fail(!error || !*error, FALSE);
+
+    return _ip_route_attribute_validate(name, value, family, NULL, known, error);
+}
+
 gboolean
 _nm_ip_route_attribute_validate_all(const NMIPRoute *route, GError **error)
 {
-    NMUtilsNamedValue attrs_static[G_N_ELEMENTS(ip_route_attribute_spec)];
+    NMUtilsNamedValue          attrs_static[G_N_ELEMENTS(ip_route_attribute_spec)];
     gs_free NMUtilsNamedValue *attrs_free = NULL;
-    const NMUtilsNamedValue *  attrs;
+    const NMUtilsNamedValue   *attrs;
     guint                      attrs_len;
-    GVariant *                 val;
     guint                      i;
-    guint8                     u8;
+    IPRouteAttrParseData       parse_data = {
+              .type   = RTN_UNICAST,
+              .scope  = -1,
+              .weight = 0,
+    };
 
     g_return_val_if_fail(route, FALSE);
     g_return_val_if_fail(!error || !*error, FALSE);
@@ -1437,33 +1509,49 @@ _nm_ip_route_attribute_validate_all(const NMIPRoute *route, GError **error)
                                                attrs_static,
                                                &attrs_free);
     for (i = 0; i < attrs_len; i++) {
-        const char *key  = attrs[i].name;
-        GVariant *  val2 = attrs[i].value_ptr;
-
-        if (!nm_ip_route_attribute_validate(key, val2, route->family, NULL, NULL))
+        if (!_ip_route_attribute_validate(attrs[i].name,
+                                          attrs[i].value_ptr,
+                                          route->family,
+                                          &parse_data,
+                                          NULL,
+                                          error))
             return FALSE;
     }
 
-    if ((val = g_hash_table_lookup(route->attributes, NM_IP_ROUTE_ATTRIBUTE_TYPE))) {
-        int v_i;
+    switch (parse_data.type) {
+    case RTN_LOCAL:
+        if (route->family == AF_INET && parse_data.scope >= 0
+            && !NM_IN_SET(parse_data.scope, RT_SCOPE_HOST, RT_SCOPE_NOWHERE)) {
+            g_set_error(error,
+                        NM_CONNECTION_ERROR,
+                        NM_CONNECTION_ERROR_INVALID_PROPERTY,
+                        _("route scope is invalid for local route"));
+            return FALSE;
+        }
+        break;
+    case RTN_BLACKHOLE:
+    case RTN_UNREACHABLE:
+    case RTN_PROHIBIT:
+    case RTN_THROW:
+        if (route->next_hop) {
+            g_set_error(error,
+                        NM_CONNECTION_ERROR,
+                        NM_CONNECTION_ERROR_INVALID_PROPERTY,
+                        _("a %s route cannot have a next-hop"),
+                        nm_net_aux_rtnl_rtntype_n2a(parse_data.type));
+            return FALSE;
+        }
+        break;
+    }
 
-        nm_assert(g_variant_is_of_type(val, G_VARIANT_TYPE_STRING));
-
-        v_i = nm_net_aux_rtnl_rtntype_a2n(g_variant_get_string(val, NULL));
-        nm_assert(v_i >= 0);
-
-        if (v_i == RTN_LOCAL && route->family == AF_INET
-            && (val = g_hash_table_lookup(route->attributes, NM_IP_ROUTE_ATTRIBUTE_SCOPE))) {
-            nm_assert(g_variant_is_of_type(val, G_VARIANT_TYPE_BYTE));
-            u8 = g_variant_get_byte(val);
-
-            if (!NM_IN_SET(u8, RT_SCOPE_HOST, RT_SCOPE_NOWHERE)) {
-                g_set_error(error,
-                            NM_CONNECTION_ERROR,
-                            NM_CONNECTION_ERROR_INVALID_PROPERTY,
-                            _("route scope is invalid"));
-                return FALSE;
-            }
+    if (parse_data.weight > 0) {
+        if (parse_data.type != RTN_UNICAST) {
+            g_set_error(error,
+                        NM_CONNECTION_ERROR,
+                        NM_CONNECTION_ERROR_INVALID_PROPERTY,
+                        _("a %s route cannot have a ECMP multi-hop \"weight\""),
+                        nm_net_aux_rtnl_rtntype_n2a(parse_data.type));
+            return FALSE;
         }
     }
 
@@ -1475,11 +1563,11 @@ _nm_ip_route_attribute_validate_all(const NMIPRoute *route, GError **error)
 struct NMIPRoutingRule {
     NMIPAddr from_bin;
     NMIPAddr to_bin;
-    char *   from_str;
-    char *   to_str;
-    char *   iifname;
-    char *   oifname;
-    guint    ref_count;
+    char    *from_str;
+    char    *to_str;
+    char    *iifname;
+    char    *oifname;
+    int      ref_count;
     guint32  priority;
     guint32  table;
     gint32   suppress_prefixlength;
@@ -1578,9 +1666,11 @@ nm_ip_routing_rule_new(int addr_family)
  * nm_ip_routing_rule_new_clone:
  * @rule: the #NMIPRoutingRule to clone.
  *
+ * Since 1.42, ref-counting of #NMIPRoutingRule is thread-safe.
+ *
  * Returns: (transfer full): a newly created rule instance with
  *   the same settings as @rule. Note that the instance will
- *   always be unsealred.
+ *   always be unsealed.
  *
  * Since: 1.18
  */
@@ -1646,10 +1736,11 @@ nm_ip_routing_rule_new_clone(const NMIPRoutingRule *rule)
  * @self: (allow-none): the #NMIPRoutingRule instance
  *
  * Increases the reference count of the instance.
- * This is not thread-safe.
  *
  * Returns: (transfer full): the @self argument with incremented
  *  reference count.
+ *
+ * Since 1.42, ref-counting of #NMIPRoutingRule is thread-safe.
  *
  * Since: 1.18
  */
@@ -1661,8 +1752,9 @@ nm_ip_routing_rule_ref(NMIPRoutingRule *self)
 
     g_return_val_if_fail(NM_IS_IP_ROUTING_RULE(self, TRUE), NULL);
 
-    nm_assert(self->ref_count < G_MAXUINT);
-    self->ref_count++;
+    nm_assert(self->ref_count < G_MAXINT);
+
+    g_atomic_int_inc(&self->ref_count);
     return self;
 }
 
@@ -1672,7 +1764,8 @@ nm_ip_routing_rule_ref(NMIPRoutingRule *self)
  *
  * Decreases the reference count of the instance and destroys
  * the instance if the reference count reaches zero.
- * This is not thread-safe.
+ *
+ * Since 1.42, ref-counting of #NMIPRoutingRule is thread-safe.
  *
  * Since: 1.18
  */
@@ -1684,7 +1777,7 @@ nm_ip_routing_rule_unref(NMIPRoutingRule *self)
 
     g_return_if_fail(NM_IS_IP_ROUTING_RULE(self, TRUE));
 
-    if (--self->ref_count > 0)
+    if (!g_atomic_int_dec_and_test(&self->ref_count))
         return;
 
     g_free(self->from_str);
@@ -1692,7 +1785,7 @@ nm_ip_routing_rule_unref(NMIPRoutingRule *self)
     g_free(self->iifname);
     g_free(self->oifname);
 
-    g_slice_free(NMIPRoutingRule, self);
+    nm_g_slice_free(self);
 }
 
 /**
@@ -1855,7 +1948,7 @@ nm_ip_routing_rule_get_from(const NMIPRoutingRule *self)
     if (!self->from_str) {
         nm_assert(self->from_valid);
         ((NMIPRoutingRule *) self)->from_str =
-            nm_utils_inet_ntop_dup(_ip_routing_rule_get_addr_family(self), &self->from_bin);
+            nm_inet_ntop_dup(_ip_routing_rule_get_addr_family(self), &self->from_bin);
     }
     return self->from_str;
 }
@@ -1912,12 +2005,10 @@ nm_ip_routing_rule_set_from(NMIPRoutingRule *self, const char *from, guint8 len)
     }
 
     nm_clear_g_free(&self->from_str);
-    self->from_has   = TRUE;
-    self->from_len   = len;
-    self->from_valid = nm_utils_parse_inaddr_bin(_ip_routing_rule_get_addr_family(self),
-                                                 from,
-                                                 NULL,
-                                                 &self->from_bin);
+    self->from_has = TRUE;
+    self->from_len = len;
+    self->from_valid =
+        nm_inet_parse_bin(_ip_routing_rule_get_addr_family(self), from, NULL, &self->from_bin);
     if (!self->from_valid)
         self->from_str = g_strdup(from);
 }
@@ -1957,7 +2048,7 @@ nm_ip_routing_rule_get_to(const NMIPRoutingRule *self)
     if (!self->to_str) {
         nm_assert(self->to_valid);
         ((NMIPRoutingRule *) self)->to_str =
-            nm_utils_inet_ntop_dup(_ip_routing_rule_get_addr_family(self), &self->to_bin);
+            nm_inet_ntop_dup(_ip_routing_rule_get_addr_family(self), &self->to_bin);
     }
     return self->to_str;
 }
@@ -2018,7 +2109,7 @@ nm_ip_routing_rule_set_to(NMIPRoutingRule *self, const char *to, guint8 len)
     self->to_has = TRUE;
     self->to_len = len;
     self->to_valid =
-        nm_utils_parse_inaddr_bin(_ip_routing_rule_get_addr_family(self), to, NULL, &self->to_bin);
+        nm_inet_parse_bin(_ip_routing_rule_get_addr_family(self), to, NULL, &self->to_bin);
     if (!self->to_valid)
         self->to_str = g_strdup(to);
 }
@@ -2254,7 +2345,7 @@ nm_ip_routing_rule_get_xifname_bin(const NMIPRoutingRule *self,
                                    char                   out_xifname[static 16 /* IFNAMSIZ */])
 {
     gs_free gpointer bin_to_free = NULL;
-    const char *     xifname;
+    const char      *xifname;
     gconstpointer    bin;
     gsize            len;
 
@@ -2441,14 +2532,15 @@ nm_ip_routing_rule_set_suppress_prefixlength(NMIPRoutingRule *self, gint32 suppr
  *
  * Returns: %TRUE if a uid range is set.
  *
- * Since: 1.32. Due to a bug, the symbols of this function
- *   are only exported starting with version 1.34.0. The function
- *   is unusable in 1.32.
+ * This API was wrongly introduced in the header files for 1.32, but the
+ * symbols were not exported. The API only works since 1.34 and newer.
+ *
+ * Since: 1.34
  */
 gboolean
 nm_ip_routing_rule_get_uid_range(const NMIPRoutingRule *self,
-                                 guint32 *              out_range_start,
-                                 guint32 *              out_range_end)
+                                 guint32               *out_range_start,
+                                 guint32               *out_range_end)
 {
     g_return_val_if_fail(NM_IS_IP_ROUTING_RULE(self, TRUE), -1);
 
@@ -2468,9 +2560,10 @@ nm_ip_routing_rule_get_uid_range(const NMIPRoutingRule *self,
  * For a valid range, start must be less or equal to end.
  * If set to an invalid range, the range gets unset.
  *
- * Since: 1.32. Due to a bug, the symbols of this function
- *   are only exported starting with version 1.34.0. The function
- *   is unusable in 1.32.
+ * This API was wrongly introduced in the header files for 1.32, but the
+ * symbols were not exported. The API only works since 1.34 and newer.
+ *
+ * Since: 1.34
  */
 void
 nm_ip_routing_rule_set_uid_range(NMIPRoutingRule *self,
@@ -2588,7 +2681,7 @@ _rr_xport_range_parse(char *str, gint64 *out_start, guint16 *out_end)
 {
     guint16 start, end;
     gint64  i64;
-    char *  s;
+    char   *s;
 
     s = strchr(str, '-');
     if (s)
@@ -2644,7 +2737,7 @@ nm_ip_routing_rule_validate(const NMIPRoutingRule *self, GError **error)
         g_set_error_literal(error,
                             NM_CONNECTION_ERROR,
                             NM_CONNECTION_ERROR_INVALID_PROPERTY,
-                            _("invalid priority"));
+                            _("missing priority"));
         return FALSE;
     }
 
@@ -2821,7 +2914,7 @@ typedef enum {
 } RRDbusAttr;
 
 typedef struct {
-    const char *        name;
+    const char         *name;
     const GVariantType *dbus_type;
 } RRDbusData;
 
@@ -2878,12 +2971,12 @@ _rr_dbus_attr_from_name(const char *name)
         }
     }
 
-    idx = nm_utils_array_find_binary_search(rr_dbus_data,
-                                            sizeof(rr_dbus_data[0]),
-                                            _RR_DBUS_ATTR_NUM,
-                                            &name,
-                                            nm_strcmp_p_with_data,
-                                            NULL);
+    idx = nm_array_find_bsearch(rr_dbus_data,
+                                _RR_DBUS_ATTR_NUM,
+                                sizeof(rr_dbus_data[0]),
+                                &name,
+                                nm_strcmp_p_with_data,
+                                NULL);
     if (idx < 0)
         return _RR_DBUS_ATTR_NUM;
     return idx;
@@ -2903,16 +2996,16 @@ _rr_variants_free(GVariant *(*p_variants)[])
 NMIPRoutingRule *
 nm_ip_routing_rule_from_dbus(GVariant *variant, gboolean strict, GError **error)
 {
-    nm_auto(_rr_variants_free) GVariant *variants[_RR_DBUS_ATTR_NUM] = {};
-    nm_auto_unref_ip_routing_rule NMIPRoutingRule *self              = NULL;
+    nm_auto(_rr_variants_free) GVariant           *variants[_RR_DBUS_ATTR_NUM] = {};
+    nm_auto_unref_ip_routing_rule NMIPRoutingRule *self                        = NULL;
     RRDbusAttr                                     attr;
     GVariantIter                                   iter;
-    const char *                                   iter_key;
-    GVariant *                                     iter_val;
+    const char                                    *iter_key;
+    GVariant                                      *iter_val;
     int                                            addr_family;
     int                                            i;
-    GVariant *                                     v_start;
-    GVariant *                                     v_end;
+    GVariant                                      *v_start;
+    GVariant                                      *v_end;
 
     g_variant_iter_init(&iter, variant);
 
@@ -3109,7 +3202,7 @@ GVariant *
 nm_ip_routing_rule_to_dbus(const NMIPRoutingRule *self)
 {
     GVariantBuilder builder;
-    char            addr_str[NM_UTILS_INET_ADDRSTRLEN];
+    char            addr_str[NM_INET_ADDRSTRLEN];
 
     g_return_val_if_fail(NM_IS_IP_ROUTING_RULE(self, TRUE), NULL);
 
@@ -3162,9 +3255,9 @@ nm_ip_routing_rule_to_dbus(const NMIPRoutingRule *self)
             &builder,
             RR_DBUS_ATTR_FROM,
             g_variant_new_string(self->from_str
-                                     ?: nm_utils_inet_ntop(_ip_routing_rule_get_addr_family(self),
-                                                           &self->from_bin,
-                                                           addr_str)));
+                                     ?: nm_inet_ntop(_ip_routing_rule_get_addr_family(self),
+                                                     &self->from_bin,
+                                                     addr_str)));
         _rr_to_dbus_add(&builder, RR_DBUS_ATTR_FROM_LEN, g_variant_new_byte(self->from_len));
     }
 
@@ -3173,9 +3266,9 @@ nm_ip_routing_rule_to_dbus(const NMIPRoutingRule *self)
             &builder,
             RR_DBUS_ATTR_TO,
             g_variant_new_string(self->to_str
-                                     ?: nm_utils_inet_ntop(_ip_routing_rule_get_addr_family(self),
-                                                           &self->to_bin,
-                                                           addr_str)));
+                                     ?: nm_inet_ntop(_ip_routing_rule_get_addr_family(self),
+                                                     &self->to_bin,
+                                                     addr_str)));
         _rr_to_dbus_add(&builder, RR_DBUS_ATTR_TO_LEN, g_variant_new_byte(self->to_len));
     }
 
@@ -3214,8 +3307,8 @@ nm_ip_routing_rule_to_dbus(const NMIPRoutingRule *self)
 static gboolean
 _rr_string_validate(gboolean                     for_from /* or else to-string */,
                     NMIPRoutingRuleAsStringFlags to_string_flags,
-                    GHashTable *                 extra_args,
-                    GError **                    error)
+                    GHashTable                  *extra_args,
+                    GError                     **error)
 {
     if (NM_FLAGS_ANY(to_string_flags,
                      ~(NM_IP_ROUTING_RULE_AS_STRING_FLAGS_AF_INET
@@ -3264,21 +3357,21 @@ _rr_string_addr_family_from_flags(NMIPRoutingRuleAsStringFlags to_string_flags)
  * Since: 1.18
  */
 NMIPRoutingRule *
-nm_ip_routing_rule_from_string(const char *                 str,
+nm_ip_routing_rule_from_string(const char                  *str,
                                NMIPRoutingRuleAsStringFlags to_string_flags,
-                               GHashTable *                 extra_args,
-                               GError **                    error)
+                               GHashTable                  *extra_args,
+                               GError                     **error)
 {
     nm_auto_unref_ip_routing_rule NMIPRoutingRule *self   = NULL;
-    gs_free const char **                          tokens = NULL;
+    gs_free const char                           **tokens = NULL;
     gsize                                          i_token;
     gboolean                                       any_words                 = FALSE;
-    char *                                         word0                     = NULL;
-    char *                                         word1                     = NULL;
-    char *                                         word_from                 = NULL;
-    char *                                         word_to                   = NULL;
-    char *                                         word_iifname              = NULL;
-    char *                                         word_oifname              = NULL;
+    char                                          *word0                     = NULL;
+    char                                          *word1                     = NULL;
+    char                                          *word_from                 = NULL;
+    char                                          *word_to                   = NULL;
+    char                                          *word_iifname              = NULL;
+    char                                          *word_oifname              = NULL;
     gint64                                         i64_priority              = -1;
     gint64                                         i64_table                 = -1;
     gint64                                         i64_tos                   = -1;
@@ -3300,7 +3393,7 @@ nm_ip_routing_rule_from_string(const char *                 str,
     NMIPAddr                                       val_to                    = {};
     int                                            val_from_len              = -1;
     int                                            val_to_len                = -1;
-    char *                                         s;
+    char                                          *s;
 
     g_return_val_if_fail(str, NULL);
 
@@ -3574,11 +3667,11 @@ next_words_consumed:
     }
 
     if (!NM_IN_STRSET(word_from, NULL, "all")) {
-        if (!nm_utils_parse_inaddr_prefix_bin(addr_family,
-                                              word_from,
-                                              &addr_family,
-                                              &val_from,
-                                              &val_from_len)) {
+        if (!nm_inet_parse_with_prefix_bin(addr_family,
+                                           word_from,
+                                           &addr_family,
+                                           &val_from,
+                                           &val_from_len)) {
             g_set_error_literal(error,
                                 NM_CONNECTION_ERROR,
                                 NM_CONNECTION_ERROR_FAILED,
@@ -3590,11 +3683,11 @@ next_words_consumed:
     }
 
     if (!NM_IN_STRSET(word_to, NULL, "all")) {
-        if (!nm_utils_parse_inaddr_prefix_bin(addr_family,
-                                              word_to,
-                                              &addr_family,
-                                              &val_to,
-                                              &val_to_len)) {
+        if (!nm_inet_parse_with_prefix_bin(addr_family,
+                                           word_to,
+                                           &addr_family,
+                                           &val_to,
+                                           &val_to_len)) {
             g_set_error_literal(error,
                                 NM_CONNECTION_ERROR,
                                 NM_CONNECTION_ERROR_FAILED,
@@ -3686,14 +3779,14 @@ next_words_consumed:
 }
 
 static void
-_rr_string_append_inet_addr(NMStrBuf *      str,
+_rr_string_append_inet_addr(NMStrBuf       *str,
                             gboolean        is_from /* or else is-to */,
                             gboolean        required,
                             int             addr_family,
                             const NMIPAddr *addr_bin,
                             guint8          addr_len)
 {
-    char addr_str[NM_UTILS_INET_ADDRSTRLEN];
+    char addr_str[NM_INET_ADDRSTRLEN];
 
     if (addr_len == 0) {
         if (required) {
@@ -3708,7 +3801,7 @@ _rr_string_append_inet_addr(NMStrBuf *      str,
     nm_str_buf_append_printf(nm_str_buf_append_required_delimiter(str, ' '),
                              "%s %s",
                              is_from ? "from" : "to",
-                             nm_utils_inet_ntop(addr_family, addr_bin, addr_str));
+                             nm_inet_ntop(addr_family, addr_bin, addr_str));
     if (addr_len != nm_utils_addr_family_to_size(addr_family) * 8) {
         nm_str_buf_append_printf(str, "/%u", addr_len);
     }
@@ -3728,13 +3821,13 @@ _rr_string_append_inet_addr(NMStrBuf *      str,
  * Since: 1.18
  */
 char *
-nm_ip_routing_rule_to_string(const NMIPRoutingRule *      self,
+nm_ip_routing_rule_to_string(const NMIPRoutingRule       *self,
                              NMIPRoutingRuleAsStringFlags to_string_flags,
-                             GHashTable *                 extra_args,
-                             GError **                    error)
+                             GHashTable                  *extra_args,
+                             GError                     **error)
 {
-    int      addr_family;
-    NMStrBuf str;
+    int                      addr_family;
+    nm_auto_str_buf NMStrBuf str = NM_STR_BUF_INIT_A(NM_UTILS_GET_NEXT_REALLOC_SIZE_488, FALSE);
 
     g_return_val_if_fail(NM_IS_IP_ROUTING_RULE(self, TRUE), NULL);
 
@@ -3771,8 +3864,6 @@ nm_ip_routing_rule_to_string(const NMIPRoutingRule *      self,
             return NULL;
         }
     }
-
-    nm_str_buf_init(&str, NM_UTILS_GET_NEXT_REALLOC_SIZE_32, FALSE);
 
     if (self->priority_has) {
         nm_str_buf_append_printf(nm_str_buf_append_required_delimiter(&str, ' '),
@@ -3880,7 +3971,7 @@ nm_ip_routing_rule_to_string(const NMIPRoutingRule *      self,
                                  nm_net_aux_rtnl_rtntype_n2a_maybe_buf(self->action, sbuf));
     }
 
-    return nm_str_buf_finalize(&str, NULL);
+    return nm_str_buf_dup_str(&str);
 }
 
 /*****************************************************************************/
@@ -3907,43 +3998,31 @@ NM_GOBJECT_PROPERTIES_DEFINE(NMSettingIPConfig,
                              PROP_DHCP_TIMEOUT,
                              PROP_REQUIRED_TIMEOUT,
                              PROP_DHCP_IAID,
-                             PROP_DHCP_REJECT_SERVERS, );
-
-typedef struct {
-    GPtrArray *dns;         /* array of IP address strings */
-    GPtrArray *dns_search;  /* array of domain name strings */
-    GPtrArray *dns_options; /* array of DNS options */
-    GPtrArray *addresses;   /* array of NMIPAddress */
-    GPtrArray *routes;      /* array of NMIPRoute */
-    GPtrArray *routing_rules;
-    GArray *   dhcp_reject_servers;
-    char *     method;
-    char *     gateway;
-    char *     dhcp_hostname;
-    char *     dhcp_iaid;
-    gint64     route_metric;
-    guint      dhcp_hostname_flags;
-    int        dns_priority;
-    int        dad_timeout;
-    int        dhcp_timeout;
-    int        required_timeout;
-    guint32    route_table;
-    bool       ignore_auto_routes : 1;
-    bool       ignore_auto_dns : 1;
-    bool       dhcp_send_hostname : 1;
-    bool       never_default : 1;
-    bool       may_fail : 1;
-} NMSettingIPConfigPrivate;
+                             PROP_DHCP_REJECT_SERVERS,
+                             PROP_AUTO_ROUTE_EXT_GW,
+                             PROP_REPLACE_LOCAL_RULE, );
 
 G_DEFINE_ABSTRACT_TYPE(NMSettingIPConfig, nm_setting_ip_config, NM_TYPE_SETTING)
 
-#define NM_SETTING_IP_CONFIG_GET_PRIVATE(o) \
-    (G_TYPE_INSTANCE_GET_PRIVATE((o), NM_TYPE_SETTING_IP_CONFIG, NMSettingIPConfigPrivate))
+static inline NMSettingIPConfigPrivate *
+_NM_SETTING_IP_CONFIG_GET_PRIVATE(NMSettingIPConfig *self)
+{
+    NMSettingIPConfigClass *klass;
+
+    nm_assert(NM_IS_SETTING_IP_CONFIG(self));
+
+    klass = NM_SETTING_IP_CONFIG_GET_CLASS(self);
+
+    nm_assert(klass->private_offset < 0);
+
+    return (gpointer) (((char *) ((gpointer) self)) + klass->private_offset);
+}
+
+#define NM_SETTING_IP_CONFIG_GET_PRIVATE(self) \
+    _NM_SETTING_IP_CONFIG_GET_PRIVATE(         \
+        NM_GOBJECT_CAST_NON_NULL(NMSettingIPConfig, self, NM_IS_SETTING_IP_CONFIG, NMSetting))
 
 /*****************************************************************************/
-
-#define NM_SETTING_IP_CONFIG_GET_FAMILY(setting) \
-    (NM_IS_SETTING_IP4_CONFIG(setting) ? AF_INET : AF_INET6)
 
 /**
  * nm_setting_ip_config_get_method:
@@ -3972,7 +4051,7 @@ nm_setting_ip_config_get_num_dns(NMSettingIPConfig *setting)
 {
     g_return_val_if_fail(NM_IS_SETTING_IP_CONFIG(setting), 0);
 
-    return NM_SETTING_IP_CONFIG_GET_PRIVATE(setting)->dns->len;
+    return nm_g_ptr_array_len(NM_SETTING_IP_CONFIG_GET_PRIVATE(setting)->dns);
 }
 
 /**
@@ -3990,9 +4069,33 @@ nm_setting_ip_config_get_dns(NMSettingIPConfig *setting, int idx)
     g_return_val_if_fail(NM_IS_SETTING_IP_CONFIG(setting), NULL);
 
     priv = NM_SETTING_IP_CONFIG_GET_PRIVATE(setting);
-    g_return_val_if_fail(idx >= 0 && idx < priv->dns->len, NULL);
+    g_return_val_if_fail(idx >= 0 && ((guint) idx) < nm_g_ptr_array_len(priv->dns), NULL);
 
     return priv->dns->pdata[idx];
+}
+
+static gboolean
+_ip_config_add_dns(NMSettingIPConfig *setting, const char *dns)
+{
+    NMSettingIPConfigPrivate *priv;
+    gs_free char             *s_free = NULL;
+    const char               *s;
+
+    nm_assert(NM_IS_SETTING_IP_CONFIG(setting));
+    nm_assert(dns);
+
+    priv = NM_SETTING_IP_CONFIG_GET_PRIVATE(setting);
+
+    s = nm_utils_dnsname_normalize(NM_SETTING_IP_CONFIG_GET_ADDR_FAMILY(setting), dns, &s_free);
+    if (!s)
+        s = dns;
+
+    if (nm_strv_ptrarray_contains(priv->dns, s))
+        return FALSE;
+
+    nm_strv_ptrarray_add_string_take(nm_strv_ptrarray_ensure(&priv->dns),
+                                     g_steal_pointer(&s_free) ?: g_strdup(s));
+    return TRUE;
 }
 
 /**
@@ -4004,30 +4107,20 @@ nm_setting_ip_config_get_dns(NMSettingIPConfig *setting, int idx)
  *
  * Returns: %TRUE if the DNS server was added; %FALSE if the server was already
  * known
+ *
+ * Before 1.42, setting @dns to an invalid string was treated as user-error.
+ * Now, also invalid DNS values can be set, but will be rejected later during
+ * nm_connection_verify().
  **/
 gboolean
 nm_setting_ip_config_add_dns(NMSettingIPConfig *setting, const char *dns)
 {
-    NMSettingIPConfigPrivate *priv;
-    char *                    dns_canonical;
-    guint                     i;
-
     g_return_val_if_fail(NM_IS_SETTING_IP_CONFIG(setting), FALSE);
-    g_return_val_if_fail(dns != NULL, FALSE);
-    g_return_val_if_fail(nm_utils_ipaddr_is_valid(NM_SETTING_IP_CONFIG_GET_FAMILY(setting), dns),
-                         FALSE);
+    g_return_val_if_fail(dns, FALSE);
 
-    priv = NM_SETTING_IP_CONFIG_GET_PRIVATE(setting);
+    if (!_ip_config_add_dns(setting, dns))
+        return FALSE;
 
-    dns_canonical = canonicalize_ip(NM_SETTING_IP_CONFIG_GET_FAMILY(setting), dns, FALSE);
-    for (i = 0; i < priv->dns->len; i++) {
-        if (!strcmp(dns_canonical, priv->dns->pdata[i])) {
-            g_free(dns_canonical);
-            return FALSE;
-        }
-    }
-
-    g_ptr_array_add(priv->dns, dns_canonical);
     _notify(setting, PROP_DNS);
     return TRUE;
 }
@@ -4047,7 +4140,8 @@ nm_setting_ip_config_remove_dns(NMSettingIPConfig *setting, int idx)
     g_return_if_fail(NM_IS_SETTING_IP_CONFIG(setting));
 
     priv = NM_SETTING_IP_CONFIG_GET_PRIVATE(setting);
-    g_return_if_fail(idx >= 0 && idx < priv->dns->len);
+
+    g_return_if_fail(idx >= 0 && ((guint) idx) < nm_g_ptr_array_len(priv->dns));
 
     g_ptr_array_remove_index(priv->dns, idx);
     _notify(setting, PROP_DNS);
@@ -4061,32 +4155,39 @@ nm_setting_ip_config_remove_dns(NMSettingIPConfig *setting, int idx)
  * Removes the DNS server @dns.
  *
  * Returns: %TRUE if the DNS server was found and removed; %FALSE if it was not.
+ *
+ * Before 1.42, setting @dns to an invalid string was treated as user-error.
  **/
 gboolean
 nm_setting_ip_config_remove_dns_by_value(NMSettingIPConfig *setting, const char *dns)
 {
     NMSettingIPConfigPrivate *priv;
-    char *                    dns_canonical;
-    guint                     i;
+    gssize                    idx;
 
     g_return_val_if_fail(NM_IS_SETTING_IP_CONFIG(setting), FALSE);
-    g_return_val_if_fail(dns != NULL, FALSE);
-    g_return_val_if_fail(nm_utils_ipaddr_is_valid(NM_SETTING_IP_CONFIG_GET_FAMILY(setting), dns),
-                         FALSE);
+    g_return_val_if_fail(dns, FALSE);
 
     priv = NM_SETTING_IP_CONFIG_GET_PRIVATE(setting);
 
-    dns_canonical = canonicalize_ip(NM_SETTING_IP_CONFIG_GET_FAMILY(setting), dns, FALSE);
-    for (i = 0; i < priv->dns->len; i++) {
-        if (!strcmp(dns_canonical, priv->dns->pdata[i])) {
-            g_ptr_array_remove_index(priv->dns, i);
-            _notify(setting, PROP_DNS);
-            g_free(dns_canonical);
-            return TRUE;
-        }
+    /* "priv->dns" can only contain normalized or invalid values. Expect that
+     * "dns" is normalized already, so lookup first for that string. Only
+     * if that fails, fallback to normalize "dns". */
+    idx = nm_strv_ptrarray_find_first(priv->dns, dns);
+    if (idx < 0) {
+        gs_free char *s_free = NULL;
+        const char   *s;
+
+        s = nm_utils_dnsname_normalize(NM_SETTING_IP_CONFIG_GET_ADDR_FAMILY(setting), dns, &s_free);
+        if (s && !nm_streq(dns, s))
+            idx = nm_strv_ptrarray_find_first(priv->dns, dns);
     }
-    g_free(dns_canonical);
-    return FALSE;
+
+    if (idx < 0)
+        return FALSE;
+
+    g_ptr_array_remove_index(priv->dns, idx);
+    _notify(setting, PROP_DNS);
+    return TRUE;
 }
 
 /**
@@ -4104,10 +4205,16 @@ nm_setting_ip_config_clear_dns(NMSettingIPConfig *setting)
 
     priv = NM_SETTING_IP_CONFIG_GET_PRIVATE(setting);
 
-    if (priv->dns->len != 0) {
+    if (nm_g_ptr_array_len(priv->dns) != 0) {
         g_ptr_array_set_size(priv->dns, 0);
         _notify(setting, PROP_DNS);
     }
+}
+
+GPtrArray *
+_nm_setting_ip_config_get_dns_array(NMSettingIPConfig *setting)
+{
+    return NM_SETTING_IP_CONFIG_GET_PRIVATE(setting)->dns;
 }
 
 /**
@@ -4278,6 +4385,8 @@ nm_setting_ip_config_get_num_dns_options(NMSettingIPConfig *setting)
  * a default configuration, while the former explicitly means "no-options".
  *
  * Returns: whether DNS options are initialized or left unset (the default).
+ *
+ * Since: 1.2
  **/
 gboolean
 nm_setting_ip_config_has_dns_options(NMSettingIPConfig *setting)
@@ -4541,7 +4650,7 @@ nm_setting_ip_config_add_address(NMSettingIPConfig *setting, NMIPAddress *addres
 
     g_return_val_if_fail(NM_IS_SETTING_IP_CONFIG(setting), FALSE);
     g_return_val_if_fail(address != NULL, FALSE);
-    g_return_val_if_fail(address->family == NM_SETTING_IP_CONFIG_GET_FAMILY(setting), FALSE);
+    g_return_val_if_fail(address->family == NM_SETTING_IP_CONFIG_GET_ADDR_FAMILY(setting), FALSE);
 
     priv = NM_SETTING_IP_CONFIG_GET_PRIVATE(setting);
     for (i = 0; i < priv->addresses->len; i++) {
@@ -4698,7 +4807,7 @@ nm_setting_ip_config_add_route(NMSettingIPConfig *setting, NMIPRoute *route)
 
     g_return_val_if_fail(NM_IS_SETTING_IP_CONFIG(setting), FALSE);
     g_return_val_if_fail(route != NULL, FALSE);
-    g_return_val_if_fail(route->family == NM_SETTING_IP_CONFIG_GET_FAMILY(setting), FALSE);
+    g_return_val_if_fail(route->family == NM_SETTING_IP_CONFIG_GET_ADDR_FAMILY(setting), FALSE);
 
     priv = NM_SETTING_IP_CONFIG_GET_PRIVATE(setting);
     for (i = 0; i < priv->routes->len; i++) {
@@ -4894,7 +5003,7 @@ nm_setting_ip_config_add_routing_rule(NMSettingIPConfig *setting, NMIPRoutingRul
     g_return_if_fail(NM_IS_SETTING_IP_CONFIG(setting));
     g_return_if_fail(NM_IS_IP_ROUTING_RULE(routing_rule, TRUE));
     g_return_if_fail(_ip_routing_rule_get_addr_family(routing_rule)
-                     == NM_SETTING_IP_CONFIG_GET_FAMILY(setting));
+                     == NM_SETTING_IP_CONFIG_GET_ADDR_FAMILY(setting));
 
     priv = NM_SETTING_IP_CONFIG_GET_PRIVATE(setting);
 
@@ -4952,14 +5061,9 @@ nm_setting_ip_config_clear_routing_rules(NMSettingIPConfig *setting)
 }
 
 static GVariant *
-_routing_rules_dbus_only_synth(const NMSettInfoSetting *               sett_info,
-                               guint                                   property_idx,
-                               NMConnection *                          connection,
-                               NMSetting *                             setting,
-                               NMConnectionSerializationFlags          flags,
-                               const NMConnectionSerializationOptions *options)
+routing_rules_to_dbus(_NM_SETT_INFO_PROP_TO_DBUS_FCN_ARGS _nm_nil)
 {
-    NMSettingIPConfig *       self = NM_SETTING_IP_CONFIG(setting);
+    NMSettingIPConfig        *self = NM_SETTING_IP_CONFIG(setting);
     NMSettingIPConfigPrivate *priv;
     GVariantBuilder           builder;
     gboolean                  any = FALSE;
@@ -4988,15 +5092,10 @@ _routing_rules_dbus_only_synth(const NMSettInfoSetting *               sett_info
 }
 
 static gboolean
-_routing_rules_dbus_only_set(NMSetting *         setting,
-                             GVariant *          connection_dict,
-                             const char *        property,
-                             GVariant *          value,
-                             NMSettingParseFlags parse_flags,
-                             GError **           error)
+routing_rules_from_dbus(_NM_SETT_INFO_PROP_FROM_DBUS_FCN_ARGS _nm_nil)
 {
     GVariantIter iter_rules;
-    GVariant *   rule_var;
+    GVariant    *rule_var;
     guint        i_rule;
     gboolean     success       = FALSE;
     gboolean     rules_changed = FALSE;
@@ -5007,9 +5106,9 @@ _routing_rules_dbus_only_set(NMSetting *         setting,
 
     i_rule = 0;
     while (g_variant_iter_next(&iter_rules, "@a{sv}", &rule_var)) {
-        _nm_unused gs_unref_variant GVariant *rule_var_unref = rule_var;
-        nm_auto_unref_ip_routing_rule NMIPRoutingRule *rule  = NULL;
-        gs_free_error GError *local                          = NULL;
+        _nm_unused gs_unref_variant GVariant          *rule_var_unref = rule_var;
+        nm_auto_unref_ip_routing_rule NMIPRoutingRule *rule           = NULL;
+        gs_free_error GError                          *local          = NULL;
 
         i_rule++;
 
@@ -5037,6 +5136,7 @@ _routing_rules_dbus_only_set(NMSetting *         setting,
     success = TRUE;
 
 out:
+    *out_is_modified = rules_changed;
     if (rules_changed)
         _routing_rules_notify(NM_SETTING_IP_CONFIG(setting));
     return success;
@@ -5216,7 +5316,7 @@ nm_setting_ip_config_get_dhcp_timeout(NMSettingIPConfig *setting)
  *
  * Returns: the required timeout for the address family
  *
- * Since: 1.34, 1.32.4
+ * Since: 1.34
  **/
 int
 nm_setting_ip_config_get_required_timeout(NMSettingIPConfig *setting)
@@ -5235,7 +5335,7 @@ nm_setting_ip_config_get_required_timeout(NMSettingIPConfig *setting)
  *
  * Returns: the configured DHCP IAID (Identity Association Identifier)
  *
- * Since: 1.22
+ * Since: 1.42
  **/
 const char *
 nm_setting_ip_config_get_dhcp_iaid(NMSettingIPConfig *setting)
@@ -5330,11 +5430,43 @@ nm_setting_ip_config_clear_dhcp_reject_servers(NMSettingIPConfig *setting)
     }
 }
 
+/**
+ * nm_setting_ip_config_get_auto_route_ext_gw:
+ * @setting: the #NMSettingIPConfig
+ *
+ * Returns: the #NMSettingIPConfig:auto-route-ext-gw property of the setting
+ *
+ * Since: 1.42
+ **/
+NMTernary
+nm_setting_ip_config_get_auto_route_ext_gw(NMSettingIPConfig *setting)
+{
+    g_return_val_if_fail(NM_IS_SETTING_IP_CONFIG(setting), NM_TERNARY_DEFAULT);
+
+    return NM_SETTING_IP_CONFIG_GET_PRIVATE(setting)->auto_route_ext_gw;
+}
+
+/**
+ * nm_setting_ip_config_get_replace_local_rule:
+ * @setting: the #NMSettingIPConfig
+ *
+ * Returns: the #NMSettingIPConfig:replace-local-rule property of the setting
+ *
+ * Since: 1.44, 1.42.2
+ **/
+NMTernary
+nm_setting_ip_config_get_replace_local_rule(NMSettingIPConfig *setting)
+{
+    g_return_val_if_fail(NM_IS_SETTING_IP_CONFIG(setting), NM_TERNARY_DEFAULT);
+
+    return NM_SETTING_IP_CONFIG_GET_PRIVATE(setting)->replace_local_rule;
+}
+
 static gboolean
 verify_label(const char *label)
 {
     const char *p;
-    char *      iface;
+    char       *iface;
 
     p = strchr(label, ':');
     if (!p)
@@ -5382,29 +5514,35 @@ verify(NMSetting *setting, NMConnection *connection, GError **error)
     }
 
     /* Validate DNS */
-    for (i = 0; i < priv->dns->len; i++) {
-        const char *dns = priv->dns->pdata[i];
+    if (priv->dns) {
+        for (i = 0; i < priv->dns->len; i++) {
+            const char *dns = priv->dns->pdata[i];
 
-        if (!nm_utils_ipaddr_is_valid(NM_SETTING_IP_CONFIG_GET_FAMILY(setting), dns)) {
-            g_set_error(error,
-                        NM_CONNECTION_ERROR,
-                        NM_CONNECTION_ERROR_INVALID_PROPERTY,
-                        _("%d. DNS server address is invalid"),
-                        (int) (i + 1));
-            g_prefix_error(error,
-                           "%s.%s: ",
-                           nm_setting_get_name(setting),
-                           NM_SETTING_IP_CONFIG_DNS);
-            return FALSE;
+            if (!nm_utils_dnsname_parse(NM_SETTING_IP_CONFIG_GET_ADDR_FAMILY(setting),
+                                        dns,
+                                        NULL,
+                                        NULL,
+                                        NULL)) {
+                g_set_error(error,
+                            NM_CONNECTION_ERROR,
+                            NM_CONNECTION_ERROR_INVALID_PROPERTY,
+                            _("%u. DNS server address is invalid"),
+                            (i + 1u));
+                g_prefix_error(error,
+                               "%s.%s: ",
+                               nm_setting_get_name(setting),
+                               NM_SETTING_IP_CONFIG_DNS);
+                return FALSE;
+            }
         }
     }
 
     /* Validate addresses */
     for (i = 0; i < priv->addresses->len; i++) {
         NMIPAddress *addr = (NMIPAddress *) priv->addresses->pdata[i];
-        GVariant *   label;
+        GVariant    *label;
 
-        if (nm_ip_address_get_family(addr) != NM_SETTING_IP_CONFIG_GET_FAMILY(setting)) {
+        if (nm_ip_address_get_family(addr) != NM_SETTING_IP_CONFIG_GET_ADDR_FAMILY(setting)) {
             g_set_error(error,
                         NM_CONNECTION_ERROR,
                         NM_CONNECTION_ERROR_INVALID_PROPERTY,
@@ -5461,7 +5599,7 @@ verify(NMSetting *setting, NMConnection *connection, GError **error)
             return FALSE;
         }
 
-        if (!nm_utils_ipaddr_is_valid(NM_SETTING_IP_CONFIG_GET_FAMILY(setting), priv->gateway)) {
+        if (!nm_inet_is_valid(NM_SETTING_IP_CONFIG_GET_ADDR_FAMILY(setting), priv->gateway)) {
             g_set_error_literal(error,
                                 NM_CONNECTION_ERROR,
                                 NM_CONNECTION_ERROR_INVALID_PROPERTY,
@@ -5477,9 +5615,9 @@ verify(NMSetting *setting, NMConnection *connection, GError **error)
     /* Validate routes */
     for (i = 0; i < priv->routes->len; i++) {
         gs_free_error GError *local = NULL;
-        NMIPRoute *           route = (NMIPRoute *) priv->routes->pdata[i];
+        NMIPRoute            *route = (NMIPRoute *) priv->routes->pdata[i];
 
-        if (nm_ip_route_get_family(route) != NM_SETTING_IP_CONFIG_GET_FAMILY(setting)) {
+        if (nm_ip_route_get_family(route) != NM_SETTING_IP_CONFIG_GET_ADDR_FAMILY(setting)) {
             g_set_error(error,
                         NM_CONNECTION_ERROR,
                         NM_CONNECTION_ERROR_INVALID_PROPERTY,
@@ -5508,11 +5646,11 @@ verify(NMSetting *setting, NMConnection *connection, GError **error)
 
     if (priv->routing_rules) {
         for (i = 0; i < priv->routing_rules->len; i++) {
-            NMIPRoutingRule *rule       = priv->routing_rules->pdata[i];
+            NMIPRoutingRule      *rule  = priv->routing_rules->pdata[i];
             gs_free_error GError *local = NULL;
 
             if (_ip_routing_rule_get_addr_family(rule)
-                != NM_SETTING_IP_CONFIG_GET_FAMILY(setting)) {
+                != NM_SETTING_IP_CONFIG_GET_ADDR_FAMILY(setting)) {
                 g_set_error(error,
                             NM_CONNECTION_ERROR,
                             NM_CONNECTION_ERROR_INVALID_PROPERTY,
@@ -5567,9 +5705,10 @@ verify(NMSetting *setting, NMConnection *connection, GError **error)
         return FALSE;
     }
 
-    if (!_nm_utils_validate_dhcp_hostname_flags(priv->dhcp_hostname_flags,
-                                                NM_SETTING_IP_CONFIG_GET_FAMILY(setting),
-                                                error)) {
+    if (priv->dhcp_hostname_flags != (NMDhcpHostnameFlags) priv->dhcp_hostname_flags
+        || !_nm_utils_validate_dhcp_hostname_flags(priv->dhcp_hostname_flags,
+                                                   NM_SETTING_IP_CONFIG_GET_ADDR_FAMILY(setting),
+                                                   error)) {
         g_prefix_error(error,
                        "%s.%s: ",
                        nm_setting_get_name(setting),
@@ -5579,7 +5718,7 @@ verify(NMSetting *setting, NMConnection *connection, GError **error)
 
     /* Validate reject servers */
     if (priv->dhcp_reject_servers && priv->dhcp_reject_servers->len != 0) {
-        if (NM_SETTING_IP_CONFIG_GET_FAMILY(setting) != AF_INET) {
+        if (NM_SETTING_IP_CONFIG_GET_ADDR_FAMILY(setting) != AF_INET) {
             g_set_error_literal(error,
                                 NM_CONNECTION_ERROR,
                                 NM_CONNECTION_ERROR_INVALID_PROPERTY,
@@ -5592,16 +5731,16 @@ verify(NMSetting *setting, NMConnection *connection, GError **error)
         }
 
         for (i = 0; i < priv->dhcp_reject_servers->len; i++) {
-            if (!nm_utils_parse_inaddr_prefix(
-                    NM_SETTING_IP_CONFIG_GET_FAMILY(setting),
-                    g_array_index(priv->dhcp_reject_servers, const char *, i),
+            if (!nm_inet_parse_with_prefix_str(
+                    NM_SETTING_IP_CONFIG_GET_ADDR_FAMILY(setting),
+                    nm_g_array_index(priv->dhcp_reject_servers, const char *, i),
                     NULL,
                     NULL)) {
                 g_set_error(error,
                             NM_CONNECTION_ERROR,
                             NM_CONNECTION_ERROR_INVALID_PROPERTY,
                             _("'%s' is not a valid IP or subnet"),
-                            g_array_index(priv->dhcp_reject_servers, const char *, i));
+                            nm_g_array_index(priv->dhcp_reject_servers, const char *, i));
                 g_prefix_error(error,
                                "%s.%s: ",
                                nm_setting_get_name(setting),
@@ -5628,77 +5767,91 @@ verify(NMSetting *setting, NMConnection *connection, GError **error)
     return TRUE;
 }
 
-static NMTernary
-compare_property(const NMSettInfoSetting *sett_info,
-                 guint                    property_idx,
-                 NMConnection *           con_a,
-                 NMSetting *              set_a,
-                 NMConnection *           con_b,
-                 NMSetting *              set_b,
-                 NMSettingCompareFlags    flags)
+NMTernary
+_nm_setting_ip_config_compare_fcn_addresses(_NM_SETT_INFO_PROP_COMPARE_FCN_ARGS _nm_nil)
 {
     NMSettingIPConfigPrivate *a_priv;
     NMSettingIPConfigPrivate *b_priv;
     guint                     i;
 
-    if (nm_streq(sett_info->property_infos[property_idx].name, NM_SETTING_IP_CONFIG_ADDRESSES)) {
-        if (set_b) {
-            a_priv = NM_SETTING_IP_CONFIG_GET_PRIVATE(set_a);
-            b_priv = NM_SETTING_IP_CONFIG_GET_PRIVATE(set_b);
+    if (set_b) {
+        a_priv = NM_SETTING_IP_CONFIG_GET_PRIVATE(set_a);
+        b_priv = NM_SETTING_IP_CONFIG_GET_PRIVATE(set_b);
 
-            if (a_priv->addresses->len != b_priv->addresses->len)
+        if (a_priv->addresses->len != b_priv->addresses->len)
+            return FALSE;
+        for (i = 0; i < a_priv->addresses->len; i++) {
+            if (nm_ip_address_cmp_full(a_priv->addresses->pdata[i],
+                                       b_priv->addresses->pdata[i],
+                                       NM_IP_ADDRESS_CMP_FLAGS_WITH_ATTRS)
+                != 0)
                 return FALSE;
-            for (i = 0; i < a_priv->addresses->len; i++) {
-                if (nm_ip_address_cmp_full(a_priv->addresses->pdata[i],
-                                           b_priv->addresses->pdata[i],
-                                           NM_IP_ADDRESS_CMP_FLAGS_WITH_ATTRS)
-                    != 0)
-                    return FALSE;
-            }
         }
-        return TRUE;
     }
+    return TRUE;
+}
 
-    if (nm_streq(sett_info->property_infos[property_idx].name, NM_SETTING_IP_CONFIG_ROUTES)) {
-        if (set_b) {
-            a_priv = NM_SETTING_IP_CONFIG_GET_PRIVATE(set_a);
-            b_priv = NM_SETTING_IP_CONFIG_GET_PRIVATE(set_b);
+NMTernary
+_nm_setting_ip_config_compare_fcn_routes(_NM_SETT_INFO_PROP_COMPARE_FCN_ARGS _nm_nil)
+{
+    NMSettingIPConfigPrivate *a_priv;
+    NMSettingIPConfigPrivate *b_priv;
+    guint                     i;
 
-            if (a_priv->routes->len != b_priv->routes->len)
+    if (set_b) {
+        a_priv = NM_SETTING_IP_CONFIG_GET_PRIVATE(set_a);
+        b_priv = NM_SETTING_IP_CONFIG_GET_PRIVATE(set_b);
+
+        if (a_priv->routes->len != b_priv->routes->len)
+            return FALSE;
+        for (i = 0; i < a_priv->routes->len; i++) {
+            if (!nm_ip_route_equal_full(a_priv->routes->pdata[i],
+                                        b_priv->routes->pdata[i],
+                                        NM_IP_ROUTE_EQUAL_CMP_FLAGS_WITH_ATTRS))
                 return FALSE;
-            for (i = 0; i < a_priv->routes->len; i++) {
-                if (!nm_ip_route_equal_full(a_priv->routes->pdata[i],
-                                            b_priv->routes->pdata[i],
-                                            NM_IP_ROUTE_EQUAL_CMP_FLAGS_WITH_ATTRS))
-                    return FALSE;
-            }
         }
-        return TRUE;
     }
+    return TRUE;
+}
 
-    if (nm_streq(sett_info->property_infos[property_idx].name,
-                 NM_SETTING_IP_CONFIG_ROUTING_RULES)) {
-        if (set_b) {
-            guint n;
+NMTernary
+_nm_setting_ip_config_compare_fcn_dns(_NM_SETT_INFO_PROP_COMPARE_FCN_ARGS _nm_nil)
+{
+    if (NM_FLAGS_HAS(flags, NM_SETTING_COMPARE_FLAG_INFERRABLE))
+        return NM_TERNARY_DEFAULT;
 
-            a_priv = NM_SETTING_IP_CONFIG_GET_PRIVATE(set_a);
-            b_priv = NM_SETTING_IP_CONFIG_GET_PRIVATE(set_b);
+    if (!set_b)
+        return TRUE;
 
-            n = (a_priv->routing_rules) ? a_priv->routing_rules->len : 0u;
-            if (n != (b_priv->routing_rules ? b_priv->routing_rules->len : 0u))
+    return (nm_strv_ptrarray_cmp(NM_SETTING_IP_CONFIG_GET_PRIVATE(set_a)->dns,
+                                 NM_SETTING_IP_CONFIG_GET_PRIVATE(set_b)->dns)
+            == 0);
+}
+
+static NMTernary
+compare_fcn_routing_rules(_NM_SETT_INFO_PROP_COMPARE_FCN_ARGS _nm_nil)
+{
+    NMSettingIPConfigPrivate *a_priv;
+    NMSettingIPConfigPrivate *b_priv;
+    guint                     i;
+
+    if (set_b) {
+        guint n;
+
+        a_priv = NM_SETTING_IP_CONFIG_GET_PRIVATE(set_a);
+        b_priv = NM_SETTING_IP_CONFIG_GET_PRIVATE(set_b);
+
+        n = (a_priv->routing_rules) ? a_priv->routing_rules->len : 0u;
+        if (n != (b_priv->routing_rules ? b_priv->routing_rules->len : 0u))
+            return FALSE;
+        for (i = 0; i < n; i++) {
+            if (nm_ip_routing_rule_cmp(a_priv->routing_rules->pdata[i],
+                                       b_priv->routing_rules->pdata[i])
+                != 0)
                 return FALSE;
-            for (i = 0; i < n; i++) {
-                if (nm_ip_routing_rule_cmp(a_priv->routing_rules->pdata[i],
-                                           b_priv->routing_rules->pdata[i])
-                    != 0)
-                    return FALSE;
-            }
         }
-        return TRUE;
     }
-
-    return NM_SETTING_CLASS(nm_setting_ip_config_parent_class)
-        ->compare_property(sett_info, property_idx, con_a, set_a, con_b, set_b, flags);
+    return TRUE;
 }
 
 static void
@@ -5732,14 +5885,14 @@ duplicate_copy_properties(const NMSettInfoSetting *sett_info, NMSetting *src, NM
 
 static void
 enumerate_values(const NMSettInfoProperty *property_info,
-                 NMSetting *               setting,
+                 NMSetting                *setting,
                  NMSettingValueIterFn      func,
                  gpointer                  user_data)
 {
     if (nm_streq(property_info->name, NM_SETTING_IP_CONFIG_ROUTING_RULES)) {
-        NMSettingIPConfigPrivate *  priv  = NM_SETTING_IP_CONFIG_GET_PRIVATE(setting);
+        NMSettingIPConfigPrivate   *priv  = NM_SETTING_IP_CONFIG_GET_PRIVATE(setting);
         nm_auto_unset_gvalue GValue value = G_VALUE_INIT;
-        GPtrArray *                 ptr   = NULL;
+        GPtrArray                  *ptr   = NULL;
         guint                       i;
 
         if (priv->routing_rules && priv->routing_rules->len > 0) {
@@ -5759,101 +5912,222 @@ enumerate_values(const NMSettInfoProperty *property_info,
 
 /*****************************************************************************/
 
-static gboolean
-ip_gateway_set(NMSetting *         setting,
-               GVariant *          connection_dict,
-               const char *        property,
-               GVariant *          value,
-               NMSettingParseFlags parse_flags,
-               GError **           error)
+gboolean
+_nm_setting_property_from_dbus_fcn_direct_ip_config_gateway(
+    _NM_SETT_INFO_PROP_FROM_DBUS_FCN_ARGS _nm_nil)
 {
-    /* FIXME: properly handle errors */
-
     /* Don't set from 'gateway' if we're going to use the gateway in 'addresses' */
     if (_nm_setting_use_legacy_property(setting, connection_dict, "addresses", "gateway"))
         return TRUE;
 
-    g_object_set(setting, property, g_variant_get_string(value, NULL), NULL);
+    return _nm_setting_property_from_dbus_fcn_direct(sett_info,
+                                                     property_info,
+                                                     setting,
+                                                     connection_dict,
+                                                     value,
+                                                     parse_flags,
+                                                     out_is_modified,
+                                                     error);
+}
+
+static GVariant *
+dns_data_to_dbus(_NM_SETT_INFO_PROP_TO_DBUS_FCN_ARGS _nm_nil)
+{
+    GPtrArray *arr;
+
+    if (!_nm_connection_serialize_non_secret(flags))
+        return NULL;
+
+    arr = _nm_setting_ip_config_get_dns_array(NM_SETTING_IP_CONFIG(setting));
+    if (nm_g_ptr_array_len(arr) == 0)
+        return NULL;
+    return g_variant_new_strv((const char *const *) arr->pdata, arr->len);
+}
+
+static gboolean
+dns_data_from_dbus(_NM_SETT_INFO_PROP_FROM_DBUS_FCN_ARGS _nm_nil)
+{
+    gs_free const char **strv = NULL;
+
+    if (_nm_setting_use_legacy_property(setting, connection_dict, "dns", "dns-data")) {
+        *out_is_modified = FALSE;
+        return TRUE;
+    }
+
+    strv = g_variant_get_strv(value, NULL);
+    g_object_set(setting, NM_SETTING_IP_CONFIG_DNS, strv, NULL);
     return TRUE;
 }
 
 GArray *
-_nm_sett_info_property_override_create_array_ip_config(void)
+_nm_sett_info_property_override_create_array_ip_config(int addr_family)
 {
     GArray *properties_override = _nm_sett_info_property_override_create_array();
+
+    nm_assert_addr_family(addr_family);
 
     _nm_properties_override_gobj(
         properties_override,
         obj_properties[PROP_METHOD],
-        &nm_sett_info_propert_type_string,
-        .to_dbus_data.get_string =
-            (const char *(*) (NMSetting *) ) nm_setting_ip_config_get_method);
+        &nm_sett_info_propert_type_direct_string,
+        .direct_offset = NM_STRUCT_OFFSET_ENSURE_TYPE(char *, NMSettingIPConfigPrivate, method));
 
     _nm_properties_override_gobj(
         properties_override,
         obj_properties[PROP_GATEWAY],
-        NM_SETT_INFO_PROPERT_TYPE_DBUS(G_VARIANT_TYPE_STRING,
-                                       .to_dbus_fcn   = _nm_setting_property_to_dbus_fcn_get_string,
-                                       .from_dbus_fcn = ip_gateway_set),
-        .to_dbus_data.get_string =
-            (const char *(*) (NMSetting *) ) nm_setting_ip_config_get_gateway);
+        NM_SETT_INFO_PROPERT_TYPE_DBUS(
+            G_VARIANT_TYPE_STRING,
+            .direct_type   = NM_VALUE_TYPE_STRING,
+            .compare_fcn   = _nm_setting_property_compare_fcn_direct,
+            .to_dbus_fcn   = _nm_setting_property_to_dbus_fcn_direct,
+            .from_dbus_fcn = _nm_setting_property_from_dbus_fcn_direct_ip_config_gateway),
+        .direct_offset = NM_STRUCT_OFFSET_ENSURE_TYPE(char *, NMSettingIPConfigPrivate, gateway),
+        .direct_set_string_ip_address_addr_family                  = addr_family + 1,
+        .direct_set_string_ip_address_addr_family_map_zero_to_null = TRUE);
 
     _nm_properties_override_gobj(
         properties_override,
         obj_properties[PROP_DHCP_HOSTNAME],
-        &nm_sett_info_propert_type_string,
-        .to_dbus_data.get_string =
-            (const char *(*) (NMSetting *) ) nm_setting_ip_config_get_dhcp_hostname);
+        &nm_sett_info_propert_type_direct_string,
+        .direct_offset =
+            NM_STRUCT_OFFSET_ENSURE_TYPE(char *, NMSettingIPConfigPrivate, dhcp_hostname));
 
     _nm_properties_override_gobj(
         properties_override,
         obj_properties[PROP_DHCP_IAID],
-        &nm_sett_info_propert_type_string,
-        .to_dbus_data.get_string =
-            (const char *(*) (NMSetting *) ) nm_setting_ip_config_get_dhcp_iaid);
+        &nm_sett_info_propert_type_direct_string,
+        .direct_offset = NM_STRUCT_OFFSET_ENSURE_TYPE(char *, NMSettingIPConfigPrivate, dhcp_iaid));
 
     /* ---dbus---
      * property: routing-rules
      * format: array of 'a{sv}'
-     * description: Array of dictionaries for routing rules.
+     * description: Array of dictionaries for routing rules. Each routing rule
+     *  supports the following options: action (y), dport-end (q),
+     *  dport-start (q), family (i), from (s), from-len (y), fwmark (u),
+     *  fwmask (u), iifname (s), invert (b), ipproto (s), oifname (s),
+     *  priority (u), sport-end (q), sport-start (q), supress-prefixlength (i),
+     *  table (u), to (s), tos (y), to-len (y), range-end (u), range-start (u).
      * ---end---
      */
     _nm_properties_override_dbus(
         properties_override,
         NM_SETTING_IP_CONFIG_ROUTING_RULES,
         NM_SETT_INFO_PROPERT_TYPE_DBUS(NM_G_VARIANT_TYPE("aa{sv}"),
-                                       .to_dbus_fcn   = _routing_rules_dbus_only_synth,
-                                       .from_dbus_fcn = _routing_rules_dbus_only_set, ));
+                                       .to_dbus_fcn   = routing_rules_to_dbus,
+                                       .compare_fcn   = compare_fcn_routing_rules,
+                                       .from_dbus_fcn = routing_rules_from_dbus, ));
 
-    _nm_properties_override_gobj(properties_override,
-                                 obj_properties[PROP_IGNORE_AUTO_ROUTES],
-                                 &nm_sett_info_propert_type_boolean,
-                                 .to_dbus_data.get_boolean = (gboolean(*)(
-                                     NMSetting *)) nm_setting_ip_config_get_ignore_auto_routes);
+    _nm_properties_override_gobj(
+        properties_override,
+        obj_properties[PROP_IGNORE_AUTO_ROUTES],
+        &nm_sett_info_propert_type_direct_boolean,
+        .direct_offset =
+            NM_STRUCT_OFFSET_ENSURE_TYPE(bool, NMSettingIPConfigPrivate, ignore_auto_routes));
 
-    _nm_properties_override_gobj(properties_override,
-                                 obj_properties[PROP_IGNORE_AUTO_DNS],
-                                 &nm_sett_info_propert_type_boolean,
-                                 .to_dbus_data.get_boolean = (gboolean(*)(
-                                     NMSetting *)) nm_setting_ip_config_get_ignore_auto_dns);
+    _nm_properties_override_gobj(
+        properties_override,
+        obj_properties[PROP_ROUTE_TABLE],
+        &nm_sett_info_propert_type_direct_uint32,
+        .direct_offset =
+            NM_STRUCT_OFFSET_ENSURE_TYPE(guint32, NMSettingIPConfigPrivate, route_table));
 
-    _nm_properties_override_gobj(properties_override,
-                                 obj_properties[PROP_DHCP_SEND_HOSTNAME],
-                                 &nm_sett_info_propert_type_boolean,
-                                 .to_dbus_data.get_boolean = (gboolean(*)(
-                                     NMSetting *)) nm_setting_ip_config_get_dhcp_send_hostname);
+    _nm_properties_override_gobj(
+        properties_override,
+        obj_properties[PROP_ROUTE_METRIC],
+        &nm_sett_info_propert_type_direct_int64,
+        .direct_offset =
+            NM_STRUCT_OFFSET_ENSURE_TYPE(gint64, NMSettingIPConfigPrivate, route_metric));
 
-    _nm_properties_override_gobj(properties_override,
-                                 obj_properties[PROP_NEVER_DEFAULT],
-                                 &nm_sett_info_propert_type_boolean,
-                                 .to_dbus_data.get_boolean = (gboolean(*)(
-                                     NMSetting *)) nm_setting_ip_config_get_never_default);
+    _nm_properties_override_gobj(
+        properties_override,
+        obj_properties[PROP_IGNORE_AUTO_DNS],
+        &nm_sett_info_propert_type_direct_boolean,
+        .direct_offset =
+            NM_STRUCT_OFFSET_ENSURE_TYPE(bool, NMSettingIPConfigPrivate, ignore_auto_dns));
 
-    _nm_properties_override_gobj(properties_override,
-                                 obj_properties[PROP_MAY_FAIL],
-                                 &nm_sett_info_propert_type_boolean,
-                                 .to_dbus_data.get_boolean =
-                                     (gboolean(*)(NMSetting *)) nm_setting_ip_config_get_may_fail);
+    /* ---dbus---
+     * property: dns-data
+     * format: array of strings
+     * description: Array of DNS name servers. This replaces the deprecated
+     *   "dns" property. Each name server can also contain a DoT server name.
+     * ---end---
+     */
+    _nm_properties_override_dbus(
+        properties_override,
+        "dns-data",
+        NM_SETT_INFO_PROPERT_TYPE_DBUS(NM_G_VARIANT_TYPE("as"),
+                                       .to_dbus_fcn   = dns_data_to_dbus,
+                                       .from_dbus_fcn = dns_data_from_dbus,
+                                       .compare_fcn   = _nm_setting_property_compare_fcn_ignore, ));
+
+    _nm_properties_override_gobj(
+        properties_override,
+        obj_properties[PROP_DNS_PRIORITY],
+        &nm_sett_info_propert_type_direct_int32,
+        .direct_offset =
+            NM_STRUCT_OFFSET_ENSURE_TYPE(gint32, NMSettingIPConfigPrivate, dns_priority));
+
+    _nm_properties_override_gobj(
+        properties_override,
+        obj_properties[PROP_DHCP_TIMEOUT],
+        &nm_sett_info_propert_type_direct_int32,
+        .direct_offset =
+            NM_STRUCT_OFFSET_ENSURE_TYPE(gint32, NMSettingIPConfigPrivate, dhcp_timeout));
+
+    _nm_properties_override_gobj(
+        properties_override,
+        obj_properties[PROP_REQUIRED_TIMEOUT],
+        &nm_sett_info_propert_type_direct_int32,
+        .direct_offset =
+            NM_STRUCT_OFFSET_ENSURE_TYPE(gint32, NMSettingIPConfigPrivate, required_timeout));
+
+    _nm_properties_override_gobj(
+        properties_override,
+        obj_properties[PROP_DAD_TIMEOUT],
+        &nm_sett_info_propert_type_direct_int32,
+        .direct_offset =
+            NM_STRUCT_OFFSET_ENSURE_TYPE(gint32, NMSettingIPConfigPrivate, dad_timeout));
+
+    _nm_properties_override_gobj(
+        properties_override,
+        obj_properties[PROP_DHCP_SEND_HOSTNAME],
+        &nm_sett_info_propert_type_direct_boolean,
+        .direct_offset =
+            NM_STRUCT_OFFSET_ENSURE_TYPE(bool, NMSettingIPConfigPrivate, dhcp_send_hostname));
+
+    _nm_properties_override_gobj(
+        properties_override,
+        obj_properties[PROP_DHCP_HOSTNAME_FLAGS],
+        &nm_sett_info_propert_type_direct_uint32,
+        .direct_offset =
+            NM_STRUCT_OFFSET_ENSURE_TYPE(guint32, NMSettingIPConfigPrivate, dhcp_hostname_flags));
+
+    _nm_properties_override_gobj(
+        properties_override,
+        obj_properties[PROP_NEVER_DEFAULT],
+        &nm_sett_info_propert_type_direct_boolean,
+        .direct_offset =
+            NM_STRUCT_OFFSET_ENSURE_TYPE(bool, NMSettingIPConfigPrivate, never_default));
+
+    _nm_properties_override_gobj(
+        properties_override,
+        obj_properties[PROP_MAY_FAIL],
+        &nm_sett_info_propert_type_direct_boolean,
+        .direct_offset = NM_STRUCT_OFFSET_ENSURE_TYPE(bool, NMSettingIPConfigPrivate, may_fail));
+
+    _nm_properties_override_gobj(
+        properties_override,
+        obj_properties[PROP_AUTO_ROUTE_EXT_GW],
+        &nm_sett_info_propert_type_direct_enum,
+        .direct_offset =
+            NM_STRUCT_OFFSET_ENSURE_TYPE(int, NMSettingIPConfigPrivate, auto_route_ext_gw));
+
+    _nm_properties_override_gobj(
+        properties_override,
+        obj_properties[PROP_REPLACE_LOCAL_RULE],
+        &nm_sett_info_propert_type_direct_enum,
+        .direct_offset =
+            NM_STRUCT_OFFSET_ENSURE_TYPE(int, NMSettingIPConfigPrivate, replace_local_rule));
 
     return properties_override;
 }
@@ -5863,13 +6137,10 @@ _nm_sett_info_property_override_create_array_ip_config(void)
 static void
 get_property(GObject *object, guint prop_id, GValue *value, GParamSpec *pspec)
 {
-    NMSettingIPConfig *       setting = NM_SETTING_IP_CONFIG(object);
+    NMSettingIPConfig        *setting = NM_SETTING_IP_CONFIG(object);
     NMSettingIPConfigPrivate *priv    = NM_SETTING_IP_CONFIG_GET_PRIVATE(setting);
 
     switch (prop_id) {
-    case PROP_METHOD:
-        g_value_set_string(value, nm_setting_ip_config_get_method(setting));
-        break;
     case PROP_DNS:
         g_value_take_boxed(value, _nm_utils_ptrarray_to_strv(priv->dns));
         break;
@@ -5881,17 +6152,11 @@ get_property(GObject *object, guint prop_id, GValue *value, GParamSpec *pspec)
                            priv->dns_options ? _nm_utils_ptrarray_to_strv(priv->dns_options)
                                              : NULL);
         break;
-    case PROP_DNS_PRIORITY:
-        g_value_set_int(value, priv->dns_priority);
-        break;
     case PROP_ADDRESSES:
         g_value_take_boxed(value,
                            _nm_utils_copy_array(priv->addresses,
                                                 (NMUtilsCopyFunc) nm_ip_address_dup,
                                                 (GDestroyNotify) nm_ip_address_unref));
-        break;
-    case PROP_GATEWAY:
-        g_value_set_string(value, nm_setting_ip_config_get_gateway(setting));
         break;
     case PROP_ROUTES:
         g_value_take_boxed(value,
@@ -5899,50 +6164,11 @@ get_property(GObject *object, guint prop_id, GValue *value, GParamSpec *pspec)
                                                 (NMUtilsCopyFunc) nm_ip_route_dup,
                                                 (GDestroyNotify) nm_ip_route_unref));
         break;
-    case PROP_ROUTE_METRIC:
-        g_value_set_int64(value, priv->route_metric);
-        break;
-    case PROP_ROUTE_TABLE:
-        g_value_set_uint(value, priv->route_table);
-        break;
-    case PROP_IGNORE_AUTO_ROUTES:
-        g_value_set_boolean(value, nm_setting_ip_config_get_ignore_auto_routes(setting));
-        break;
-    case PROP_IGNORE_AUTO_DNS:
-        g_value_set_boolean(value, nm_setting_ip_config_get_ignore_auto_dns(setting));
-        break;
-    case PROP_DHCP_HOSTNAME:
-        g_value_set_string(value, nm_setting_ip_config_get_dhcp_hostname(setting));
-        break;
-    case PROP_DHCP_SEND_HOSTNAME:
-        g_value_set_boolean(value, nm_setting_ip_config_get_dhcp_send_hostname(setting));
-        break;
-    case PROP_NEVER_DEFAULT:
-        g_value_set_boolean(value, priv->never_default);
-        break;
-    case PROP_MAY_FAIL:
-        g_value_set_boolean(value, priv->may_fail);
-        break;
-    case PROP_DAD_TIMEOUT:
-        g_value_set_int(value, nm_setting_ip_config_get_dad_timeout(setting));
-        break;
-    case PROP_DHCP_TIMEOUT:
-        g_value_set_int(value, nm_setting_ip_config_get_dhcp_timeout(setting));
-        break;
-    case PROP_REQUIRED_TIMEOUT:
-        g_value_set_int(value, nm_setting_ip_config_get_required_timeout(setting));
-        break;
-    case PROP_DHCP_IAID:
-        g_value_set_string(value, nm_setting_ip_config_get_dhcp_iaid(setting));
-        break;
-    case PROP_DHCP_HOSTNAME_FLAGS:
-        g_value_set_uint(value, nm_setting_ip_config_get_dhcp_hostname_flags(setting));
-        break;
     case PROP_DHCP_REJECT_SERVERS:
         g_value_set_boxed(value, nm_strvarray_get_strv_non_empty(priv->dhcp_reject_servers, NULL));
         break;
     default:
-        G_OBJECT_WARN_INVALID_PROPERTY_ID(object, prop_id, pspec);
+        _nm_setting_property_get_property_direct(object, prop_id, value, pspec);
         break;
     }
 }
@@ -5950,24 +6176,27 @@ get_property(GObject *object, guint prop_id, GValue *value, GParamSpec *pspec)
 static void
 set_property(GObject *object, guint prop_id, const GValue *value, GParamSpec *pspec)
 {
-    NMSettingIPConfig *       setting = NM_SETTING_IP_CONFIG(object);
+    NMSettingIPConfig        *setting = NM_SETTING_IP_CONFIG(object);
     NMSettingIPConfigPrivate *priv    = NM_SETTING_IP_CONFIG_GET_PRIVATE(setting);
-    const char *              gateway;
-    char **                   strv;
+    char                    **strv;
     guint                     i;
 
     switch (prop_id) {
-    case PROP_METHOD:
-        g_free(priv->method);
-        priv->method = g_value_dup_string(value);
-        break;
     case PROP_DNS:
-        g_ptr_array_unref(priv->dns);
-        priv->dns = _nm_utils_strv_to_ptrarray(g_value_get_boxed(value));
+    {
+        gs_unref_ptrarray GPtrArray *dns_old = NULL;
+
+        dns_old = g_steal_pointer(&priv->dns);
+        strv    = g_value_get_boxed(value);
+        if (strv) {
+            for (i = 0; strv[i]; i++)
+                _ip_config_add_dns(setting, strv[i]);
+        }
         break;
+    }
     case PROP_DNS_SEARCH:
         g_ptr_array_unref(priv->dns_search);
-        priv->dns_search = _nm_utils_strv_to_ptrarray(g_value_get_boxed(value));
+        priv->dns_search = nm_strv_to_ptrarray(g_value_get_boxed(value));
         break;
     case PROP_DNS_OPTIONS:
         strv = g_value_get_boxed(value);
@@ -5988,22 +6217,11 @@ set_property(GObject *object, guint prop_id, const GValue *value, GParamSpec *ps
             }
         }
         break;
-    case PROP_DNS_PRIORITY:
-        priv->dns_priority = g_value_get_int(value);
-        break;
     case PROP_ADDRESSES:
         g_ptr_array_unref(priv->addresses);
         priv->addresses = _nm_utils_copy_array(g_value_get_boxed(value),
                                                (NMUtilsCopyFunc) nm_ip_address_dup,
                                                (GDestroyNotify) nm_ip_address_unref);
-        break;
-    case PROP_GATEWAY:
-        gateway = g_value_get_string(value);
-        g_return_if_fail(
-            !gateway
-            || nm_utils_ipaddr_is_valid(NM_SETTING_IP_CONFIG_GET_FAMILY(setting), gateway));
-        g_free(priv->gateway);
-        priv->gateway = canonicalize_ip(NM_SETTING_IP_CONFIG_GET_FAMILY(setting), gateway, TRUE);
         break;
     case PROP_ROUTES:
         g_ptr_array_unref(priv->routes);
@@ -6011,94 +6229,46 @@ set_property(GObject *object, guint prop_id, const GValue *value, GParamSpec *ps
                                             (NMUtilsCopyFunc) nm_ip_route_dup,
                                             (GDestroyNotify) nm_ip_route_unref);
         break;
-    case PROP_ROUTE_METRIC:
-        priv->route_metric = g_value_get_int64(value);
-        break;
-    case PROP_ROUTE_TABLE:
-        priv->route_table = g_value_get_uint(value);
-        break;
-    case PROP_IGNORE_AUTO_ROUTES:
-        priv->ignore_auto_routes = g_value_get_boolean(value);
-        break;
-    case PROP_IGNORE_AUTO_DNS:
-        priv->ignore_auto_dns = g_value_get_boolean(value);
-        break;
-    case PROP_DHCP_HOSTNAME:
-        g_free(priv->dhcp_hostname);
-        priv->dhcp_hostname = g_value_dup_string(value);
-        break;
-    case PROP_DHCP_SEND_HOSTNAME:
-        priv->dhcp_send_hostname = g_value_get_boolean(value);
-        break;
-    case PROP_NEVER_DEFAULT:
-        priv->never_default = g_value_get_boolean(value);
-        break;
-    case PROP_MAY_FAIL:
-        priv->may_fail = g_value_get_boolean(value);
-        break;
-    case PROP_DAD_TIMEOUT:
-        priv->dad_timeout = g_value_get_int(value);
-        break;
-    case PROP_DHCP_TIMEOUT:
-        priv->dhcp_timeout = g_value_get_int(value);
-        break;
-    case PROP_REQUIRED_TIMEOUT:
-        priv->required_timeout = g_value_get_int(value);
-        break;
-    case PROP_DHCP_IAID:
-        g_free(priv->dhcp_iaid);
-        priv->dhcp_iaid = g_value_dup_string(value);
-        break;
-    case PROP_DHCP_HOSTNAME_FLAGS:
-        priv->dhcp_hostname_flags = g_value_get_uint(value);
-        break;
     case PROP_DHCP_REJECT_SERVERS:
         nm_strvarray_set_strv(&priv->dhcp_reject_servers, g_value_get_boxed(value));
         break;
     default:
-        G_OBJECT_WARN_INVALID_PROPERTY_ID(object, prop_id, pspec);
+        _nm_setting_property_set_property_direct(object, prop_id, value, pspec);
         break;
     }
 }
 
 /*****************************************************************************/
 
+void
+_nm_setting_ip_config_private_init(gpointer self, NMSettingIPConfigPrivate *priv)
+{
+    nm_assert(NM_IS_SETTING_IP_CONFIG(self));
+
+    priv->dns_search = g_ptr_array_new_with_free_func(g_free);
+    priv->addresses  = g_ptr_array_new_with_free_func((GDestroyNotify) nm_ip_address_unref);
+    priv->routes     = g_ptr_array_new_with_free_func((GDestroyNotify) nm_ip_route_unref);
+}
+
 static void
 nm_setting_ip_config_init(NMSettingIPConfig *setting)
 {
-    NMSettingIPConfigPrivate *priv = NM_SETTING_IP_CONFIG_GET_PRIVATE(setting);
-
-    priv->dns                = g_ptr_array_new_with_free_func(g_free);
-    priv->dns_search         = g_ptr_array_new_with_free_func(g_free);
-    priv->addresses          = g_ptr_array_new_with_free_func((GDestroyNotify) nm_ip_address_unref);
-    priv->routes             = g_ptr_array_new_with_free_func((GDestroyNotify) nm_ip_route_unref);
-    priv->route_metric       = -1;
-    priv->dhcp_send_hostname = TRUE;
-    priv->may_fail           = TRUE;
-    priv->dad_timeout        = -1;
-    priv->required_timeout   = -1;
+    /* cannot yet access NM_SETTING_IP_CONFIG_GET_PRIVATE(). */
 }
 
 static void
 finalize(GObject *object)
 {
-    NMSettingIPConfig *       self = NM_SETTING_IP_CONFIG(object);
+    NMSettingIPConfig        *self = NM_SETTING_IP_CONFIG(object);
     NMSettingIPConfigPrivate *priv = NM_SETTING_IP_CONFIG_GET_PRIVATE(self);
 
-    g_free(priv->method);
-    g_free(priv->gateway);
-    g_free(priv->dhcp_hostname);
-    g_free(priv->dhcp_iaid);
-
-    g_ptr_array_unref(priv->dns);
+    nm_g_ptr_array_unref(priv->dns);
     g_ptr_array_unref(priv->dns_search);
-    if (priv->dns_options)
-        g_ptr_array_unref(priv->dns_options);
+    nm_g_ptr_array_unref(priv->dns_options);
     g_ptr_array_unref(priv->addresses);
     g_ptr_array_unref(priv->routes);
-    if (priv->routing_rules)
-        g_ptr_array_unref(priv->routing_rules);
-    nm_clear_pointer(&priv->dhcp_reject_servers, g_array_unref);
+    nm_g_ptr_array_unref(priv->routing_rules);
+    nm_g_array_unref(priv->dhcp_reject_servers);
 
     G_OBJECT_CLASS(nm_setting_ip_config_parent_class)->finalize(object);
 }
@@ -6106,17 +6276,14 @@ finalize(GObject *object)
 static void
 nm_setting_ip_config_class_init(NMSettingIPConfigClass *klass)
 {
-    GObjectClass *  object_class  = G_OBJECT_CLASS(klass);
+    GObjectClass   *object_class  = G_OBJECT_CLASS(klass);
     NMSettingClass *setting_class = NM_SETTING_CLASS(klass);
-
-    g_type_class_add_private(klass, sizeof(NMSettingIPConfigPrivate));
 
     object_class->get_property = get_property;
     object_class->set_property = set_property;
     object_class->finalize     = finalize;
 
     setting_class->verify                    = verify;
-    setting_class->compare_property          = compare_property;
     setting_class->duplicate_copy_properties = duplicate_copy_properties;
     setting_class->enumerate_values          = enumerate_values;
 
@@ -6154,17 +6321,23 @@ nm_setting_ip_config_class_init(NMSettingIPConfigClass *klass)
      * NMSettingIPConfig:dns:
      *
      * Array of IP addresses of DNS servers.
+     *
+     * For DoT (DNS over TLS), the SNI server name can be specified by appending
+     * "#example.com" to the IP address of the DNS server. This currently only has
+     * effect when using systemd-resolved.
      **/
-    obj_properties[PROP_DNS] = g_param_spec_boxed(NM_SETTING_IP_CONFIG_DNS,
-                                                  "",
-                                                  "",
-                                                  G_TYPE_STRV,
-                                                  G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS);
+    obj_properties[PROP_DNS] =
+        g_param_spec_boxed(NM_SETTING_IP_CONFIG_DNS,
+                           "",
+                           "",
+                           G_TYPE_STRV,
+                           /* On D-Bus, "dns" is deprecated for "dns-data". */
+                           G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS);
 
     /**
      * NMSettingIPConfig:dns-search:
      *
-     * Array of DNS search domains. Domains starting with a tilde ('~')
+     * List of DNS search domains. Domains starting with a tilde ('~')
      * are considered 'routing' domains and are used only to decide the
      * interface over which a query must be forwarded; they are not used
      * to complete unqualified host names.
@@ -6173,6 +6346,12 @@ nm_setting_ip_config_class_init(NMSettingIPConfigClass *klass)
      * Split DNS, then the search domains specify which name servers to
      * query. This makes the behavior different from running with plain
      * /etc/resolv.conf. For more information see also the dns-priority setting.
+     *
+     * When set on a profile that also enabled DHCP, the DNS search list
+     * received automatically (option 119 for DHCPv4 and option 24 for DHCPv6)
+     * gets merged with the manual list. This can be prevented by setting
+     * "ignore-auto-dns". Note that if no DNS searches are configured, the
+     * fallback will be derived from the domain from DHCP (option 15).
      **/
     obj_properties[PROP_DNS_SEARCH] =
         g_param_spec_boxed(NM_SETTING_IP_CONFIG_DNS_SEARCH,
@@ -6284,12 +6463,9 @@ nm_setting_ip_config_class_init(NMSettingIPConfigClass *klass)
                            "",
                            "",
                            G_TYPE_PTR_ARRAY,
-                           /* "addresses" is a legacy D-Bus property, because the
-                            * "addresses" GObject property normally gets set from
-                            * the "address-data" D-Bus property...
-                            */
-                           G_PARAM_READWRITE | NM_SETTING_PARAM_INFERRABLE | NM_SETTING_PARAM_LEGACY
-                               | G_PARAM_STATIC_STRINGS);
+                           /* On D-Bus, "addresses" is deprecated for "address-data". */
+                           G_PARAM_READWRITE | NM_SETTING_PARAM_INFERRABLE
+                               | NM_SETTING_PARAM_UNUSED1 | G_PARAM_STATIC_STRINGS);
 
     /**
      * NMSettingIPConfig:gateway:
@@ -6297,18 +6473,22 @@ nm_setting_ip_config_class_init(NMSettingIPConfigClass *klass)
      * The gateway associated with this configuration. This is only meaningful
      * if #NMSettingIPConfig:addresses is also set.
      *
-     * The gateway's main purpose is to control the next hop of the standard default route on the device.
-     * Hence, the gateway property conflicts with #NMSettingIPConfig:never-default and will be
-     * automatically dropped if the IP configuration is set to never-default.
+     * Setting the gateway causes NetworkManager to configure a standard default route
+     * with the gateway as next hop. This is ignored if #NMSettingIPConfig:never-default
+     * is set. An alternative is to configure the default route explicitly with a manual
+     * route and /0 as prefix length.
      *
-     * As an alternative to set the gateway, configure a static default route with /0 as prefix
-     * length.
+     * Note that the gateway usually conflicts with routing that NetworkManager configures
+     * for WireGuard interfaces, so usually it should not be set in that case. See
+     * #NMSettingWireGuard:ip4-auto-default-route.
      **/
     obj_properties[PROP_GATEWAY] = g_param_spec_string(
         NM_SETTING_IP_CONFIG_GATEWAY,
         "",
         "",
         NULL,
+        /* On D-Bus, the legacy property "addresses" contains the gateway.
+         * This was replaced by "address-data" and "gateway". */
         G_PARAM_READWRITE | NM_SETTING_PARAM_INFERRABLE | G_PARAM_STATIC_STRINGS);
 
     /**
@@ -6321,9 +6501,9 @@ nm_setting_ip_config_class_init(NMSettingIPConfigClass *klass)
                            "",
                            "",
                            G_TYPE_PTR_ARRAY,
-                           G_PARAM_READWRITE | NM_SETTING_PARAM_INFERRABLE |
-                               /* See :addresses above Re: LEGACY */
-                               NM_SETTING_PARAM_LEGACY | G_PARAM_STATIC_STRINGS);
+                           /* On D-Bus, "routes" is deprecated for "route-data". */
+                           G_PARAM_READWRITE | NM_SETTING_PARAM_INFERRABLE
+                               | NM_SETTING_PARAM_UNUSED1 | G_PARAM_STATIC_STRINGS);
 
     /**
      * NMSettingIPConfig:route-metric:
@@ -6532,7 +6712,7 @@ nm_setting_ip_config_class_init(NMSettingIPConfigClass *klass)
      * default value (either configuration ipvx.required-timeout override or
      * zero).
      *
-     * Since: 1.34, 1.32.4
+     * Since: 1.34
      **/
     obj_properties[PROP_REQUIRED_TIMEOUT] = g_param_spec_int(
         NM_SETTING_IP_CONFIG_REQUIRED_TIMEOUT,
@@ -6546,18 +6726,28 @@ nm_setting_ip_config_class_init(NMSettingIPConfigClass *klass)
     /**
      * NMSettingIPConfig:dhcp-iaid:
      *
-     * A string containing the "Identity Association Identifier" (IAID) used
-     * by the DHCP client. The property is a 32-bit decimal value or a
-     * special value among "mac", "perm-mac", "ifname" and "stable". When
-     * set to "mac" (or "perm-mac"), the last 4 bytes of the current (or
-     * permanent) MAC address are used as IAID. When set to "ifname", the
-     * IAID is computed by hashing the interface name. The special value
-     * "stable" can be used to generate an IAID based on the stable-id (see
-     * connection.stable-id), a per-host key and the interface name. When
-     * the property is unset, the value from global configuration is used;
-     * if no global default is set then the IAID is assumed to be
-     * "ifname". Note that at the moment this property is ignored for IPv6
-     * by dhclient, which always derives the IAID from the MAC address.
+     * A string containing the "Identity Association Identifier" (IAID) used by
+     * the DHCP client. The string can be a 32-bit number (either decimal,
+     * hexadecimal or or as colon separated hexadecimal numbers). Alternatively
+     * it can be set to the special values "mac", "perm-mac", "ifname" or
+     * "stable". When set to "mac" (or "perm-mac"), the last 4 bytes of the
+     * current (or permanent) MAC address are used as IAID. When set to
+     * "ifname", the IAID is computed by hashing the interface name. The
+     * special value "stable" can be used to generate an IAID based on the
+     * stable-id (see connection.stable-id), a per-host key and the interface
+     * name. When the property is unset, the value from global configuration is
+     * used; if no global default is set then the IAID is assumed to be
+     * "ifname".
+     *
+     * For DHCPv4, the IAID is only used with "ipv4.dhcp-client-id"
+     * values "duid" and "ipv6-duid" to generate the client-id.
+     *
+     * For DHCPv6, note that at the moment this property is
+     * only supported by the "internal" DHCPv6 plugin. The "dhclient" DHCPv6
+     * plugin always derives the IAID from the MAC address.
+     *
+     * The actually used DHCPv6 IAID for a currently activated interface is
+     * exposed in the lease information of the device.
      *
      * Since: 1.22
      **/
@@ -6621,6 +6811,41 @@ nm_setting_ip_config_class_init(NMSettingIPConfigClass *klass)
                            "",
                            G_TYPE_STRV,
                            G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS);
+
+    /**
+     * NMSettingIPConfig:auto-route-ext-gw:
+     *
+     * VPN connections will default to add the route automatically unless this
+     * setting is set to %FALSE.
+     *
+     * For other connection types, adding such an automatic route is currently
+     * not supported and setting this to %TRUE has no effect.
+     *
+     * Since: 1.42
+     */
+    obj_properties[PROP_AUTO_ROUTE_EXT_GW] =
+        g_param_spec_enum(NM_SETTING_IP_CONFIG_AUTO_ROUTE_EXT_GW,
+                          "",
+                          "",
+                          NM_TYPE_TERNARY,
+                          NM_TERNARY_DEFAULT,
+                          G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS);
+
+    /**
+     * NMSettingIPConfig:replace-local-rule:
+     *
+     * Connections will default to keep the autogenerated priority 0 local rule
+     * unless this setting is set to %TRUE.
+     *
+     * Since: 1.44, 1.42.2
+     */
+    obj_properties[PROP_REPLACE_LOCAL_RULE] =
+        g_param_spec_enum(NM_SETTING_IP_CONFIG_REPLACE_LOCAL_RULE,
+                          "",
+                          "",
+                          NM_TYPE_TERNARY,
+                          NM_TERNARY_DEFAULT,
+                          G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS);
 
     g_object_class_install_properties(object_class, _PROPERTY_ENUMS_LAST, obj_properties);
 }

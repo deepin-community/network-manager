@@ -38,20 +38,20 @@
  *
  * 10: NMSettingUser
  */
-typedef enum { /*< skip >*/
-               NM_SETTING_PRIORITY_INVALID     = 0,
-               NM_SETTING_PRIORITY_CONNECTION  = 1,
-               NM_SETTING_PRIORITY_HW_BASE     = 2,
-               NM_SETTING_PRIORITY_HW_NON_BASE = 3,
-               NM_SETTING_PRIORITY_HW_AUX      = 4,
-               NM_SETTING_PRIORITY_AUX         = 5,
-               NM_SETTING_PRIORITY_IP          = 6,
-               NM_SETTING_PRIORITY_USER        = 10,
+typedef enum /*< skip >*/ {
+    NM_SETTING_PRIORITY_INVALID     = 0,
+    NM_SETTING_PRIORITY_CONNECTION  = 1,
+    NM_SETTING_PRIORITY_HW_BASE     = 2,
+    NM_SETTING_PRIORITY_HW_NON_BASE = 3,
+    NM_SETTING_PRIORITY_HW_AUX      = 4,
+    NM_SETTING_PRIORITY_AUX         = 5,
+    NM_SETTING_PRIORITY_IP          = 6,
+    NM_SETTING_PRIORITY_USER        = 10,
 } NMSettingPriority;
 
 /*****************************************************************************/
 
-typedef enum {
+typedef enum _nm_packed {
     NM_SETTING_802_1X_SCHEME_TYPE_CA_CERT,
     NM_SETTING_802_1X_SCHEME_TYPE_PHASE2_CA_CERT,
     NM_SETTING_802_1X_SCHEME_TYPE_CLIENT_CERT,
@@ -73,24 +73,26 @@ typedef struct {
     const char *(*uri_func)(NMSetting8021x *setting);
     const char *(*passwd_func)(NMSetting8021x *setting);
     NMSettingSecretFlags (*pwflag_func)(NMSetting8021x *setting);
-    gboolean (*set_cert_func)(NMSetting8021x *        setting,
-                              const char *            value,
+    gboolean (*set_cert_func)(NMSetting8021x         *setting,
+                              const char             *value,
                               NMSetting8021xCKScheme  scheme,
                               NMSetting8021xCKFormat *out_format,
-                              GError **               error);
-    gboolean (*set_private_key_func)(NMSetting8021x *        setting,
-                                     const char *            value,
-                                     const char *            password,
+                              GError                **error);
+    gboolean (*set_private_key_func)(NMSetting8021x         *setting,
+                                     const char             *value,
+                                     const char             *password,
                                      NMSetting8021xCKScheme  scheme,
                                      NMSetting8021xCKFormat *out_format,
-                                     GError **               error);
-    const char *             file_suffix;
+                                     GError                **error);
+    const char              *file_suffix;
     NMSetting8021xSchemeType scheme_type;
     bool                     is_secret : 1;
 } NMSetting8021xSchemeVtable;
 
 extern const NMSetting8021xSchemeVtable
     nm_setting_8021x_scheme_vtable[_NM_SETTING_802_1X_SCHEME_TYPE_NUM + 1];
+
+const NMSetting8021xSchemeVtable *nm_setting_8021x_scheme_vtable_by_setting_key(const char *key);
 
 /*****************************************************************************/
 
@@ -110,6 +112,7 @@ typedef enum _nm_packed {
     NM_META_SETTING_TYPE_ADSL,
     NM_META_SETTING_TYPE_BLUETOOTH,
     NM_META_SETTING_TYPE_BOND,
+    NM_META_SETTING_TYPE_BOND_PORT,
     NM_META_SETTING_TYPE_BRIDGE,
     NM_META_SETTING_TYPE_BRIDGE_PORT,
     NM_META_SETTING_TYPE_CDMA,
@@ -124,6 +127,7 @@ typedef enum _nm_packed {
     NM_META_SETTING_TYPE_IP_TUNNEL,
     NM_META_SETTING_TYPE_IP4_CONFIG,
     NM_META_SETTING_TYPE_IP6_CONFIG,
+    NM_META_SETTING_TYPE_LOOPBACK,
     NM_META_SETTING_TYPE_MACSEC,
     NM_META_SETTING_TYPE_MACVLAN,
     NM_META_SETTING_TYPE_MATCH,
@@ -131,6 +135,7 @@ typedef enum _nm_packed {
     NM_META_SETTING_TYPE_OVS_DPDK,
     NM_META_SETTING_TYPE_OVS_EXTERNAL_IDS,
     NM_META_SETTING_TYPE_OVS_INTERFACE,
+    NM_META_SETTING_TYPE_OVS_OTHER_CONFIG,
     NM_META_SETTING_TYPE_OVS_PATCH,
     NM_META_SETTING_TYPE_OVS_PORT,
     NM_META_SETTING_TYPE_PPP,
@@ -159,9 +164,9 @@ typedef enum _nm_packed {
 } NMMetaSettingType;
 
 #if _NM_META_SETTING_BASE_IMPL_LIBNM
-    #define _NMMetaSettingInfo_Alias _NMMetaSettingInfo
+#define _NMMetaSettingInfo_Alias _NMMetaSettingInfo
 #else
-    #define _NMMetaSettingInfo_Alias _NMMetaSettingInfoCli
+#define _NMMetaSettingInfo_Alias _NMMetaSettingInfoCli
 #endif
 
 struct _NMMetaSettingInfo_Alias {

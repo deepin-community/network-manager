@@ -7,7 +7,7 @@
 #define __NM_DEVICE_IP_TUNNEL_H__
 
 #if !defined(__NETWORKMANAGER_H_INSIDE__) && !defined(NETWORKMANAGER_COMPILATION)
-    #error "Only <NetworkManager.h> can be included directly."
+#error "Only <NetworkManager.h> can be included directly."
 #endif
 
 #include "nm-device.h"
@@ -41,7 +41,10 @@ G_BEGIN_DECLS
 
 /**
  * NMDeviceIPTunnel:
+ *
+ * Since: 1.2
  */
+typedef struct _NMDeviceIPTunnel      NMDeviceIPTunnel;
 typedef struct _NMDeviceIPTunnelClass NMDeviceIPTunnelClass;
 
 NM_AVAILABLE_IN_1_2

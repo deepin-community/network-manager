@@ -111,13 +111,16 @@ software_add(NMLinkType link_type, const char *name)
     {
         gboolean bond0_exists = !!nm_platform_link_get_by_ifname(NM_PLATFORM_GET, "bond0");
         int      r;
+        const NMPlatformLnkBond nm_platform_lnk_bond_default = {
+            .mode = 3,
+        };
 
-        r = nm_platform_link_bond_add(NM_PLATFORM_GET, name, NULL);
+        r = nm_platform_link_bond_add(NM_PLATFORM_GET, name, &nm_platform_lnk_bond_default, NULL);
 
         /* Check that bond0 is *not* automatically created. */
         if (!bond0_exists)
             g_assert(!nm_platform_link_get_by_ifname(NM_PLATFORM_GET, "bond0"));
-        return r >= 0;
+        return NMTST_NM_ERR_SUCCESS(r);
     }
     case NM_LINK_TYPE_TEAM:
         return NMTST_NM_ERR_SUCCESS(nm_platform_link_team_add(NM_PLATFORM_GET, name, NULL));
@@ -158,8 +161,14 @@ software_add(NMLinkType link_type, const char *name)
                 accept_signals(parent_changed, 1, 2);
             free_signal(parent_changed);
 
-            return NMTST_NM_ERR_SUCCESS(
-                nm_platform_link_vlan_add(NM_PLATFORM_GET, name, parent_ifindex, VLAN_ID, 0, NULL));
+            return NMTST_NM_ERR_SUCCESS(nm_platform_link_vlan_add(NM_PLATFORM_GET,
+                                                                  name,
+                                                                  parent_ifindex,
+                                                                  &((NMPlatformLnkVlan){
+                                                                      .id       = VLAN_ID,
+                                                                      .protocol = ETH_P_8021Q,
+                                                                  }),
+                                                                  NULL));
         }
     }
     default:
@@ -169,12 +178,12 @@ software_add(NMLinkType link_type, const char *name)
 }
 
 static void
-test_link_changed_signal_cb(NMPlatform *              platform,
+test_link_changed_signal_cb(NMPlatform               *platform,
                             int                       obj_type_i,
                             int                       ifindex,
                             const NMPlatformIP4Route *route,
                             int                       change_type_i,
-                            gboolean *                p_test_link_changed_signal_arg)
+                            gboolean                 *p_test_link_changed_signal_arg)
 {
     const NMPObjectType              obj_type    = obj_type_i;
     const NMPlatformSignalChangeType change_type = change_type_i;
@@ -211,7 +220,7 @@ test_slave(int master, int type, SignalData *master_changed)
                                                link_callback,
                                                SLAVE_NAME);
     SignalData *link_changed, *link_removed;
-    char *      value;
+    char       *value;
     NMLinkType  link_type = nm_platform_link_get_type(NM_PLATFORM_GET, master);
     gboolean    test_link_changed_signal_arg1;
     gboolean    test_link_changed_signal_arg2;
@@ -422,7 +431,7 @@ test_software(NMLinkType link_type, const char *link_typename)
                                       link_callback,
                                       ifindex);
     if (link_type == NM_LINK_TYPE_VLAN) {
-        const NMPlatformLink *   plink;
+        const NMPlatformLink    *plink;
         const NMPlatformLnkVlan *plnk;
 
         plnk = nm_platform_link_get_lnk_vlan(NM_PLATFORM_GET, ifindex, &plink);
@@ -580,6 +589,7 @@ test_bridge_addr(void)
     char                  addr[ETH_ALEN];
     NMPlatformLink        link;
     const NMPlatformLink *plink = NULL;
+    NMPLinkAddress        hw_perm_addr;
 
     nm_utils_hwaddr_aton("de:ad:be:ef:00:11", addr, sizeof(addr));
 
@@ -599,27 +609,49 @@ test_bridge_addr(void)
 
     plink = nm_platform_link_get(NM_PLATFORM_GET, link.ifindex);
     g_assert(plink);
+    g_assert(!nm_platform_link_get_permanent_address(NM_PLATFORM_GET, plink, &hw_perm_addr));
 
-    if (nm_platform_kernel_support_get(NM_PLATFORM_KERNEL_SUPPORT_TYPE_USER_IPV6LL)) {
-        g_assert(!nm_platform_link_get_user_ipv6ll_enabled(NM_PLATFORM_GET, link.ifindex));
+    if (nmtstp_is_root_test()) {
+        g_assert_cmpint(nm_platform_link_get_inet6_addr_gen_mode(NM_PLATFORM_GET, link.ifindex),
+                        ==,
+                        NM_IN6_ADDR_GEN_MODE_EUI64);
+        g_assert_cmpint(_nm_platform_link_get_inet6_addr_gen_mode(plink),
+                        ==,
+                        NM_IN6_ADDR_GEN_MODE_EUI64);
         g_assert_cmpint(_nm_platform_uint8_inv(plink->inet6_addr_gen_mode_inv),
                         ==,
                         NM_IN6_ADDR_GEN_MODE_EUI64);
 
         g_assert(NMTST_NM_ERR_SUCCESS(
-            nm_platform_link_set_user_ipv6ll_enabled(NM_PLATFORM_GET, link.ifindex, TRUE)));
-        g_assert(nm_platform_link_get_user_ipv6ll_enabled(NM_PLATFORM_GET, link.ifindex));
+            nm_platform_link_set_inet6_addr_gen_mode(NM_PLATFORM_GET,
+                                                     link.ifindex,
+                                                     NM_IN6_ADDR_GEN_MODE_NONE)));
+        g_assert_cmpint(nm_platform_link_get_inet6_addr_gen_mode(NM_PLATFORM_GET, link.ifindex),
+                        ==,
+                        NM_IN6_ADDR_GEN_MODE_NONE);
         plink = nm_platform_link_get(NM_PLATFORM_GET, link.ifindex);
         g_assert(plink);
+        g_assert(!nm_platform_link_get_permanent_address(NM_PLATFORM_GET, plink, &hw_perm_addr));
+        g_assert_cmpint(_nm_platform_link_get_inet6_addr_gen_mode(plink),
+                        ==,
+                        NM_IN6_ADDR_GEN_MODE_NONE);
         g_assert_cmpint(_nm_platform_uint8_inv(plink->inet6_addr_gen_mode_inv),
                         ==,
                         NM_IN6_ADDR_GEN_MODE_NONE);
 
         g_assert(NMTST_NM_ERR_SUCCESS(
-            nm_platform_link_set_user_ipv6ll_enabled(NM_PLATFORM_GET, link.ifindex, FALSE)));
-        g_assert(!nm_platform_link_get_user_ipv6ll_enabled(NM_PLATFORM_GET, link.ifindex));
+            nm_platform_link_set_inet6_addr_gen_mode(NM_PLATFORM_GET,
+                                                     link.ifindex,
+                                                     NM_IN6_ADDR_GEN_MODE_EUI64)));
+        g_assert_cmpint(nm_platform_link_get_inet6_addr_gen_mode(NM_PLATFORM_GET, link.ifindex),
+                        ==,
+                        NM_IN6_ADDR_GEN_MODE_EUI64);
         plink = nm_platform_link_get(NM_PLATFORM_GET, link.ifindex);
         g_assert(plink);
+        g_assert(!nm_platform_link_get_permanent_address(NM_PLATFORM_GET, plink, &hw_perm_addr));
+        g_assert_cmpint(_nm_platform_link_get_inet6_addr_gen_mode(plink),
+                        ==,
+                        NM_IN6_ADDR_GEN_MODE_EUI64);
         g_assert_cmpint(_nm_platform_uint8_inv(plink->inet6_addr_gen_mode_inv),
                         ==,
                         NM_IN6_ADDR_GEN_MODE_EUI64);
@@ -730,7 +762,8 @@ static void
 test_external(void)
 {
     const NMPlatformLink *pllink;
-    SignalData *          link_added, *link_changed, *link_removed;
+    NMPLinkAddress        hw_perm_addr;
+    SignalData           *link_added, *link_changed, *link_removed;
     int                   ifindex;
 
     link_added = add_signal_ifname(NM_PLATFORM_SIGNAL_LINK_CHANGED,
@@ -758,6 +791,7 @@ test_external(void)
 
     pllink = nm_platform_link_get(NM_PLATFORM_GET, ifindex);
     g_assert(pllink);
+    g_assert(!nm_platform_link_get_permanent_address(NM_PLATFORM_GET, pllink, &hw_perm_addr));
     if (!pllink->initialized) {
         /* we still lack the notification via UDEV. Expect another link changed signal. */
         wait_signal(link_changed);
@@ -828,7 +862,7 @@ static void
 _test_wireguard_change(NMPlatform *platform, int ifindex, int test_mode)
 {
     const KeyPair self_key  = {"yOWEsaXFxX9/DOkQPzqB9RufZOpfSP4LZZCErP0N0Xo=",
-                              "s6pVT2xPwktor9O5bVOSzcPqBu9uzQOUzPQHXLU2jmk="};
+                               "s6pVT2xPwktor9O5bVOSzcPqBu9uzQOUzPQHXLU2jmk="};
     const KeyPair keys[100] = {
         {"+BDHMh11bkheGfvlQpqt8P/H7N1sPXtVi05XraZS0E8=",
          "QItu7PJadBVXFXGv55CMtVnbRHdrI6E2CGlu2N5oGx4=",
@@ -1132,10 +1166,10 @@ _test_wireguard_change(NMPlatform *platform, int ifindex, int test_mode)
          "wmjW2wDT2EzFkyaGui7YWNLTRu8Q4eD/GVKM2utZkEs="},
     };
     gs_unref_ptrarray GPtrArray *allowed_ips_keep_alive = NULL;
-    gs_unref_array GArray *peers                        = NULL;
-    NMPlatformLnkWireGuard lnk_wireguard;
-    int                    r;
-    guint                  i;
+    gs_unref_array GArray       *peers                  = NULL;
+    NMPlatformLnkWireGuard       lnk_wireguard;
+    int                          r;
+    guint                        i;
 
     allowed_ips_keep_alive = g_ptr_array_new_with_free_func(g_free);
 
@@ -1155,7 +1189,7 @@ _test_wireguard_change(NMPlatform *platform, int ifindex, int test_mode)
 
         for (i = 0; i < num_peers; i++) {
             NMPWireGuardPeer       peer;
-            char                   s_addr[NM_UTILS_INET_ADDRSTRLEN];
+            char                   s_addr[NM_INET_ADDRSTRLEN];
             NMSockAddrUnion        endpoint;
             guint                  i_allowed_ips, n_allowed_ips;
             NMPWireGuardAllowedIP *allowed_ips;
@@ -1175,8 +1209,8 @@ _test_wireguard_change(NMPlatform *platform, int ifindex, int test_mode)
                     .in6 =
                         {
                             .sin6_family = AF_INET6,
-                            .sin6_addr   = *nmtst_inet6_from_string(
-                                nm_sprintf_buf(s_addr, "a:b:c:e::1:%d", i)),
+                            .sin6_addr =
+                                nmtst_inet6_from_string(nm_sprintf_buf(s_addr, "a:b:c:e::1:%d", i)),
                             .sin6_port = htons(16000 + i),
                         },
                 };
@@ -1197,7 +1231,7 @@ _test_wireguard_change(NMPlatform *platform, int ifindex, int test_mode)
                         nm_sprintf_buf(s_addr, "10.%u.%u.0", i, i_allowed_ips));
                     aip->mask = 32 - (i_allowed_ips % 8);
                 } else {
-                    aip->addr.addr6 = *nmtst_inet6_from_string(
+                    aip->addr.addr6 = nmtst_inet6_from_string(
                         nm_sprintf_buf(s_addr, "a:d:f:%02x:%02x::", i, i_allowed_ips));
                     aip->mask = 128 - (i_allowed_ips % 10);
                 }
@@ -1222,7 +1256,7 @@ _test_wireguard_change(NMPlatform *platform, int ifindex, int test_mode)
     r = nm_platform_link_wireguard_change(platform,
                                           ifindex,
                                           &lnk_wireguard,
-                                          (const NMPWireGuardPeer *) peers->data,
+                                          nm_g_array_first_p(peers, const NMPWireGuardPeer),
                                           NULL,
                                           peers->len,
                                           NM_PLATFORM_WIREGUARD_CHANGE_FLAG_HAS_PRIVATE_KEY
@@ -1245,15 +1279,18 @@ test_software_detect(gconstpointer user_data)
 {
     const TestAddSoftwareDetectData *test_data = user_data;
     int                              ifindex, ifindex_parent;
-    const NMPlatformLink *           plink;
-    const NMPObject *                lnk;
+    const NMPlatformLink            *plink;
+    const NMPObject                 *lnk;
     int                              r;
     guint                            i_step;
     const gboolean                   ext        = test_data->external_command;
     NMPlatformLnkBridge              lnk_bridge = {};
     NMPlatformLnkTun                 lnk_tun;
-    NMPlatformLnkGre                 lnk_gre = {};
-    nm_auto_close int                tun_fd  = -1;
+    NMPlatformLnkGre                 lnk_gre  = {};
+    NMPlatformLnkVti                 lnk_vti  = {};
+    NMPlatformLnkVti6                lnk_vti6 = {};
+    nm_auto_close int                tun_fd   = -1;
+    gboolean                         module_loaded;
 
     nmtstp_run_command_check("ip link add %s type dummy", PARENT_NAME);
     ifindex_parent =
@@ -1268,24 +1305,24 @@ test_software_detect(gconstpointer user_data)
         lnk_bridge.ageing_time   = 2200;
         lnk_bridge.stp_state     = TRUE;
         lnk_bridge.priority      = 22;
-        lnk_bridge.vlan_protocol = 0x8100;
+        lnk_bridge.vlan_protocol = ETH_P_8021Q;
         lnk_bridge.vlan_stats_enabled =
             nmtstp_kernel_support_get(NM_PLATFORM_KERNEL_SUPPORT_TYPE_IFLA_BR_VLAN_STATS_ENABLED)
                 ? TRUE
                 : FALSE;
-        lnk_bridge.group_fwd_mask             = 8;
-        lnk_bridge.group_addr                 = (NMEtherAddr){{0x01, 0x80, 0xC2, 0x00, 0x00, 0x08}};
-        lnk_bridge.mcast_snooping             = TRUE;
-        lnk_bridge.mcast_router               = 1;
-        lnk_bridge.mcast_query_use_ifaddr     = TRUE;
-        lnk_bridge.mcast_querier              = TRUE;
-        lnk_bridge.mcast_hash_max             = 1024;
-        lnk_bridge.mcast_last_member_count    = 2;
-        lnk_bridge.mcast_startup_query_count  = 3;
-        lnk_bridge.mcast_last_member_interval = 5000;
-        lnk_bridge.mcast_membership_interval  = 25000;
-        lnk_bridge.mcast_querier_interval     = 26000;
-        lnk_bridge.mcast_query_interval       = 12000;
+        lnk_bridge.group_fwd_mask          = 8;
+        lnk_bridge.group_addr              = NM_ETHER_ADDR_INIT(0x01, 0x80, 0xC2, 0x00, 0x00, 0x08);
+        lnk_bridge.mcast_snooping          = TRUE;
+        lnk_bridge.mcast_router            = 1;
+        lnk_bridge.mcast_query_use_ifaddr  = TRUE;
+        lnk_bridge.mcast_querier           = TRUE;
+        lnk_bridge.mcast_hash_max          = 1024;
+        lnk_bridge.mcast_last_member_count = 2;
+        lnk_bridge.mcast_startup_query_count     = 3;
+        lnk_bridge.mcast_last_member_interval    = 5000;
+        lnk_bridge.mcast_membership_interval     = 25000;
+        lnk_bridge.mcast_querier_interval        = 26000;
+        lnk_bridge.mcast_query_interval          = 12000;
         lnk_bridge.mcast_query_response_interval = 5200;
         lnk_bridge.mcast_startup_query_interval  = 3000;
 
@@ -1294,8 +1331,7 @@ test_software_detect(gconstpointer user_data)
         break;
 
     case NM_LINK_TYPE_GRE:
-    {
-        gboolean gracefully_skip = FALSE;
+        module_loaded = nmtstp_ensure_module("ip_gre");
 
         lnk_gre.local              = nmtst_inet4_from_string("192.168.233.204");
         lnk_gre.remote             = nmtst_inet4_from_string("172.168.10.25");
@@ -1304,13 +1340,8 @@ test_software_detect(gconstpointer user_data)
         lnk_gre.tos                = 37;
         lnk_gre.path_mtu_discovery = TRUE;
 
-        if (!nm_platform_link_get_by_ifname(NM_PLATFORM_GET, "gre0")) {
-            /* Seems that the ip_gre module is not loaded... try to load it. */
-            gracefully_skip = nmp_utils_modprobe(NULL, TRUE, "ip_gre", NULL) != 0;
-        }
-
         if (!nmtstp_link_gre_add(NULL, ext, DEVICE_NAME, &lnk_gre)) {
-            if (gracefully_skip) {
+            if (!module_loaded) {
                 g_test_skip(
                     "Cannot create gre tunnel because of missing ip_gre module (modprobe ip_gre)");
                 goto out_delete_parent;
@@ -1318,10 +1349,9 @@ test_software_detect(gconstpointer user_data)
             g_error("Failed adding GRE tunnel");
         }
         break;
-    }
+
     case NM_LINK_TYPE_GRETAP:
-    {
-        gboolean gracefully_skip = FALSE;
+        module_loaded = nmtstp_ensure_module("ip_gre");
 
         lnk_gre.local              = nmtst_inet4_from_string("192.168.1.133");
         lnk_gre.remote             = nmtst_inet4_from_string("172.168.101.2");
@@ -1331,13 +1361,8 @@ test_software_detect(gconstpointer user_data)
         lnk_gre.path_mtu_discovery = FALSE;
         lnk_gre.is_tap             = TRUE;
 
-        if (!nm_platform_link_get_by_ifname(NM_PLATFORM_GET, "gretap0")) {
-            /* Seems that the ip_gre module is not loaded... try to load it. */
-            gracefully_skip = nmp_utils_modprobe(NULL, TRUE, "ip_gre", NULL) != 0;
-        }
-
         if (!nmtstp_link_gre_add(NULL, ext, DEVICE_NAME, &lnk_gre)) {
-            if (gracefully_skip) {
+            if (!module_loaded) {
                 g_test_skip("Cannot create gretap tunnel because of missing ip_gre module "
                             "(modprobe ip_gre)");
                 goto out_delete_parent;
@@ -1345,16 +1370,12 @@ test_software_detect(gconstpointer user_data)
             g_error("Failed adding GRETAP tunnel");
         }
         break;
-    }
+
     case NM_LINK_TYPE_IPIP:
     {
-        NMPlatformLnkIpIp lnk_ipip        = {};
-        gboolean          gracefully_skip = FALSE;
+        NMPlatformLnkIpIp lnk_ipip = {};
 
-        if (!nm_platform_link_get_by_ifname(NM_PLATFORM_GET, "tunl0")) {
-            /* Seems that the ipip module is not loaded... try to load it. */
-            gracefully_skip = nmp_utils_modprobe(NULL, TRUE, "ipip", NULL) != 0;
-        }
+        module_loaded = nmtstp_ensure_module("ipip");
 
         lnk_ipip.local              = nmtst_inet4_from_string("1.2.3.4");
         lnk_ipip.remote             = nmtst_inet4_from_string("5.6.7.8");
@@ -1363,7 +1384,7 @@ test_software_detect(gconstpointer user_data)
         lnk_ipip.path_mtu_discovery = FALSE;
 
         if (!nmtstp_link_ipip_add(NULL, ext, DEVICE_NAME, &lnk_ipip)) {
-            if (gracefully_skip) {
+            if (!module_loaded) {
                 g_test_skip(
                     "Cannot create ipip tunnel because of missing ipip module (modprobe ipip)");
                 goto out_delete_parent;
@@ -1372,20 +1393,17 @@ test_software_detect(gconstpointer user_data)
         }
         break;
     }
+
     case NM_LINK_TYPE_IP6TNL:
     {
-        NMPlatformLnkIp6Tnl lnk_ip6tnl      = {};
-        gboolean            gracefully_skip = FALSE;
+        NMPlatformLnkIp6Tnl lnk_ip6tnl = {};
 
-        if (!nm_platform_link_get_by_ifname(NM_PLATFORM_GET, "ip6tnl0")) {
-            /* Seems that the ip6_tunnel module is not loaded... try to load it. */
-            gracefully_skip = nmp_utils_modprobe(NULL, TRUE, "ip6_tunnel", NULL) != 0;
-        }
+        module_loaded = nmtstp_ensure_module("ip6_tunnel");
 
         switch (test_data->test_mode) {
         case 0:
-            lnk_ip6tnl.local          = *nmtst_inet6_from_string("fd01::15");
-            lnk_ip6tnl.remote         = *nmtst_inet6_from_string("fd01::16");
+            lnk_ip6tnl.local          = nmtst_inet6_from_string("fd01::15");
+            lnk_ip6tnl.remote         = nmtst_inet6_from_string("fd01::16");
             lnk_ip6tnl.parent_ifindex = ifindex_parent;
             lnk_ip6tnl.tclass         = 20;
             lnk_ip6tnl.encap_limit    = 6;
@@ -1393,8 +1411,8 @@ test_software_detect(gconstpointer user_data)
             lnk_ip6tnl.proto          = IPPROTO_IPV6;
             break;
         case 1:
-            lnk_ip6tnl.local          = *nmtst_inet6_from_string("fd01::17");
-            lnk_ip6tnl.remote         = *nmtst_inet6_from_string("fd01::18");
+            lnk_ip6tnl.local          = nmtst_inet6_from_string("fd01::17");
+            lnk_ip6tnl.remote         = nmtst_inet6_from_string("fd01::18");
             lnk_ip6tnl.parent_ifindex = ifindex_parent;
             lnk_ip6tnl.tclass         = 0;
             lnk_ip6tnl.encap_limit    = 0;
@@ -1405,7 +1423,7 @@ test_software_detect(gconstpointer user_data)
         }
 
         if (!nmtstp_link_ip6tnl_add(NULL, ext, DEVICE_NAME, &lnk_ip6tnl)) {
-            if (gracefully_skip) {
+            if (!module_loaded) {
                 g_test_skip("Cannot create ip6tnl tunnel because of missing ip6_tunnel module "
                             "(modprobe ip6_tunnel)");
                 goto out_delete_parent;
@@ -1414,25 +1432,22 @@ test_software_detect(gconstpointer user_data)
         }
         break;
     }
+
     case NM_LINK_TYPE_IP6GRE:
     {
-        NMPlatformLnkIp6Tnl lnk_ip6tnl      = {};
-        gboolean            gracefully_skip = FALSE;
+        NMPlatformLnkIp6Tnl lnk_ip6tnl = {};
 
-        if (!nm_platform_link_get_by_ifname(NM_PLATFORM_GET, "ip6gre0")) {
-            /* Seems that the ip6_tunnel module is not loaded... try to load it. */
-            gracefully_skip = nmp_utils_modprobe(NULL, TRUE, "ip6_gre", NULL) != 0;
-        }
+        module_loaded = nmtstp_ensure_module("ip6_gre");
 
-        lnk_ip6tnl.local          = *nmtst_inet6_from_string("fd01::42");
-        lnk_ip6tnl.remote         = *nmtst_inet6_from_string("fd01::aaaa");
+        lnk_ip6tnl.local          = nmtst_inet6_from_string("fd01::42");
+        lnk_ip6tnl.remote         = nmtst_inet6_from_string("fd01::aaaa");
         lnk_ip6tnl.parent_ifindex = ifindex_parent;
         lnk_ip6tnl.tclass         = 21;
         lnk_ip6tnl.flow_label     = 1338;
         lnk_ip6tnl.is_gre         = TRUE;
 
         if (!nmtstp_link_ip6gre_add(NULL, ext, DEVICE_NAME, &lnk_ip6tnl)) {
-            if (gracefully_skip) {
+            if (!module_loaded) {
                 g_test_skip("Cannot create ip6gre tunnel because of missing ip6_gre module "
                             "(modprobe ip6_gre)");
                 goto out_delete_parent;
@@ -1441,18 +1456,15 @@ test_software_detect(gconstpointer user_data)
         }
         break;
     }
+
     case NM_LINK_TYPE_IP6GRETAP:
     {
-        NMPlatformLnkIp6Tnl lnk_ip6tnl      = {};
-        gboolean            gracefully_skip = FALSE;
+        NMPlatformLnkIp6Tnl lnk_ip6tnl = {};
 
-        if (!nm_platform_link_get_by_ifname(NM_PLATFORM_GET, "ip6gre0")) {
-            /* Seems that the ip6_tunnel module is not loaded... try to load it. */
-            gracefully_skip = nmp_utils_modprobe(NULL, TRUE, "ip6_gre", NULL) != 0;
-        }
+        module_loaded = nmtstp_ensure_module("ip6_gre");
 
-        lnk_ip6tnl.local          = *nmtst_inet6_from_string("fe80::abcd");
-        lnk_ip6tnl.remote         = *nmtst_inet6_from_string("fc01::bbbb");
+        lnk_ip6tnl.local          = nmtst_inet6_from_string("fe80::abcd");
+        lnk_ip6tnl.remote         = nmtst_inet6_from_string("fc01::bbbb");
         lnk_ip6tnl.parent_ifindex = ifindex_parent;
         lnk_ip6tnl.ttl            = 10;
         lnk_ip6tnl.tclass         = 22;
@@ -1461,7 +1473,7 @@ test_software_detect(gconstpointer user_data)
         lnk_ip6tnl.is_tap         = TRUE;
 
         if (!nmtstp_link_ip6gre_add(NULL, ext, DEVICE_NAME, &lnk_ip6tnl)) {
-            if (gracefully_skip) {
+            if (!module_loaded) {
                 g_test_skip("Cannot create ip6gretap tunnel because of missing ip6_gre module "
                             "(modprobe ip6_gre)");
                 goto out_delete_parent;
@@ -1470,6 +1482,7 @@ test_software_detect(gconstpointer user_data)
         }
         break;
     }
+
     case NM_LINK_TYPE_MACVLAN:
     {
         NMPlatformLnkMacvlan  lnk_macvlan = {};
@@ -1488,7 +1501,7 @@ test_software_detect(gconstpointer user_data)
          * The fix (17af2bce) is included kernel 4.7, dated 24 July, 2016.
          */
         for (i = ifindex_parent + 1; i < ifindex_parent + 100; i++) {
-            snprintf(buf, sizeof(buf), "/sys/class/macvtap/tap%d", i);
+            g_snprintf(buf, sizeof(buf), "/sys/class/macvtap/tap%d", i);
             if (!g_file_test(buf, G_FILE_TEST_IS_SYMLINK))
                 break;
 
@@ -1503,6 +1516,7 @@ test_software_detect(gconstpointer user_data)
             g_error("Failed adding MACVLAN interface");
         break;
     }
+
     case NM_LINK_TYPE_MACVTAP:
     {
         NMPlatformLnkMacvlan lnk_macvtap = {};
@@ -1515,10 +1529,12 @@ test_software_detect(gconstpointer user_data)
             g_error("Failed adding MACVTAP interface");
         break;
     }
+
     case NM_LINK_TYPE_SIT:
     {
-        NMPlatformLnkSit lnk_sit         = {};
-        gboolean         gracefully_skip = FALSE;
+        NMPlatformLnkSit lnk_sit = {};
+
+        module_loaded = nmtstp_ensure_module("sit");
 
         lnk_sit.local              = nmtst_inet4_from_string("192.168.200.1");
         lnk_sit.remote             = nmtst_inet4_from_string("172.25.100.14");
@@ -1527,13 +1543,8 @@ test_software_detect(gconstpointer user_data)
         lnk_sit.tos                = 31;
         lnk_sit.path_mtu_discovery = FALSE;
 
-        if (!nm_platform_link_get_by_ifname(NM_PLATFORM_GET, "sit0")) {
-            /* Seems that the sit module is not loaded... try to load it. */
-            gracefully_skip = nmp_utils_modprobe(NULL, TRUE, "sit", NULL) != 0;
-        }
-
         if (!nmtstp_link_sit_add(NULL, ext, DEVICE_NAME, &lnk_sit)) {
-            if (gracefully_skip) {
+            if (!module_loaded) {
                 g_test_skip(
                     "Cannot create sit tunnel because of missing sit module (modprobe sit)");
                 goto out_delete_parent;
@@ -1542,11 +1553,31 @@ test_software_detect(gconstpointer user_data)
         }
         break;
     }
+
     case NM_LINK_TYPE_VLAN:
-        nmtstp_run_command_check("ip link add name %s link %s type vlan id 1242",
-                                 DEVICE_NAME,
-                                 PARENT_NAME);
+    {
+        NMPlatformLnkVlan lnk_vlan = {};
+
+        switch (test_data->test_mode) {
+        case 0:
+            lnk_vlan.id       = 1242;
+            lnk_vlan.protocol = ETH_P_8021Q;
+            lnk_vlan.flags    = _NM_VLAN_FLAG_REORDER_HEADERS;
+            break;
+        case 1:
+            lnk_vlan.id       = 4094;
+            lnk_vlan.protocol = ETH_P_8021AD;
+            lnk_vlan.flags    = _NM_VLAN_FLAG_GVRP | _NM_VLAN_FLAG_MVRP;
+            break;
+        default:
+            nm_assert_not_reached();
+        }
+
+        if (!nmtstp_link_vlan_add(NULL, ext, DEVICE_NAME, ifindex_parent, &lnk_vlan))
+            g_error("Failed adding VLAN interface");
         break;
+    }
+
     case NM_LINK_TYPE_VRF:
     {
         NMPlatformLnkVrf lnk_vrf = {};
@@ -1563,6 +1594,45 @@ test_software_detect(gconstpointer user_data)
         }
         break;
     }
+
+    case NM_LINK_TYPE_VTI:
+        module_loaded = nmtstp_ensure_module("ip_vti");
+
+        lnk_vti.local          = nmtst_inet4_from_string("192.168.212.204");
+        lnk_vti.remote         = nmtst_inet4_from_string("172.168.11.25");
+        lnk_vti.parent_ifindex = ifindex_parent;
+        lnk_vti.ikey           = 12;
+        lnk_vti.okey           = 13;
+
+        if (!nmtstp_link_vti_add(NULL, ext, DEVICE_NAME, &lnk_vti)) {
+            if (!module_loaded) {
+                g_test_skip(
+                    "Cannot create vti tunnel because of missing vti module (modprobe ip_vti)");
+                goto out_delete_parent;
+            }
+            g_error("Failed adding VTI tunnel");
+        }
+        break;
+
+    case NM_LINK_TYPE_VTI6:
+        module_loaded = nmtstp_ensure_module("ip6_vti");
+
+        lnk_vti6.local          = nmtst_inet6_from_string("fd01::1");
+        lnk_vti6.remote         = nmtst_inet6_from_string("fd02::2");
+        lnk_vti6.parent_ifindex = ifindex_parent;
+        lnk_vti6.ikey           = 13;
+        lnk_vti6.okey           = 14;
+
+        if (!nmtstp_link_vti6_add(NULL, ext, DEVICE_NAME, &lnk_vti6)) {
+            if (!module_loaded) {
+                g_test_skip(
+                    "Cannot create vti6 tunnel because of missing vti module (modprobe ip_vti)");
+                goto out_delete_parent;
+            }
+            g_error("Failed adding VTI6 tunnel");
+        }
+        break;
+
     case NM_LINK_TYPE_VXLAN:
     {
         NMPlatformLnkVxlan lnk_vxlan = {};
@@ -1580,8 +1650,8 @@ test_software_detect(gconstpointer user_data)
         case 1:
             lnk_vxlan.parent_ifindex = nm_platform_link_get_ifindex(NM_PLATFORM_GET, PARENT_NAME);
             lnk_vxlan.id             = 11214423;
-            lnk_vxlan.local6         = *nmtst_inet6_from_string("1:2:3:4:334:23::23");
-            lnk_vxlan.group6         = *nmtst_inet6_from_string("ff0e::115");
+            lnk_vxlan.local6         = nmtst_inet6_from_string("1:2:3:4:334:23::23");
+            lnk_vxlan.group6         = nmtst_inet6_from_string("ff0e::115");
             lnk_vxlan.ttl            = 32;
             lnk_vxlan.dst_port       = 57412;
             lnk_vxlan.src_port_min   = 1000;
@@ -1594,6 +1664,7 @@ test_software_detect(gconstpointer user_data)
         g_assert(nmtstp_link_vxlan_add(NULL, ext, DEVICE_NAME, &lnk_vxlan));
         break;
     }
+
     case NM_LINK_TYPE_TUN:
     {
         gboolean owner_valid = nmtst_get_rand_bool();
@@ -1628,6 +1699,7 @@ test_software_detect(gconstpointer user_data)
                                      (!lnk_tun.persist || nmtst_get_rand_bool()) ? &tun_fd : NULL));
         break;
     }
+
     case NM_LINK_TYPE_WIREGUARD:
     {
         const NMPlatformLink *link;
@@ -1699,7 +1771,7 @@ test_software_detect(gconstpointer user_data)
             g_assert_cmpint(plnk->ageing_time, ==, lnk_bridge_norm->ageing_time);
             g_assert_cmpint(plnk->stp_state, ==, TRUE);
             g_assert_cmpint(plnk->priority, ==, 22);
-            g_assert_cmpint(plnk->vlan_protocol, ==, 0x8100);
+            g_assert_cmpint(plnk->vlan_protocol, ==, ETH_P_8021Q);
             g_assert_cmpint(plnk->vlan_stats_enabled, ==, lnk_bridge_norm->vlan_stats_enabled);
             g_assert_cmpint(plnk->group_fwd_mask, ==, 8);
             g_assert_cmpint(plnk->mcast_snooping, ==, TRUE);
@@ -1882,7 +1954,19 @@ test_software_detect(gconstpointer user_data)
             const NMPlatformLnkVlan *plnk = &lnk->lnk_vlan;
 
             g_assert(plnk == nm_platform_link_get_lnk_vlan(NM_PLATFORM_GET, ifindex, NULL));
-            g_assert_cmpint(plnk->id, ==, 1242);
+
+            switch (test_data->test_mode) {
+            case 0:
+                g_assert_cmpint(plnk->id, ==, 1242);
+                g_assert_cmpint(plnk->protocol, ==, ETH_P_8021Q);
+                g_assert_cmpint(plnk->flags, ==, _NM_VLAN_FLAG_REORDER_HEADERS);
+                break;
+            case 1:
+                g_assert_cmpint(plnk->id, ==, 4094);
+                g_assert_cmpint(plnk->protocol, ==, ETH_P_8021AD);
+                g_assert_cmpint(plnk->flags, ==, _NM_VLAN_FLAG_GVRP | _NM_VLAN_FLAG_MVRP);
+                break;
+            }
             break;
         }
         case NM_LINK_TYPE_VRF:
@@ -1891,6 +1975,22 @@ test_software_detect(gconstpointer user_data)
 
             g_assert(plnk == nm_platform_link_get_lnk_vrf(NM_PLATFORM_GET, ifindex, NULL));
             g_assert_cmpint(plnk->table, ==, 9876);
+            break;
+        }
+        case NM_LINK_TYPE_VTI:
+        {
+            const NMPlatformLnkVti *plnk = &lnk->lnk_vti;
+
+            g_assert(plnk == nm_platform_link_get_lnk_vti(NM_PLATFORM_GET, ifindex, NULL));
+            g_assert(nm_platform_lnk_vti_cmp(plnk, &lnk_vti) == 0);
+            break;
+        }
+        case NM_LINK_TYPE_VTI6:
+        {
+            const NMPlatformLnkVti6 *plnk = &lnk->lnk_vti6;
+
+            g_assert(plnk == nm_platform_link_get_lnk_vti6(NM_PLATFORM_GET, ifindex, NULL));
+            g_assert(nm_platform_lnk_vti6_cmp(plnk, &lnk_vti6) == 0);
             break;
         }
         case NM_LINK_TYPE_VXLAN:
@@ -1966,7 +2066,7 @@ static void
 test_software_detect_add(const char *testpath, NMLinkType link_type, int test_mode)
 {
     TestAddSoftwareDetectData *test_data;
-    char *                     path;
+    char                      *path;
 
     test_data                   = g_new0(TestAddSoftwareDetectData, 1);
     test_data->link_type        = link_type;
@@ -2001,8 +2101,8 @@ test_software_detect_add(const char *testpath, NMLinkType link_type, int test_mo
 static void
 _assert_xgress_qos_mappings_impl(int ifindex, gboolean is_ingress_map, int n_entries, int n, ...)
 {
-    const NMPlatformLink *  plink;
-    const NMPObject *       lnk;
+    const NMPlatformLink   *plink;
+    const NMPObject        *lnk;
     guint                   n_map;
     const NMVlanQosMapping *map;
     va_list                 ap;
@@ -2435,10 +2535,10 @@ test_vlan_set_xgress(void)
 static void
 test_create_many_links_do(guint n_devices)
 {
-    gint64                time, start_time = nm_utils_get_monotonic_timestamp_nsec();
-    guint                 i;
-    char                  name[64];
-    const NMPlatformLink *pllink;
+    gint64                 time, start_time = nm_utils_get_monotonic_timestamp_nsec();
+    guint                  i;
+    char                   name[64];
+    const NMPlatformLink  *pllink;
     gs_unref_array GArray *ifindexes = g_array_sized_new(FALSE, FALSE, sizeof(int), n_devices);
     const int              EX        = ((int) (nmtst_get_rand_uint32() % 4)) - 1;
 
@@ -2483,7 +2583,7 @@ test_create_many_links_do(guint n_devices)
         if (EX == 2)
             nmtstp_run_command_check("ip link delete %s", name);
         else
-            nmtstp_link_delete(NULL, EX, g_array_index(ifindexes, int, i), name, TRUE);
+            nmtstp_link_delete(NULL, EX, nm_g_array_index(ifindexes, int, i), name, TRUE);
     }
 
     _LOGI(">>> process events after deleting devices...");
@@ -2515,13 +2615,14 @@ test_create_many_links(gconstpointer user_data)
 static void
 test_nl_bugs_veth(void)
 {
-    const char *          IFACE_VETH0 = "nm-test-veth0";
-    const char *          IFACE_VETH1 = "nm-test-veth1";
-    int                   ifindex_veth0, ifindex_veth1;
-    int                   i;
-    const NMPlatformLink *pllink_veth0, *pllink_veth1;
-    gs_free_error GError * error     = NULL;
+    const char            *IFACE_VETH0 = "nm-test-veth0";
+    const char            *IFACE_VETH1 = "nm-test-veth1";
+    int                    ifindex_veth0, ifindex_veth1;
+    int                    i;
+    const NMPlatformLink  *pllink_veth0, *pllink_veth1;
+    gs_free_error GError  *error     = NULL;
     NMTstpNamespaceHandle *ns_handle = NULL;
+    NMPLinkAddress         hw_perm_addr;
 
     /* create veth pair. */
     ifindex_veth0 = nmtstp_link_veth_add(NM_PLATFORM_GET, -1, IFACE_VETH0, IFACE_VETH1)->ifindex;
@@ -2538,6 +2639,7 @@ test_nl_bugs_veth(void)
     /* assert that NMPlatformLink.parent is the peer-ifindex. */
     pllink_veth0 = nm_platform_link_get(NM_PLATFORM_GET, ifindex_veth0);
     g_assert(pllink_veth0);
+    g_assert(!nm_platform_link_get_permanent_address(NM_PLATFORM_GET, pllink_veth0, &hw_perm_addr));
     if (pllink_veth0->parent == 0) {
         /* Kernels prior to 4.1 dated 21 June, 2015 don't support exposing the veth peer
          * as IFA_LINK. skip the remainder of the test. */
@@ -2549,6 +2651,7 @@ test_nl_bugs_veth(void)
      * https://bugzilla.redhat.com/show_bug.cgi?id=1285827 in place. */
     pllink_veth1 = nm_platform_link_get(NM_PLATFORM_GET, ifindex_veth1);
     g_assert(pllink_veth1);
+    g_assert(!nm_platform_link_get_permanent_address(NM_PLATFORM_GET, pllink_veth1, &hw_perm_addr));
     g_assert_cmpint(pllink_veth1->parent, ==, ifindex_veth0);
 
     /* move one veth peer to another namespace and check that the
@@ -2584,10 +2687,11 @@ out:
 static void
 test_nl_bugs_spuroius_newlink(void)
 {
-    const char *          IFACE_BOND0  = "nm-test-bond0";
-    const char *          IFACE_DUMMY0 = "nm-test-dummy0";
+    const char           *IFACE_BOND0  = "nm-test-bond0";
+    const char           *IFACE_DUMMY0 = "nm-test-dummy0";
     int                   ifindex_bond0, ifindex_dummy0;
     const NMPlatformLink *pllink;
+    NMPLinkAddress        hw_perm_addr;
     gboolean              wait_for_settle;
 
     /* see https://bugzilla.redhat.com/show_bug.cgi?id=1285719 */
@@ -2609,6 +2713,7 @@ test_nl_bugs_spuroius_newlink(void)
 
         pllink = nm_platform_link_get(NM_PLATFORM_GET, ifindex_dummy0);
         g_assert(pllink);
+        g_assert(!nm_platform_link_get_permanent_address(NM_PLATFORM_GET, pllink, &hw_perm_addr));
         if (pllink->master == ifindex_bond0)
             break;
     });
@@ -2621,6 +2726,7 @@ again:
     nm_platform_process_events(NM_PLATFORM_GET);
     pllink = nm_platform_link_get(NM_PLATFORM_GET, ifindex_bond0);
     g_assert(!pllink);
+    g_assert(!nm_platform_link_get_permanent_address(NM_PLATFORM_GET, pllink, &hw_perm_addr));
 
     if (wait_for_settle) {
         wait_for_settle = FALSE;
@@ -2637,10 +2743,11 @@ again:
 static void
 test_nl_bugs_spuroius_dellink(void)
 {
-    const char *          IFACE_BRIDGE0 = "nm-test-bridge0";
-    const char *          IFACE_DUMMY0  = "nm-test-dummy0";
+    const char           *IFACE_BRIDGE0 = "nm-test-bridge0";
+    const char           *IFACE_DUMMY0  = "nm-test-dummy0";
     int                   ifindex_bridge0, ifindex_dummy0;
     const NMPlatformLink *pllink;
+    NMPLinkAddress        hw_perm_addr;
     gboolean              wait_for_settle;
 
     /* see https://bugzilla.redhat.com/show_bug.cgi?id=1285719 */
@@ -2663,6 +2770,7 @@ test_nl_bugs_spuroius_dellink(void)
 
         pllink = nm_platform_link_get(NM_PLATFORM_GET, ifindex_dummy0);
         g_assert(pllink);
+        g_assert(!nm_platform_link_get_permanent_address(NM_PLATFORM_GET, pllink, &hw_perm_addr));
         if (pllink->master == ifindex_bridge0)
             break;
     });
@@ -2677,8 +2785,10 @@ again:
     nm_platform_process_events(NM_PLATFORM_GET);
     pllink = nm_platform_link_get(NM_PLATFORM_GET, ifindex_bridge0);
     g_assert(pllink);
+    g_assert(!nm_platform_link_get_permanent_address(NM_PLATFORM_GET, pllink, &hw_perm_addr));
     pllink = nm_platform_link_get(NM_PLATFORM_GET, ifindex_dummy0);
     g_assert(pllink);
+    g_assert(!nm_platform_link_get_permanent_address(NM_PLATFORM_GET, pllink, &hw_perm_addr));
     g_assert_cmpint(pllink->parent, ==, 0);
 
     if (wait_for_settle) {
@@ -2710,13 +2820,13 @@ _test_netns_teardown(gpointer fixture, gconstpointer test_data)
 static NMPlatform *
 _test_netns_create_platform(void)
 {
-    NMPNetns *  netns;
+    NMPNetns   *netns;
     NMPlatform *platform;
 
     netns = nmp_netns_new();
     g_assert(NMP_IS_NETNS(netns));
 
-    platform = nm_linux_platform_new(TRUE, TRUE);
+    platform = nm_linux_platform_new(NULL, TRUE, TRUE, TRUE);
     g_assert(NM_IS_LINUX_PLATFORM(platform));
 
     nmp_netns_pop(netns);
@@ -2728,9 +2838,9 @@ _test_netns_create_platform(void)
 static gboolean
 _test_netns_check_skip(void)
 {
-    static int      support       = -1;
-    static int      support_errsv = 0;
-    NMPNetns *      netns;
+    static int                support       = -1;
+    static int                support_errsv = 0;
+    NMPNetns                 *netns;
     gs_unref_object NMPNetns *netns2 = NULL;
 
     netns = nmp_netns_get_current();
@@ -2793,7 +2903,7 @@ test_netns_general(gpointer fixture, gconstpointer test_data)
 {
     gs_unref_object NMPlatform *platform_1 = NULL;
     gs_unref_object NMPlatform *platform_2 = NULL;
-    NMPNetns *                  netns_tmp;
+    NMPNetns                   *netns_tmp;
     char                        sbuf[100];
     int                         i, j, k;
     gboolean                    ethtool_support;
@@ -2805,7 +2915,7 @@ test_netns_general(gpointer fixture, gconstpointer test_data)
     if (_check_sysctl_skip())
         return;
 
-    platform_1 = nm_linux_platform_new(TRUE, TRUE);
+    platform_1 = nm_linux_platform_new(NULL, TRUE, TRUE, TRUE);
     platform_2 = _test_netns_create_platform();
 
     /* add some dummy devices. The "other-*" devices are there to bump the ifindex */
@@ -2924,7 +3034,7 @@ test_netns_general(gpointer fixture, gconstpointer test_data)
 static void
 test_netns_set_netns(gpointer fixture, gconstpointer test_data)
 {
-    NMPlatform *    platforms[3];
+    NMPlatform                 *platforms[3];
     gs_unref_object NMPlatform *platform_0 = NULL;
     gs_unref_object NMPlatform *platform_1 = NULL;
     gs_unref_object NMPlatform *platform_2 = NULL;
@@ -2933,7 +3043,7 @@ test_netns_set_netns(gpointer fixture, gconstpointer test_data)
     if (_test_netns_check_skip())
         return;
 
-    platforms[0] = platform_0 = nm_linux_platform_new(TRUE, TRUE);
+    platforms[0] = platform_0 = nm_linux_platform_new(NULL, TRUE, TRUE, TRUE);
     platforms[1] = platform_1 = _test_netns_create_platform();
     platforms[2] = platform_2 = _test_netns_create_platform();
 
@@ -2962,8 +3072,8 @@ static char *
 _get_current_namespace_id(int ns_type)
 {
     const char *p;
-    GError *    error = NULL;
-    char *      id;
+    GError     *error = NULL;
+    char       *id;
 
     switch (ns_type) {
     case CLONE_NEWNET:
@@ -2985,7 +3095,7 @@ _get_current_namespace_id(int ns_type)
 static char *
 _get_sysctl_value(const char *path)
 {
-    char *        data          = NULL;
+    char                 *data  = NULL;
     gs_free_error GError *error = NULL;
 
     if (!g_file_get_contents(path, &data, NULL, &error)) {
@@ -3002,10 +3112,10 @@ _get_sysctl_value(const char *path)
 static void
 test_netns_push(gpointer fixture, gconstpointer test_data)
 {
-    gs_unref_object NMPlatform *platform_0    = NULL;
-    gs_unref_object NMPlatform *platform_1    = NULL;
-    gs_unref_object NMPlatform *platform_2    = NULL;
-    nm_auto_pop_netns NMPNetns *netns_pop     = NULL;
+    gs_unref_object NMPlatform  *platform_0   = NULL;
+    gs_unref_object NMPlatform  *platform_1   = NULL;
+    gs_unref_object NMPlatform  *platform_2   = NULL;
+    nm_auto_pop_netns NMPNetns  *netns_pop    = NULL;
     gs_unref_ptrarray GPtrArray *device_names = g_ptr_array_new_with_free_func(g_free);
     int                          i, j;
     const int ns_types_list[] = {CLONE_NEWNET, CLONE_NEWNS, CLONE_NEWNET | CLONE_NEWNS};
@@ -3032,7 +3142,7 @@ test_netns_push(gpointer fixture, gconstpointer test_data)
     if (_check_sysctl_skip())
         return;
 
-    pl[0].platform = platform_0 = nm_linux_platform_new(TRUE, TRUE);
+    pl[0].platform = platform_0 = nm_linux_platform_new(NULL, TRUE, TRUE, TRUE);
     pl[1].platform = platform_1 = _test_netns_create_platform();
     pl[2].platform = platform_2 = _test_netns_create_platform();
 
@@ -3045,7 +3155,7 @@ test_netns_push(gpointer fixture, gconstpointer test_data)
 
     for (i = 0; i < G_N_ELEMENTS(pl); i++) {
         nm_auto_pop_netns NMPNetns *netns_free = NULL;
-        char *                      tmp;
+        char                       *tmp;
 
         g_assert(nm_platform_netns_push(pl[i].platform, &netns_free));
 
@@ -3172,14 +3282,14 @@ test_netns_bind_to_path(gpointer fixture, gconstpointer test_data)
     gs_unref_object NMPlatform *platform_1 = NULL;
     gs_unref_object NMPlatform *platform_2 = NULL;
     nm_auto_pop_netns NMPNetns *netns_pop  = NULL;
-    NMPlatform *                platforms[3];
-    NMPNetns *                  netns;
+    NMPlatform                 *platforms[3];
+    NMPNetns                   *netns;
     int                         i;
 
     if (_test_netns_check_skip())
         return;
 
-    platforms[0] = platform_0 = nm_linux_platform_new(TRUE, TRUE);
+    platforms[0] = platform_0 = nm_linux_platform_new(NULL, TRUE, TRUE, TRUE);
     platforms[1] = platform_1 = _test_netns_create_platform();
     platforms[2] = platform_2 = _test_netns_create_platform();
 
@@ -3235,7 +3345,7 @@ test_sysctl_rename(void)
     nm_auto_close int     dirfd                         = -1;
     int                   i;
     char                  ifname_buf[IFNAMSIZ];
-    char *                s;
+    char                 *s;
     const NMPlatformLink *pllink;
 
     ifindex[0] = nmtstp_link_dummy_add(PL, -1, IFNAME[0])->ifindex;
@@ -3327,24 +3437,24 @@ test_sysctl_rename(void)
 static void
 test_sysctl_netns_switch(void)
 {
-    const char *const IFNAME = "nm-dummy-0";
-    int               ifindex, ifindex_tmp;
-    nm_auto_close int dirfd = -1;
-    char              ifname_buf[IFNAMSIZ];
-    char *            s;
+    const char *const           IFNAME = "nm-dummy-0";
+    int                         ifindex, ifindex_tmp;
+    nm_auto_close int           dirfd = -1;
+    char                        ifname_buf[IFNAMSIZ];
+    char                       *s;
     gs_unref_object NMPlatform *platform_0  = NULL;
     gs_unref_object NMPlatform *platform_1  = NULL;
     gs_unref_object NMPlatform *platform_2  = NULL;
     nm_auto_pop_netns NMPNetns *netns_pop_1 = NULL;
     nm_auto_pop_netns NMPNetns *netns_pop_2 = NULL;
     nm_auto_pop_netns NMPNetns *netns_pop_3 = NULL;
-    NMPlatform *                PL;
-    NMPlatform *                platforms[3];
+    NMPlatform                 *PL;
+    NMPlatform                 *platforms[3];
 
     if (_test_netns_check_skip())
         return;
 
-    platforms[0] = platform_0 = nm_linux_platform_new(TRUE, TRUE);
+    platforms[0] = platform_0 = nm_linux_platform_new(NULL, TRUE, TRUE, TRUE);
     platforms[1] = platform_1 = _test_netns_create_platform();
     platforms[2] = platform_2 = _test_netns_create_platform();
     PL                        = platforms[nmtst_get_rand_uint32() % 3];
@@ -3397,7 +3507,7 @@ test_sysctl_netns_switch(void)
     {
         gint64 i64;
         int    errsv;
-        char * v;
+        char  *v;
 
         errno = ESRCH;
         v     = nm_platform_sysctl_get(
@@ -3466,7 +3576,7 @@ test_sysctl_netns_switch(void)
 }
 
 typedef struct {
-    GMainLoop * loop;
+    GMainLoop  *loop;
     const char *path;
     gboolean    expected_success;
     gint32      expected_value;
@@ -3493,10 +3603,10 @@ sysctl_set_async_cb(GError *error, gpointer user_data)
 static void
 test_sysctl_set_async(void)
 {
-    NMPlatform *const PL     = NM_PLATFORM_GET;
-    const char *const IFNAME = "nm-dummy-0";
-    const char *const PATH   = "/proc/sys/net/ipv4/conf/nm-dummy-0/rp_filter";
-    GMainLoop *       loop;
+    NMPlatform *const             PL     = NM_PLATFORM_GET;
+    const char *const             IFNAME = "nm-dummy-0";
+    const char *const             PATH   = "/proc/sys/net/ipv4/conf/nm-dummy-0/rp_filter";
+    GMainLoop                    *loop;
     gs_unref_object GCancellable *cancellable = NULL;
     gboolean                      proc_writable;
     SetAsyncData                  data;
@@ -3548,10 +3658,10 @@ test_sysctl_set_async(void)
 static void
 test_sysctl_set_async_fail(void)
 {
-    NMPlatform *const PL     = NM_PLATFORM_GET;
-    const char *const IFNAME = "nm-dummy-0";
-    const char *const PATH   = "/proc/sys/net/ipv4/conf/nm-dummy-0/does-not-exist";
-    GMainLoop *       loop;
+    NMPlatform *const             PL     = NM_PLATFORM_GET;
+    const char *const             IFNAME = "nm-dummy-0";
+    const char *const             PATH   = "/proc/sys/net/ipv4/conf/nm-dummy-0/does-not-exist";
+    GMainLoop                    *loop;
     gs_unref_object GCancellable *cancellable = NULL;
     SetAsyncData                  data;
     int                           ifindex;
@@ -3585,10 +3695,10 @@ test_sysctl_set_async_fail(void)
 static gpointer
 _test_netns_mt_thread(gpointer data)
 {
-    NMPNetns *      netns1           = data;
+    NMPNetns                 *netns1 = data;
     gs_unref_object NMPNetns *netns2 = NULL;
-    NMPNetns *                netns_bottom;
-    NMPNetns *                initial;
+    NMPNetns                 *netns_bottom;
+    NMPNetns                 *initial;
 
     netns_bottom = nmp_netns_get_initial();
     g_assert(netns_bottom);
@@ -3619,8 +3729,8 @@ static void
 test_netns_mt(void)
 {
     gs_unref_object NMPNetns *netns1 = NULL;
-    NMPNetns *                initial_from_other_thread;
-    GThread *                 th;
+    NMPNetns                 *initial_from_other_thread;
+    GThread                  *th;
 
     if (_test_netns_check_skip())
         return;
@@ -3697,7 +3807,7 @@ test_ethtool_features_get(void)
 
     for (i_run = 0; i_run < 5; i_run++) {
         NMEthtoolFeatureStates *features;
-        NMOptionBool *          requested;
+        NMOptionBool           *requested;
         gboolean                do_set = TRUE;
 
         requested = g_new(NMOptionBool, _NM_ETHTOOL_ID_FEATURE_NUM);
@@ -3785,7 +3895,10 @@ _nmtstp_setup_tests(void)
         test_software_detect_add("/link/software/detect/macvtap", NM_LINK_TYPE_MACVTAP, 0);
         test_software_detect_add("/link/software/detect/sit", NM_LINK_TYPE_SIT, 0);
         test_software_detect_add("/link/software/detect/tun", NM_LINK_TYPE_TUN, 0);
-        test_software_detect_add("/link/software/detect/vlan", NM_LINK_TYPE_VLAN, 0);
+        test_software_detect_add("/link/software/detect/vlan/0", NM_LINK_TYPE_VLAN, 0);
+        test_software_detect_add("/link/software/detect/vlan/1", NM_LINK_TYPE_VLAN, 1);
+        test_software_detect_add("/link/software/detect/vti", NM_LINK_TYPE_VTI, 0);
+        test_software_detect_add("/link/software/detect/vti6", NM_LINK_TYPE_VTI6, 0);
         test_software_detect_add("/link/software/detect/vrf", NM_LINK_TYPE_VRF, 0);
         test_software_detect_add("/link/software/detect/vxlan/0", NM_LINK_TYPE_VXLAN, 0);
         test_software_detect_add("/link/software/detect/vxlan/1", NM_LINK_TYPE_VXLAN, 1);

@@ -7,7 +7,7 @@
 #define NM_SETTING_SRIOV_H
 
 #if !defined(__NETWORKMANAGER_H_INSIDE__) && !defined(NETWORKMANAGER_COMPILATION)
-    #error "Only <NetworkManager.h> can be included directly."
+#error "Only <NetworkManager.h> can be included directly."
 #endif
 
 #include "nm-setting.h"
@@ -109,7 +109,7 @@ NM_AVAILABLE_IN_1_14
 const char **nm_sriov_vf_get_attribute_names(const NMSriovVF *vf);
 NM_AVAILABLE_IN_1_14
 GVariant *nm_sriov_vf_get_attribute(const NMSriovVF *vf, const char *name);
-NM_AVAILABLE_IN_1_14
+NM_AVAILABLE_IN_1_42
 gboolean
 nm_sriov_vf_attribute_validate(const char *name, GVariant *value, gboolean *known, GError **error);
 

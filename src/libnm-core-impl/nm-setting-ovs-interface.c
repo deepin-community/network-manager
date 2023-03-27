@@ -21,7 +21,7 @@
 
 /*****************************************************************************/
 
-NM_GOBJECT_PROPERTIES_DEFINE_BASE(PROP_TYPE, );
+NM_GOBJECT_PROPERTIES_DEFINE_BASE(PROP_TYPE, PROP_OFPORT_REQUEST, );
 
 /**
  * NMSettingOvsInterface:
@@ -31,7 +31,8 @@ NM_GOBJECT_PROPERTIES_DEFINE_BASE(PROP_TYPE, );
 struct _NMSettingOvsInterface {
     NMSetting parent;
 
-    char *type;
+    char   *type;
+    guint32 ofport_request;
 };
 
 struct _NMSettingOvsInterfaceClass {
@@ -58,16 +59,32 @@ nm_setting_ovs_interface_get_interface_type(NMSettingOvsInterface *self)
     return self->type;
 }
 
+/**
+ * nm_setting_ovs_interface_get_ofport_request:
+ * @self: the #NMSettingOvsInterface
+ *
+ * Returns: id of the preassigned ovs port
+ *
+ * Since: 1.42
+ **/
+guint32
+nm_setting_ovs_interface_get_ofport_request(NMSettingOvsInterface *self)
+{
+    g_return_val_if_fail(NM_IS_SETTING_OVS_INTERFACE(self), 0);
+
+    return self->ofport_request;
+}
+
 /*****************************************************************************/
 
 int
 _nm_setting_ovs_interface_verify_interface_type(NMSettingOvsInterface *self,
-                                                const char *           type,
-                                                NMConnection *         connection,
+                                                const char            *type,
+                                                NMConnection          *connection,
                                                 gboolean               normalize,
-                                                gboolean *             out_modified,
-                                                const char **          out_normalized_type,
-                                                GError **              error)
+                                                gboolean              *out_modified,
+                                                const char           **out_normalized_type,
+                                                GError               **error)
 {
     const char *type_from_setting = NULL;
     const char *type_setting      = NULL;
@@ -276,7 +293,7 @@ static int
 verify(NMSetting *setting, NMConnection *connection, GError **error)
 {
     NMSettingOvsInterface *self  = NM_SETTING_OVS_INTERFACE(setting);
-    NMSettingConnection *  s_con = NULL;
+    NMSettingConnection   *s_con = NULL;
 
     if (connection) {
         const char *slave_type;
@@ -334,39 +351,6 @@ verify(NMSetting *setting, NMConnection *connection, GError **error)
 /*****************************************************************************/
 
 static void
-get_property(GObject *object, guint prop_id, GValue *value, GParamSpec *pspec)
-{
-    NMSettingOvsInterface *self = NM_SETTING_OVS_INTERFACE(object);
-
-    switch (prop_id) {
-    case PROP_TYPE:
-        g_value_set_string(value, self->type);
-        break;
-    default:
-        G_OBJECT_WARN_INVALID_PROPERTY_ID(object, prop_id, pspec);
-        break;
-    }
-}
-
-static void
-set_property(GObject *object, guint prop_id, const GValue *value, GParamSpec *pspec)
-{
-    NMSettingOvsInterface *self = NM_SETTING_OVS_INTERFACE(object);
-
-    switch (prop_id) {
-    case PROP_TYPE:
-        g_free(self->type);
-        self->type = g_value_dup_string(value);
-        break;
-    default:
-        G_OBJECT_WARN_INVALID_PROPERTY_ID(object, prop_id, pspec);
-        break;
-    }
-}
-
-/*****************************************************************************/
-
-static void
 nm_setting_ovs_interface_init(NMSettingOvsInterface *self)
 {}
 
@@ -386,24 +370,14 @@ nm_setting_ovs_interface_new(void)
 }
 
 static void
-finalize(GObject *object)
-{
-    NMSettingOvsInterface *self = NM_SETTING_OVS_INTERFACE(object);
-
-    g_free(self->type);
-
-    G_OBJECT_CLASS(nm_setting_ovs_interface_parent_class)->finalize(object);
-}
-
-static void
 nm_setting_ovs_interface_class_init(NMSettingOvsInterfaceClass *klass)
 {
-    GObjectClass *  object_class  = G_OBJECT_CLASS(klass);
-    NMSettingClass *setting_class = NM_SETTING_CLASS(klass);
+    GObjectClass   *object_class        = G_OBJECT_CLASS(klass);
+    NMSettingClass *setting_class       = NM_SETTING_CLASS(klass);
+    GArray         *properties_override = _nm_sett_info_property_override_create_array();
 
-    object_class->get_property = get_property;
-    object_class->set_property = set_property;
-    object_class->finalize     = finalize;
+    object_class->get_property = _nm_setting_property_get_property_direct;
+    object_class->set_property = _nm_setting_property_set_property_direct;
 
     setting_class->verify = verify;
 
@@ -414,14 +388,40 @@ nm_setting_ovs_interface_class_init(NMSettingOvsInterfaceClass *klass)
      *
      * Since: 1.10
      **/
-    obj_properties[PROP_TYPE] = g_param_spec_string(NM_SETTING_OVS_INTERFACE_TYPE,
-                                                    "",
-                                                    "",
-                                                    NULL,
-                                                    G_PARAM_READWRITE | NM_SETTING_PARAM_INFERRABLE
-                                                        | G_PARAM_STATIC_STRINGS);
+    _nm_setting_property_define_direct_string(properties_override,
+                                              obj_properties,
+                                              NM_SETTING_OVS_INTERFACE_TYPE,
+                                              PROP_TYPE,
+                                              NM_SETTING_PARAM_INFERRABLE,
+                                              NMSettingOvsInterface,
+                                              type);
+    /**
+     * NMSettingOvsInterface:ofport-request:
+     *
+     * Open vSwitch openflow port number.
+     * Defaults to zero which means that port number will not be specified
+     * and it will be chosen randomly by ovs. OpenFlow ports are the network interfaces
+     * for passing packets between OpenFlow processing and the rest of the network.
+     * OpenFlow switches connect logically to each other via their OpenFlow ports.
+     *
+     * Since: 1.42
+     **/
+    _nm_setting_property_define_direct_uint32(properties_override,
+                                              obj_properties,
+                                              NM_SETTING_OVS_INTERFACE_OFPORT_REQUEST,
+                                              PROP_OFPORT_REQUEST,
+                                              0,
+                                              65279,
+                                              0,
+                                              NM_SETTING_PARAM_INFERRABLE,
+                                              NMSettingOvsInterface,
+                                              ofport_request);
 
     g_object_class_install_properties(object_class, _PROPERTY_ENUMS_LAST, obj_properties);
 
-    _nm_setting_class_commit(setting_class, NM_META_SETTING_TYPE_OVS_INTERFACE);
+    _nm_setting_class_commit(setting_class,
+                             NM_META_SETTING_TYPE_OVS_INTERFACE,
+                             NULL,
+                             properties_override,
+                             0);
 }

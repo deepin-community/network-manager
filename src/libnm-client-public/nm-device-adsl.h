@@ -7,7 +7,7 @@
 #define __NM_DEVICE_ADSL_H__
 
 #if !defined(__NETWORKMANAGER_H_INSIDE__) && !defined(NETWORKMANAGER_COMPILATION)
-    #error "Only <NetworkManager.h> can be included directly."
+#error "Only <NetworkManager.h> can be included directly."
 #endif
 
 #include "nm-device.h"
@@ -28,6 +28,7 @@ G_BEGIN_DECLS
 /**
  * NMDeviceAdsl:
  */
+typedef struct _NMDeviceAdsl      NMDeviceAdsl;
 typedef struct _NMDeviceAdslClass NMDeviceAdslClass;
 
 GType nm_device_adsl_get_type(void);

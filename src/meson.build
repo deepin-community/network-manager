@@ -78,6 +78,8 @@ subdir('libnm-systemd-core')
 subdir('libnm-udev-aux')
 subdir('libnm-base')
 subdir('libnm-platform')
+subdir('libnm-lldp')
+subdir('libnm-crypto')
 subdir('libnm-core-public')
 subdir('libnm-core-intern')
 subdir('libnm-core-aux-intern')
@@ -93,6 +95,7 @@ if enable_nmtui
 endif
 subdir('nmcli')
 subdir('nm-dispatcher')
+subdir('nm-priv-helper')
 subdir('nm-daemon-helper')
 subdir('nm-online')
 if enable_nmtui

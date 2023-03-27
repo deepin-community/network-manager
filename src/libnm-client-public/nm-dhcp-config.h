@@ -8,7 +8,7 @@
 #define __NM_DHCP_CONFIG_H__
 
 #if !defined(__NETWORKMANAGER_H_INSIDE__) && !defined(NETWORKMANAGER_COMPILATION)
-    #error "Only <NetworkManager.h> can be included directly."
+#error "Only <NetworkManager.h> can be included directly."
 #endif
 
 #include "nm-object.h"
@@ -25,6 +25,7 @@ G_BEGIN_DECLS
 /**
  * NMDhcpConfig:
  */
+typedef struct _NMDhcpConfig      NMDhcpConfig;
 typedef struct _NMDhcpConfigClass NMDhcpConfigClass;
 
 #define NM_DHCP_CONFIG_FAMILY  "family"

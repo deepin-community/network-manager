@@ -11,28 +11,29 @@
 #include <sys/stat.h>
 #include <gio/gunixfdlist.h>
 
+#include "libnm-glib-aux/nm-dbus-aux.h"
 #include "libnm-core-intern/nm-core-internal.h"
 #include "NetworkManagerUtils.h"
 
 #if defined(SUSPEND_RESUME_UPOWER)
 
-    #define SUSPEND_DBUS_NAME      "org.freedesktop.UPower"
-    #define SUSPEND_DBUS_PATH      "/org/freedesktop/UPower"
-    #define SUSPEND_DBUS_INTERFACE "org.freedesktop.UPower"
-    #define USE_UPOWER             1
-    #define _NMLOG_PREFIX_NAME     "sleep-monitor-up"
+#define SUSPEND_DBUS_NAME      "org.freedesktop.UPower"
+#define SUSPEND_DBUS_PATH      "/org/freedesktop/UPower"
+#define SUSPEND_DBUS_INTERFACE "org.freedesktop.UPower"
+#define USE_UPOWER             1
+#define _NMLOG_PREFIX_NAME     "sleep-monitor-up"
 
 #elif defined(SUSPEND_RESUME_SYSTEMD) || defined(SUSPEND_RESUME_ELOGIND)
 
-    #define SUSPEND_DBUS_NAME      "org.freedesktop.login1"
-    #define SUSPEND_DBUS_PATH      "/org/freedesktop/login1"
-    #define SUSPEND_DBUS_INTERFACE "org.freedesktop.login1.Manager"
-    #define USE_UPOWER             0
-    #if defined(SUSPEND_RESUME_SYSTEMD)
-        #define _NMLOG_PREFIX_NAME "sleep-monitor-sd"
-    #else
-        #define _NMLOG_PREFIX_NAME "sleep-monitor-el"
-    #endif
+#define SUSPEND_DBUS_NAME      "org.freedesktop.login1"
+#define SUSPEND_DBUS_PATH      "/org/freedesktop/login1"
+#define SUSPEND_DBUS_INTERFACE "org.freedesktop.login1.Manager"
+#define USE_UPOWER             0
+#if defined(SUSPEND_RESUME_SYSTEMD)
+#define _NMLOG_PREFIX_NAME "sleep-monitor-sd"
+#else
+#define _NMLOG_PREFIX_NAME "sleep-monitor-el"
+#endif
 
 #elif defined(SUSPEND_RESUME_CONSOLEKIT)
 
@@ -40,15 +41,15 @@
  * uses. http://consolekit2.github.io/ConsoleKit2/#Manager.Inhibit
  */
 
-    #define SUSPEND_DBUS_NAME      "org.freedesktop.ConsoleKit"
-    #define SUSPEND_DBUS_PATH      "/org/freedesktop/ConsoleKit/Manager"
-    #define SUSPEND_DBUS_INTERFACE "org.freedesktop.ConsoleKit.Manager"
-    #define USE_UPOWER             0
-    #define _NMLOG_PREFIX_NAME     "sleep-monitor-ck"
+#define SUSPEND_DBUS_NAME      "org.freedesktop.ConsoleKit"
+#define SUSPEND_DBUS_PATH      "/org/freedesktop/ConsoleKit/Manager"
+#define SUSPEND_DBUS_INTERFACE "org.freedesktop.ConsoleKit.Manager"
+#define USE_UPOWER             0
+#define _NMLOG_PREFIX_NAME     "sleep-monitor-ck"
 
 #else
 
-    #error define one of SUSPEND_RESUME_SYSTEMD, SUSPEND_RESUME_ELOGIND, SUSPEND_RESUME_CONSOLEKIT, or SUSPEND_RESUME_UPOWER
+#error define one of SUSPEND_RESUME_SYSTEMD, SUSPEND_RESUME_ELOGIND, SUSPEND_RESUME_CONSOLEKIT, or SUSPEND_RESUME_UPOWER
 
 #endif
 
@@ -133,10 +134,10 @@ drop_inhibitor(NMSleepMonitor *self, gboolean force)
 static void
 inhibit_done(GObject *source, GAsyncResult *result, gpointer user_data)
 {
-    GDBusProxy *    proxy                = G_DBUS_PROXY(source);
-    NMSleepMonitor *self                 = user_data;
-    gs_free_error GError *error          = NULL;
-    gs_unref_variant GVariant *res       = NULL;
+    GDBusProxy                  *proxy   = G_DBUS_PROXY(source);
+    NMSleepMonitor              *self    = user_data;
+    gs_free_error GError        *error   = NULL;
+    gs_unref_variant GVariant   *res     = NULL;
     gs_unref_object GUnixFDList *fd_list = NULL;
 
     res = g_dbus_proxy_call_with_unix_fd_list_finish(proxy, &fd_list, result, &error);
@@ -193,9 +194,9 @@ prepare_for_sleep_cb(GDBusProxy *proxy, gboolean is_about_to_suspend, gpointer d
 static void
 name_owner_cb(GObject *object, GParamSpec *pspec, gpointer user_data)
 {
-    GDBusProxy *    proxy = G_DBUS_PROXY(object);
+    GDBusProxy     *proxy = G_DBUS_PROXY(object);
     NMSleepMonitor *self  = NM_SLEEP_MONITOR(user_data);
-    char *          owner;
+    char           *owner;
 
     g_assert(proxy == self->proxy);
 
@@ -280,7 +281,7 @@ nm_sleep_monitor_inhibit_release(NMSleepMonitor *self, NMSleepMonitorInhibitorHa
 static void
 on_proxy_acquired(GObject *object, GAsyncResult *res, NMSleepMonitor *self)
 {
-    GError *    error = NULL;
+    GError     *error = NULL;
     GDBusProxy *proxy;
 
     proxy = g_dbus_proxy_new_for_bus_finish(res, &error);
@@ -294,24 +295,24 @@ on_proxy_acquired(GObject *object, GAsyncResult *res, NMSleepMonitor *self)
     g_clear_object(&self->cancellable);
 
 #if USE_UPOWER
-    self->sig_id_1 = _nm_dbus_signal_connect(self->proxy,
-                                             "Sleeping",
-                                             NULL,
-                                             G_CALLBACK(upower_sleeping_cb),
-                                             self);
-    self->sig_id_2 = _nm_dbus_signal_connect(self->proxy,
-                                             "Resuming",
-                                             NULL,
-                                             G_CALLBACK(upower_resuming_cb),
-                                             self);
+    self->sig_id_1 = _nm_dbus_proxy_signal_connect(self->proxy,
+                                                   "Sleeping",
+                                                   NULL,
+                                                   G_CALLBACK(upower_sleeping_cb),
+                                                   self);
+    self->sig_id_2 = _nm_dbus_proxy_signal_connect(self->proxy,
+                                                   "Resuming",
+                                                   NULL,
+                                                   G_CALLBACK(upower_resuming_cb),
+                                                   self);
 #else
     self->sig_id_1 =
         g_signal_connect(self->proxy, "notify::g-name-owner", G_CALLBACK(name_owner_cb), self);
-    self->sig_id_2 = _nm_dbus_signal_connect(self->proxy,
-                                             "PrepareForSleep",
-                                             G_VARIANT_TYPE("(b)"),
-                                             G_CALLBACK(prepare_for_sleep_cb),
-                                             self);
+    self->sig_id_2 = _nm_dbus_proxy_signal_connect(self->proxy,
+                                                   "PrepareForSleep",
+                                                   G_VARIANT_TYPE("(b)"),
+                                                   G_CALLBACK(prepare_for_sleep_cb),
+                                                   self);
     {
         gs_free char *owner = NULL;
 

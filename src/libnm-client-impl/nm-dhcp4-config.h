@@ -7,14 +7,14 @@
 #define __NM_DHCP4_CONFIG_H__
 
 #if !((NETWORKMANAGER_COMPILATION) &NM_NETWORKMANAGER_COMPILATION_WITH_LIBNM_PRIVATE)
-    #error Cannot use this header.
+#error Cannot use this header.
 #endif
 
 #include "nm-dhcp-config.h"
 
 #define NM_TYPE_DHCP4_CONFIG (nm_dhcp4_config_get_type())
 #define NM_DHCP4_CONFIG(obj) \
-    (G_TYPE_CHECK_INSTANCE_CAST((obj), NM_TYPE_DHCP4_CONFIG, NMDhcp4Config))
+    (_NM_G_TYPE_CHECK_INSTANCE_CAST((obj), NM_TYPE_DHCP4_CONFIG, NMDhcp4Config))
 #define NM_DHCP4_CONFIG_CLASS(klass) \
     (G_TYPE_CHECK_CLASS_CAST((klass), NM_TYPE_DHCP4_CONFIG, NMDhcp4ConfigClass))
 #define NM_IS_DHCP4_CONFIG(obj)         (G_TYPE_CHECK_INSTANCE_TYPE((obj), NM_TYPE_DHCP4_CONFIG))

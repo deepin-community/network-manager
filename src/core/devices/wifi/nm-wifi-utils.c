@@ -11,8 +11,10 @@
 #include <netinet/if_ether.h>
 #include <stdlib.h>
 
+#include "libnm-glib-aux/nm-str-buf.h"
 #include "nm-utils.h"
 #include "libnm-core-intern/nm-core-internal.h"
+#include "libnm-core-aux-intern/nm-libnm-core-utils.h"
 #include "libnm-core-aux-intern/nm-common-macros.h"
 #include "libnm-base/nm-config-base.h"
 
@@ -40,9 +42,9 @@ verify_no_wep(NMSettingWirelessSecurity *s_wsec, const char *tag, GError **error
 
 static gboolean
 verify_leap(NMSettingWirelessSecurity *s_wsec,
-            NMSetting8021x *           s_8021x,
+            NMSetting8021x            *s_8021x,
             gboolean                   adhoc,
-            GError **                  error)
+            GError                   **error)
 {
     const char *key_mgmt, *auth_alg, *leap_username;
 
@@ -223,9 +225,9 @@ verify_no_wpa(NMSettingWirelessSecurity *s_wsec, const char *tag, GError **error
 
 static gboolean
 verify_dynamic_wep(NMSettingWirelessSecurity *s_wsec,
-                   NMSetting8021x *           s_8021x,
+                   NMSetting8021x            *s_8021x,
                    gboolean                   adhoc,
-                   GError **                  error)
+                   GError                   **error)
 {
     const char *key_mgmt, *auth_alg, *leap_username;
 
@@ -302,11 +304,11 @@ verify_dynamic_wep(NMSettingWirelessSecurity *s_wsec,
 
 static gboolean
 verify_wpa_psk(NMSettingWirelessSecurity *s_wsec,
-               NMSetting8021x *           s_8021x,
+               NMSetting8021x            *s_8021x,
                gboolean                   adhoc,
                guint32                    wpa_flags,
                guint32                    rsn_flags,
-               GError **                  error)
+               GError                   **error)
 {
     const char *key_mgmt, *auth_alg;
 
@@ -399,10 +401,10 @@ verify_wpa_psk(NMSettingWirelessSecurity *s_wsec,
 
 static gboolean
 verify_wpa_eap(NMSettingWirelessSecurity *s_wsec,
-               NMSetting8021x *           s_8021x,
+               NMSetting8021x            *s_8021x,
                guint32                    wpa_flags,
                guint32                    rsn_flags,
-               GError **                  error)
+               GError                   **error)
 {
     const char *key_mgmt, *auth_alg;
     gboolean    is_wpa_eap = FALSE;
@@ -464,9 +466,9 @@ verify_wpa_eap(NMSettingWirelessSecurity *s_wsec,
 
 static gboolean
 verify_adhoc(NMSettingWirelessSecurity *s_wsec,
-             NMSetting8021x *           s_8021x,
+             NMSetting8021x            *s_8021x,
              gboolean                   adhoc,
-             GError **                  error)
+             GError                   **error)
 {
     const char *key_mgmt = NULL, *leap_username = NULL, *auth_alg = NULL;
 
@@ -528,8 +530,8 @@ verify_adhoc(NMSettingWirelessSecurity *s_wsec,
 }
 
 gboolean
-nm_wifi_utils_complete_connection(GBytes *      ap_ssid,
-                                  const char *  bssid,
+nm_wifi_utils_complete_connection(GBytes       *ap_ssid,
+                                  const char   *bssid,
                                   _NM80211Mode  ap_mode,
                                   guint32       ap_freq,
                                   guint32       ap_flags,
@@ -537,13 +539,13 @@ nm_wifi_utils_complete_connection(GBytes *      ap_ssid,
                                   guint32       ap_rsn_flags,
                                   NMConnection *connection,
                                   gboolean      lock_bssid,
-                                  GError **     error)
+                                  GError      **error)
 {
-    NMSettingWireless *        s_wifi;
+    NMSettingWireless         *s_wifi;
     NMSettingWirelessSecurity *s_wsec;
-    NMSetting8021x *           s_8021x;
-    GBytes *                   ssid;
-    const char *               mode, *key_mgmt, *auth_alg, *leap_username;
+    NMSetting8021x            *s_8021x;
+    GBytes                    *ssid;
+    const char                *mode, *key_mgmt, *auth_alg, *leap_username;
     gboolean                   adhoc = FALSE;
     gboolean                   mesh  = FALSE;
 
@@ -679,10 +681,7 @@ nm_wifi_utils_complete_connection(GBytes *      ap_ssid,
     }
 
     /* Everything else requires security */
-    if (!s_wsec) {
-        s_wsec = (NMSettingWirelessSecurity *) nm_setting_wireless_security_new();
-        nm_connection_add_setting(connection, NM_SETTING(s_wsec));
-    }
+    s_wsec = _nm_connection_ensure_setting(connection, NM_TYPE_SETTING_WIRELESS_SECURITY);
 
     key_mgmt      = nm_setting_wireless_security_get_key_mgmt(s_wsec);
     auth_alg      = nm_setting_wireless_security_get_auth_alg(s_wsec);
@@ -814,33 +813,22 @@ nm_wifi_utils_complete_connection(GBytes *      ap_ssid,
          * setting.  Since there's so much configuration required for it, there's
          * no way it can be automatically completed.
          */
-    } else if (nm_streq0(key_mgmt, "wpa-psk")
-               || (ap_rsn_flags & NM_802_11_AP_SEC_KEY_MGMT_SAE
-                   && (ap_wpa_flags & NM_802_11_AP_SEC_KEY_MGMT_PSK
-                       || ap_rsn_flags & NM_802_11_AP_SEC_KEY_MGMT_PSK))) {
+    } else if (ap_rsn_flags & NM_802_11_AP_SEC_KEY_MGMT_SAE
+               && (ap_wpa_flags & NM_802_11_AP_SEC_KEY_MGMT_PSK
+                   || ap_rsn_flags & NM_802_11_AP_SEC_KEY_MGMT_PSK)) {
         g_object_set(s_wsec,
                      NM_SETTING_WIRELESS_SECURITY_KEY_MGMT,
-                     "wpa-psk",
+                     nm_streq0(key_mgmt, "sae") ? "sae" : "wpa-psk",
                      NM_SETTING_WIRELESS_SECURITY_AUTH_ALG,
                      "open",
                      NULL);
     } else if (nm_streq0(key_mgmt, "sae") || (ap_rsn_flags & NM_802_11_AP_SEC_KEY_MGMT_SAE)) {
-        g_object_set(s_wsec,
-                     NM_SETTING_WIRELESS_SECURITY_KEY_MGMT,
-                     "sae",
-                     NM_SETTING_WIRELESS_SECURITY_AUTH_ALG,
-                     "open",
-                     NULL);
+        g_object_set(s_wsec, NM_SETTING_WIRELESS_SECURITY_KEY_MGMT, "sae", NULL);
     } else if (nm_streq0(key_mgmt, "owe")
                || NM_FLAGS_ANY(ap_rsn_flags,
                                NM_802_11_AP_SEC_KEY_MGMT_OWE | NM_802_11_AP_SEC_KEY_MGMT_OWE_TM)) {
-        g_object_set(s_wsec,
-                     NM_SETTING_WIRELESS_SECURITY_KEY_MGMT,
-                     "owe",
-                     NM_SETTING_WIRELESS_SECURITY_AUTH_ALG,
-                     "open",
-                     NULL);
-    } else if (ap_wpa_flags & NM_802_11_AP_SEC_KEY_MGMT_PSK
+        g_object_set(s_wsec, NM_SETTING_WIRELESS_SECURITY_KEY_MGMT, "owe", NULL);
+    } else if (nm_streq0(key_mgmt, "wpa-psk") || ap_wpa_flags & NM_802_11_AP_SEC_KEY_MGMT_PSK
                || ap_rsn_flags & NM_802_11_AP_SEC_KEY_MGMT_PSK) {
         g_object_set(s_wsec,
                      NM_SETTING_WIRELESS_SECURITY_KEY_MGMT,
@@ -853,12 +841,7 @@ nm_wifi_utils_complete_connection(GBytes *      ap_ssid,
          */
     } else if (nm_streq0(key_mgmt, "wpa-eap-suite-b-192")
                || (ap_rsn_flags & NM_802_11_AP_SEC_KEY_MGMT_EAP_SUITE_B_192)) {
-        g_object_set(s_wsec,
-                     NM_SETTING_WIRELESS_SECURITY_KEY_MGMT,
-                     "wpa-eap-suite-b-192",
-                     NM_SETTING_WIRELESS_SECURITY_AUTH_ALG,
-                     "open",
-                     NULL);
+        g_object_set(s_wsec, NM_SETTING_WIRELESS_SECURITY_KEY_MGMT, "wpa-eap-suite-b-192", NULL);
     } else {
         g_set_error_literal(error,
                             NM_CONNECTION_ERROR,
@@ -909,20 +892,20 @@ nm_wifi_utils_is_manf_default_ssid(GBytes *ssid)
 
 /* To be used for connections where the SSID has been validated before */
 gboolean
-nm_wifi_connection_get_iwd_ssid_and_security(NMConnection *        connection,
-                                             char **               ssid,
+nm_wifi_connection_get_iwd_ssid_and_security(NMConnection         *connection,
+                                             char                **ssid,
                                              NMIwdNetworkSecurity *security)
 {
-    NMSettingWireless *        s_wireless;
+    NMSettingWireless         *s_wireless;
     NMSettingWirelessSecurity *s_wireless_sec;
-    const char *               key_mgmt = NULL;
+    const char                *key_mgmt = NULL;
 
     s_wireless = nm_connection_get_setting_wireless(connection);
     if (!s_wireless)
         return FALSE;
 
     if (ssid) {
-        GBytes *    bytes = nm_setting_wireless_get_ssid(s_wireless);
+        GBytes     *bytes = nm_setting_wireless_get_ssid(s_wireless);
         gsize       ssid_len;
         const char *ssid_str = (const char *) g_bytes_get_data(bytes, &ssid_len);
 
@@ -964,7 +947,7 @@ nm_wifi_connection_get_iwd_ssid_and_security(NMConnection *        connection,
  * @ssid_len can be -1 instead of actual SSID length.
  */
 char *
-nm_wifi_utils_get_iwd_config_filename(const char *         ssid,
+nm_wifi_utils_get_iwd_config_filename(const char          *ssid,
                                       gssize               ssid_len,
                                       NMIwdNetworkSecurity security)
 {
@@ -1012,16 +995,16 @@ static gboolean
 psk_setting_to_iwd_config(GKeyFile *file, NMSettingWirelessSecurity *s_wsec, GError **error)
 {
     NMSettingSecretFlags psk_flags = nm_setting_wireless_security_get_psk_flags(s_wsec);
-    const char *         psk       = nm_setting_wireless_security_get_psk(s_wsec);
+    const char          *psk       = nm_setting_wireless_security_get_psk(s_wsec);
     gsize                psk_len;
     guint8               buffer[32];
-    const char *         key_mgmt = nm_setting_wireless_security_get_key_mgmt(s_wsec);
+    const char          *key_mgmt = nm_setting_wireless_security_get_key_mgmt(s_wsec);
 
     if (!psk || NM_FLAGS_ANY(psk_flags, SECRETS_DONT_STORE_FLAGS)) {
         if (NM_FLAGS_ANY(psk_flags, SECRETS_DONT_STORE_FLAGS)) {
             nm_log_info(
                 LOGD_WIFI,
-                "IWD network config is being created wihout the PSK but IWD will save the PSK on "
+                "IWD network config is being created without the PSK but IWD will save the PSK on "
                 "successful activation not honoring the psk-flags property");
         }
         return TRUE;
@@ -1046,11 +1029,11 @@ psk_setting_to_iwd_config(GKeyFile *file, NMSettingWirelessSecurity *s_wsec, GEr
 }
 
 static gboolean
-eap_certs_to_iwd_config(GKeyFile *      file,
+eap_certs_to_iwd_config(GKeyFile       *file,
                         NMSetting8021x *s_8021x,
                         bool            phase2,
-                        char *          iwd_prefix,
-                        GError **       error)
+                        char           *iwd_prefix,
+                        GError        **error)
 {
     NMSetting8021xCKScheme ca_cert_scheme =
         phase2 ? nm_setting_802_1x_get_phase2_ca_cert_scheme(s_8021x)
@@ -1060,13 +1043,13 @@ eap_certs_to_iwd_config(GKeyFile *      file,
                : nm_setting_802_1x_get_client_cert_scheme(s_8021x);
     NMSetting8021xCKScheme key_scheme;
     NMSettingSecretFlags   key_password_flags;
-    const char *           ca_path = phase2 ? nm_setting_802_1x_get_phase2_ca_path(s_8021x)
+    const char            *ca_path = phase2 ? nm_setting_802_1x_get_phase2_ca_path(s_8021x)
                                             : nm_setting_802_1x_get_ca_path(s_8021x);
-    const char *           cert_path;
-    const char *           key_path = NULL;
-    const char *           key_password;
-    const char *           domain_suffix_match;
-    const char *           domain_match;
+    const char            *cert_path;
+    const char            *key_path = NULL;
+    const char            *key_password;
+    const char            *domain_suffix_match;
+    const char            *domain_match;
     char                   setting_buf[128];
 
     /* TODO: should check that all certificates and the key are RSA */
@@ -1237,7 +1220,7 @@ private_key_done:
                                  : nm_setting_802_1x_get_domain_match(s_8021x);
 
     if (domain_suffix_match || domain_match) {
-        GString *   s = g_string_sized_new(128);
+        GString    *s = g_string_sized_new(128);
         const char *ptr;
         const char *end;
 
@@ -1304,13 +1287,13 @@ eap_optional_identity_to_iwd_config(GKeyFile *file, const char *iwd_prefix, cons
 }
 
 static gboolean
-eap_optional_password_to_iwd_config(GKeyFile *      file,
-                                    const char *    iwd_prefix,
+eap_optional_password_to_iwd_config(GKeyFile       *file,
+                                    const char     *iwd_prefix,
                                     NMSetting8021x *s_8021x,
-                                    GError **       error)
+                                    GError        **error)
 {
     char                 setting_buf[128];
-    const char *         password = nm_setting_802_1x_get_password(s_8021x);
+    const char          *password = nm_setting_802_1x_get_password(s_8021x);
     NMSettingSecretFlags flags    = nm_setting_802_1x_get_password_flags(s_8021x);
 
     if (!password && nm_setting_802_1x_get_password_raw(s_8021x)) {
@@ -1364,12 +1347,12 @@ eap_phase1_identity_to_iwd_config(GKeyFile *file, const char *iwd_prefix, NMSett
 }
 
 static gboolean
-eap_method_config_to_iwd_config(GKeyFile *      file,
+eap_method_config_to_iwd_config(GKeyFile       *file,
                                 NMSetting8021x *s_8021x,
                                 gboolean        phase2,
-                                const char *    method,
-                                const char *    iwd_prefix,
-                                GError **       error)
+                                const char     *method,
+                                const char     *iwd_prefix,
+                                GError        **error)
 {
     char prefix_buf[128];
 
@@ -1566,10 +1549,16 @@ eap_setting_to_iwd_config(GKeyFile *file, NMSetting8021x *s_8021x, GError **erro
 }
 
 static gboolean
-ip4_config_to_iwd_config(GKeyFile *file, NMSettingIPConfig *s_ip, GError **error)
+ip_config_to_iwd_config(int addr_family, GKeyFile *file, NMSettingIPConfig *s_ip, GError **error)
 {
-    guint          num;
-    struct in_addr ip;
+    const int                IS_IPv4 = NM_IS_IPv4(addr_family);
+    nm_auto_str_buf NMStrBuf strbuf  = NM_STR_BUF_INIT_A(NM_UTILS_GET_NEXT_REALLOC_SIZE_488, FALSE);
+    NMIPAddress             *addr;
+    guint                    num;
+    guint                    i;
+    char                     buf[NM_INET_ADDRSTRLEN + 10];
+    const char              *kf_group = IS_IPv4 ? "IPv4" : "IPv6";
+    const char              *gw;
 
     /* These settings are not acutally used unless global
      * [General].EnableNetworkConfiguration is true, which we don't support.
@@ -1581,15 +1570,26 @@ ip4_config_to_iwd_config(GKeyFile *file, NMSettingIPConfig *s_ip, GError **error
     if (!s_ip)
         return TRUE;
 
+    nm_assert(NM_IS_IPv4(addr_family) ? NM_IS_SETTING_IP4_CONFIG(s_ip)
+                                      : NM_IS_SETTING_IP6_CONFIG(s_ip));
+
     num = nm_setting_ip_config_get_num_dns(s_ip);
     if (num) {
-        nm_auto_free_gstring GString *s = g_string_sized_new(128);
-        guint                         i;
-
+        nm_str_buf_reset(&strbuf);
         for (i = 0; i < num; i++) {
-            if (s->len)
-                g_string_append_c(s, ' ');
-            g_string_append(s, nm_setting_ip_config_get_dns(s_ip, i));
+            char     sbuf[NM_INET_ADDRSTRLEN];
+            NMIPAddr a;
+
+            if (!nm_utils_dnsname_parse_assert(addr_family,
+                                               nm_setting_ip_config_get_dns(s_ip, i),
+                                               NULL,
+                                               &a,
+                                               NULL))
+                continue;
+
+            if (strbuf.len > 0)
+                nm_str_buf_append_c(&strbuf, ' ');
+            nm_str_buf_append(&strbuf, nm_inet_ntop(addr_family, &a, sbuf));
         }
         /* It doesn't matter whether we add the DNS under [IPv4] or [IPv6]
          * except that with method=auto the list will override the
@@ -1598,114 +1598,78 @@ ip4_config_to_iwd_config(GKeyFile *file, NMSettingIPConfig *s_ip, GError **error
          * Note ignore-auto-dns=false isn't supported, this list always
          * overrides the DHCP DNSes.
          */
-        g_key_file_set_string(file, "IPv4", "DNS", s->str);
+        g_key_file_set_string(file, kf_group, "DNS", nm_str_buf_get_str(&strbuf));
     }
 
-    if (!nm_streq0(nm_setting_ip_config_get_method(s_ip), NM_SETTING_IP4_CONFIG_METHOD_MANUAL))
-        return TRUE;
+    if (!IS_IPv4) {
+        if (!NM_IN_STRSET(nm_setting_ip_config_get_method(s_ip),
+                          NM_SETTING_IP6_CONFIG_METHOD_AUTO,
+                          NM_SETTING_IP6_CONFIG_METHOD_DHCP,
+                          NM_SETTING_IP6_CONFIG_METHOD_MANUAL))
+            return TRUE;
+        g_key_file_set_boolean(file, kf_group, "Enabled", TRUE);
+    }
 
     num = nm_setting_ip_config_get_num_addresses(s_ip);
-    if (num) {
-        NMIPAddress *addr    = nm_setting_ip_config_get_address(s_ip, 0);
-        guint        prefix  = nm_ip_address_get_prefix(addr);
-        in_addr_t    netmask = _nm_utils_ip4_prefix_to_netmask(prefix);
-        char         buf[INET_ADDRSTRLEN];
-
-        nm_ip_address_get_address_binary(addr, &ip);
-        g_key_file_set_string(file, "IPv4", "Address", nm_ip_address_get_address(addr));
-        g_key_file_set_string(file, "IPv4", "Netmask", _nm_utils_inet4_ntop(netmask, buf));
-    } else {
-        inet_pton(AF_INET, "10.42.0.100", &ip);
-        g_key_file_set_string(file, "IPv4", "Address", "10.42.0.100");
-    }
-
-    if (nm_setting_ip_config_get_gateway(s_ip)) {
-        g_key_file_set_string(file, "IPv4", "Gateway", nm_setting_ip_config_get_gateway(s_ip));
-    } else {
-        uint32_t val;
-        char     buf[INET_ADDRSTRLEN];
-
-        /* IWD won't enable static IP unless both Address and Gateway are
-         * set so generate a gateway address if not known.
-         */
-        val = (ntohl(ip.s_addr) & 0xfffffff0) + 1;
-        if (val == ntohl(ip.s_addr))
-            val += 1;
-        g_key_file_set_string(file, "IPv4", "Gateway", _nm_utils_inet4_ntop(htonl(val), buf));
-    }
-
-    return TRUE;
-}
-
-static gboolean
-ip6_config_to_iwd_config(GKeyFile *file, NMSettingIPConfig *s_ip, GError **error)
-{
-    guint        num;
-    NMIPAddress *addr;
-    char         buf[INET6_ADDRSTRLEN + 10];
-
-    if (!s_ip)
+    if (num == 0)
         return TRUE;
-
-    num = nm_setting_ip_config_get_num_dns(s_ip);
-    if (num) {
-        nm_auto_free_gstring GString *s = g_string_sized_new(128);
-        guint                         i;
-
-        for (i = 0; i < num; i++) {
-            if (s->len)
-                g_string_append_c(s, ' ');
-            g_string_append(s, nm_setting_ip_config_get_dns(s_ip, i));
-        }
-        g_key_file_set_string(file, "IPv6", "DNS", s->str);
-    }
-
-    if (!NM_IN_STRSET(nm_setting_ip_config_get_method(s_ip),
-                      NM_SETTING_IP6_CONFIG_METHOD_AUTO,
-                      NM_SETTING_IP6_CONFIG_METHOD_DHCP,
-                      NM_SETTING_IP6_CONFIG_METHOD_MANUAL))
-        return TRUE;
-
-    g_key_file_set_boolean(file, "IPv6", "Enabled", TRUE);
-
-    if (!nm_streq0(nm_setting_ip_config_get_method(s_ip), NM_SETTING_IP6_CONFIG_METHOD_MANUAL))
-        return TRUE;
-
-    if (!nm_setting_ip_config_get_num_addresses(s_ip)) {
-        g_set_error_literal(error,
-                            NM_CONNECTION_ERROR,
-                            NM_CONNECTION_ERROR_INVALID_PROPERTY,
-                            "IP address required for IPv6 manual config");
-        return FALSE;
-    }
 
     addr = nm_setting_ip_config_get_address(s_ip, 0);
-    g_key_file_set_string(file,
-                          "IPv6",
-                          "Address",
-                          nm_sprintf_buf(buf,
-                                         "%s/%u",
-                                         nm_ip_address_get_address(addr),
-                                         nm_ip_address_get_prefix(addr)));
-    if (nm_setting_ip_config_get_gateway(s_ip))
-        g_key_file_set_string(file, "IPv6", "Gateway", nm_setting_ip_config_get_gateway(s_ip));
+    gw   = nm_setting_ip_config_get_gateway(s_ip);
+
+    if (IS_IPv4) {
+        in_addr_t ip;
+
+        nm_ip_address_get_address_binary(addr, &ip);
+
+        g_key_file_set_string(file, kf_group, "Address", nm_ip_address_get_address(addr));
+        g_key_file_set_string(
+            file,
+            kf_group,
+            "Netmask",
+            nm_inet4_ntop(nm_ip4_addr_netmask_from_prefix(nm_ip_address_get_prefix(addr)), buf));
+
+        if (!gw) {
+            guint32 val;
+
+            /* IWD won't enable static IP unless both Address and Gateway are
+             * set so generate a gateway address if not known.
+             */
+            val = (ntohl(ip) & 0xfffffff0) + 1;
+            if (val == ntohl(ip))
+                val += 1;
+            gw = nm_inet4_ntop(htonl(val), buf);
+        }
+        g_key_file_set_string(file, kf_group, "Gateway", gw);
+    } else {
+        g_key_file_set_string(file,
+                              kf_group,
+                              "Address",
+                              nm_sprintf_buf(buf,
+                                             "%s/%u",
+                                             nm_ip_address_get_address(addr),
+                                             nm_ip_address_get_prefix(addr)));
+        if (gw)
+            g_key_file_set_string(file, kf_group, "Gateway", gw);
+    }
+
     return TRUE;
 }
 
 GKeyFile *
 nm_wifi_utils_connection_to_iwd_config(NMConnection *connection,
-                                       char **       out_filename,
-                                       GError **     error)
+                                       char        **out_filename,
+                                       GError      **error)
 {
-    NMSettingConnection * s_conn = nm_connection_get_setting_connection(connection);
-    NMSettingWireless *   s_wifi = nm_connection_get_setting_wireless(connection);
-    GBytes *              ssid;
-    const guint8 *        ssid_data;
-    gsize                 ssid_len;
-    NMIwdNetworkSecurity  security;
-    const char *          cloned_mac_addr;
-    gs_free char *        comment        = NULL;
-    nm_auto_unref_keyfile GKeyFile *file = NULL;
+    NMSettingConnection            *s_conn = nm_connection_get_setting_connection(connection);
+    NMSettingWireless              *s_wifi = nm_connection_get_setting_wireless(connection);
+    GBytes                         *ssid;
+    const guint8                   *ssid_data;
+    gsize                           ssid_len;
+    NMIwdNetworkSecurity            security;
+    const char                     *cloned_mac_addr;
+    gs_free char                   *comment = NULL;
+    nm_auto_unref_keyfile GKeyFile *file    = NULL;
 
     if (!s_conn || !s_wifi
         || !nm_streq(nm_setting_connection_get_connection_type(s_conn),
@@ -1776,13 +1740,15 @@ nm_wifi_utils_connection_to_iwd_config(NMConnection *connection,
     else if (cloned_mac_addr && nm_utils_hwaddr_valid(cloned_mac_addr, ETH_ALEN))
         g_key_file_set_string(file, "Settings", "AddressOverride", cloned_mac_addr);
 
-    if (!ip4_config_to_iwd_config(
+    if (!ip_config_to_iwd_config(
+            AF_INET,
             file,
             NM_SETTING_IP_CONFIG(nm_connection_get_setting_ip4_config(connection)),
             error))
         return NULL;
 
-    if (!ip6_config_to_iwd_config(
+    if (!ip_config_to_iwd_config(
+            AF_INET6,
             file,
             NM_SETTING_IP_CONFIG(nm_connection_get_setting_ip6_config(connection)),
             error))
@@ -1816,4 +1782,152 @@ nm_wifi_utils_connection_to_iwd_config(NMConnection *connection,
             nm_wifi_utils_get_iwd_config_filename((const char *) ssid_data, ssid_len, security);
 
     return g_steal_pointer(&file);
+}
+
+/* Wi-Fi Display Technical Specification v2.1.0 Table 27 */
+enum wfd_subelem_type {
+    WFD_SUBELEM_WFD_DEVICE_INFORMATION   = 0,
+    WFD_SUBELEM_ASSOCIATED_BSSID         = 1,
+    WFD_SUBELEM_COUPLED_SINK_INFORMATION = 6,
+    WFD_SUBELEM_EXTENDED_CAPABILITY      = 7,
+    WFD_SUBELEM_LOCAL_IP_ADDRESS         = 8,
+    WFD_SUBELEM_SESION_INFORMATION       = 9,
+    WFD_SUBELEM_ALTERNATIVE_MAC_ADDRESS  = 10,
+    WFD_SUBELEM_R2_DEVICE_INFORMATION    = 11,
+};
+
+bool
+nm_wifi_utils_parse_wfd_ies(GBytes *ies, NMIwdWfdInfo *out_wfd)
+{
+    size_t         len;
+    const uint8_t *data         = g_bytes_get_data(ies, &len);
+    const uint8_t *dev_info     = NULL;
+    uint16_t       dev_info_len = 0;
+    uint16_t       dev_info_flags;
+    const uint8_t *ext_capability     = NULL;
+    uint16_t       ext_capability_len = 0;
+
+    /* The single WFD IEs array provided by the client is supposed to be sent to
+     * the peer in the different frame types that may include the WFD IE: Probe
+     * Request/Response, Beacon, (Re)Association Request/Response, GO
+     * Negotiation Request/Response/Confirm and Provision Discovery
+     * Request/Response.
+     *
+     * It's going to be a subset of the elements allowed in all those frames.
+     * Validate that it contains at least a valid WFD Device Information (with
+     * the Session Available bit true) and that the sequence of subelements is
+     * valid.
+     */
+    while (len) {
+        uint8_t  subelem_id;
+        uint16_t subelem_len;
+
+        /* Does the subelement header fit */
+        if (len < 3)
+            return FALSE;
+
+        subelem_id  = data[0];
+        subelem_len = (data[1] << 8) | data[2];
+        data += 3;
+        len -= 3;
+
+        if (subelem_len > len)
+            return FALSE;
+
+        if (subelem_id == WFD_SUBELEM_WFD_DEVICE_INFORMATION) {
+            /* Is there a duplicate WFD Device Information */
+            if (dev_info)
+                return FALSE;
+
+            dev_info     = data;
+            dev_info_len = subelem_len;
+        }
+
+        if (subelem_id == WFD_SUBELEM_EXTENDED_CAPABILITY) {
+            /* Is there a duplicate WFD Extended Capability */
+            if (ext_capability)
+                return FALSE;
+
+            ext_capability     = data;
+            ext_capability_len = subelem_len;
+        }
+
+        data += subelem_len;
+        len -= subelem_len;
+    }
+
+    if (!dev_info || dev_info_len != 6)
+        return FALSE;
+
+    dev_info_flags = (dev_info[0] << 8) | dev_info[1];
+
+    /* Secondary sink not supported */
+    if ((dev_info_flags & 3) == 2)
+        return FALSE;
+
+    /* Must be available for WFD Session */
+    if (((dev_info_flags >> 4) & 3) != 1)
+        return FALSE;
+
+    /* TDLS persistent group re-invocation not supported */
+    if ((dev_info_flags >> 13) & 1)
+        return FALSE;
+
+    /* All other flags indicate support but not a requirement for something
+     * so not preserving them in the IEs IWD eventually sends doesn't break
+     * basic functionality.
+     */
+
+    if (ext_capability && ext_capability_len != 2)
+        return FALSE;
+
+    if (!out_wfd)
+        return TRUE;
+
+    out_wfd->source = NM_IN_SET(dev_info_flags & 3, 0, 3);
+    out_wfd->sink   = NM_IN_SET(dev_info_flags & 3, 1, 3);
+    out_wfd->port   = (dev_info[2] << 8) | dev_info[3];
+    out_wfd->has_audio =
+        out_wfd->sink ? ((dev_info_flags >> 10) & 1) == 0 : (((dev_info_flags >> 11) & 1) == 1);
+    out_wfd->has_uibc = ext_capability && (ext_capability[1] & 1) == 1;
+    out_wfd->has_cp   = ((dev_info_flags >> 8) & 1) == 1;
+    return TRUE;
+}
+
+GBytes *
+nm_wifi_utils_build_wfd_ies(const NMIwdWfdInfo *wfd)
+{
+    uint8_t  data[64];
+    uint8_t *ptr = data;
+
+    *ptr++ = WFD_SUBELEM_WFD_DEVICE_INFORMATION;
+    *ptr++ = 0; /* WFD Subelement length */
+    *ptr++ = 6;
+    *ptr++ = 0;                                               /* WFD Device Information bitmap: */
+    *ptr++ = (wfd->source ? (wfd->sink ? 3 : 0) : 1) | 0x10 | /* WFD Session Available */
+             (wfd->has_cp ? 0x100 : 0) | (wfd->has_audio ? 0 : 0x400);
+    *ptr++ = wfd->port >> 8;
+    *ptr++ = wfd->port & 255;
+    *ptr++ = 0; /* WFD Device Maximum throughput */
+    *ptr++ = 10;
+
+    if (wfd->has_uibc) {
+        *ptr++ = WFD_SUBELEM_EXTENDED_CAPABILITY;
+        *ptr++ = 0; /* WFD Subelement length */
+        *ptr++ = 2;
+        *ptr++ = 0x00; /* WFD Extended Capability Bitmap: */
+        *ptr++ = 0x10; /* UIBC Support */
+    }
+
+    return g_bytes_new(data, ptr - data);
+}
+
+bool
+nm_wifi_utils_wfd_info_eq(const NMIwdWfdInfo *a, const NMIwdWfdInfo *b)
+{
+    if (!a || !b)
+        return a == b;
+
+    return a->source == b->source && a->sink == b->sink && a->port == b->port
+           && a->has_audio == b->has_audio && a->has_uibc == b->has_uibc && a->has_cp == b->has_cp;
 }

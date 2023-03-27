@@ -17,10 +17,10 @@ typedef enum {
 
 typedef struct {
     NMSecretAgentSecretType secret_type;
-    const char *            pretty_name;
-    const char *            entry_id;
-    char *                  value;
-    const char *            vpn_type;
+    const char             *pretty_name;
+    const char             *entry_id;
+    char                   *value;
+    const char             *vpn_type;
     bool                    is_secret : 1;
     bool                    no_prompt_entry_id : 1;
 } NMSecretAgentSimpleSecret;
@@ -33,7 +33,7 @@ typedef struct {
 
 #define NM_TYPE_SECRET_AGENT_SIMPLE (nm_secret_agent_simple_get_type())
 #define NM_SECRET_AGENT_SIMPLE(obj) \
-    (G_TYPE_CHECK_INSTANCE_CAST((obj), NM_TYPE_SECRET_AGENT_SIMPLE, NMSecretAgentSimple))
+    (_NM_G_TYPE_CHECK_INSTANCE_CAST((obj), NM_TYPE_SECRET_AGENT_SIMPLE, NMSecretAgentSimple))
 #define NM_SECRET_AGENT_SIMPLE_CLASS(klass) \
     (G_TYPE_CHECK_CLASS_CAST((klass), NM_TYPE_SECRET_AGENT_SIMPLE, NMSecretAgentSimpleClass))
 #define NM_IS_SECRET_AGENT_SIMPLE(obj) \
@@ -53,8 +53,8 @@ GType nm_secret_agent_simple_get_type(void);
 NMSecretAgentSimple *nm_secret_agent_simple_new(const char *name);
 
 void nm_secret_agent_simple_response(NMSecretAgentSimple *self,
-                                     const char *         request_id,
-                                     GPtrArray *          secrets);
+                                     const char          *request_id,
+                                     GPtrArray           *secrets);
 
 void nm_secret_agent_simple_enable(NMSecretAgentSimple *self, const char *path);
 

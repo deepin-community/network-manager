@@ -8,21 +8,18 @@
 
 #include <stdlib.h>
 
-#include "nm-ip4-config.h"
-#include "nm-ip6-config.h"
+#include "nm-l3-config-data.h"
 
-NMIP4Config *nm_dhcp_utils_ip4_config_from_options(struct _NMDedupMultiIndex *multi_idx,
-                                                   int                        ifindex,
-                                                   const char *               iface,
-                                                   GHashTable *               options,
-                                                   guint32                    route_table,
-                                                   guint32                    route_metric);
+NML3ConfigData *nm_dhcp_utils_ip4_config_from_options(struct _NMDedupMultiIndex *multi_idx,
+                                                      int                        ifindex,
+                                                      const char                *iface,
+                                                      GHashTable                *options);
 
-NMIP6Config *nm_dhcp_utils_ip6_config_from_options(struct _NMDedupMultiIndex *multi_idx,
-                                                   int                        ifindex,
-                                                   const char *               iface,
-                                                   GHashTable *               options,
-                                                   gboolean                   info_only);
+NML3ConfigData *nm_dhcp_utils_ip6_config_from_options(struct _NMDedupMultiIndex *multi_idx,
+                                                      int                        ifindex,
+                                                      const char                *iface,
+                                                      GHashTable                *options,
+                                                      gboolean                   info_only);
 
 NMPlatformIP6Address nm_dhcp_utils_ip6_prefix_from_options(GHashTable *options);
 
@@ -34,9 +31,13 @@ gboolean nm_dhcp_utils_get_leasefile_path(int         addr_family,
                                           const char *plugin_name,
                                           const char *iface,
                                           const char *uuid,
-                                          char **     out_leasefile_path);
+                                          char      **out_leasefile_path);
 
 char *nm_dhcp_utils_get_dhcp6_event_id(GHashTable *lease);
+
+gboolean nm_dhcp_utils_merge_new_dhcp6_lease(const NML3ConfigData  *l3cd_old,
+                                             const NML3ConfigData  *l3cd_new,
+                                             const NML3ConfigData **out_l3cd_merged);
 
 /*****************************************************************************/
 
@@ -58,13 +59,48 @@ nm_dhcp_lease_data_consume_in_addr(const uint8_t **datap, size_t *n_datap, in_ad
     return nm_dhcp_lease_data_consume(datap, n_datap, addrp, sizeof(struct in_addr));
 }
 
-char *nm_dhcp_lease_data_parse_domain_validate(const char *str);
-
-gboolean nm_dhcp_lease_data_parse_u16(const guint8 *data, gsize n_data, guint16 *out_val);
-gboolean nm_dhcp_lease_data_parse_mtu(const guint8 *data, gsize n_data, guint16 *out_val);
-gboolean nm_dhcp_lease_data_parse_cstr(const guint8 *data, gsize n_data, gsize *out_new_len);
-gboolean nm_dhcp_lease_data_parse_domain(const guint8 *data, gsize n_data, char **out_val);
-gboolean nm_dhcp_lease_data_parse_in_addr(const guint8 *data, gsize n_data, in_addr_t *out_val);
-char **  nm_dhcp_lease_data_parse_search_list(const guint8 *data, gsize n_data);
+void     nm_dhcp_lease_log_invalid_option(const char *iface,
+                                          int         addr_family,
+                                          guint       option,
+                                          const char *fmt,
+                                          ...) G_GNUC_PRINTF(4, 5);
+char    *nm_dhcp_lease_data_parse_domain_validate(const char *str,
+                                                  const char *iface,
+                                                  int         addr_family,
+                                                  guint       option);
+gboolean nm_dhcp_lease_data_parse_u16(const guint8 *data,
+                                      gsize         n_data,
+                                      guint16      *out_val,
+                                      const char   *iface,
+                                      int           addr_family,
+                                      guint         option);
+gboolean nm_dhcp_lease_data_parse_mtu(const guint8 *data,
+                                      gsize         n_data,
+                                      guint16      *out_val,
+                                      const char   *iface,
+                                      int           addr_family,
+                                      guint         option);
+gboolean nm_dhcp_lease_data_parse_cstr(const guint8 *data,
+                                       gsize         n_data,
+                                       gsize        *out_new_len,
+                                       const char   *iface,
+                                       int           addr_family,
+                                       guint         option);
+gboolean nm_dhcp_lease_data_parse_domain(const guint8 *data,
+                                         gsize         n_data,
+                                         char        **out_val,
+                                         const char   *iface,
+                                         int           addr_family,
+                                         guint         option);
+gboolean nm_dhcp_lease_data_parse_in_addr(const guint8 *data,
+                                          gsize         n_data,
+                                          in_addr_t    *out_val,
+                                          const char   *iface,
+                                          guint         option);
+char   **nm_dhcp_lease_data_parse_search_list(const guint8 *data,
+                                              gsize         n_data,
+                                              const char   *iface,
+                                              int           addr_family,
+                                              guint         option);
 
 #endif /* __NETWORKMANAGER_DHCP_UTILS_H__ */

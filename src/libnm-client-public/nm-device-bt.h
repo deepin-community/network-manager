@@ -8,7 +8,7 @@
 #define __NM_DEVICE_BT_H__
 
 #if !defined(__NETWORKMANAGER_H_INSIDE__) && !defined(NETWORKMANAGER_COMPILATION)
-    #error "Only <NetworkManager.h> can be included directly."
+#error "Only <NetworkManager.h> can be included directly."
 #endif
 
 #include "nm-device.h"
@@ -31,6 +31,7 @@ G_BEGIN_DECLS
 /**
  * NMDeviceBt:
  */
+typedef struct _NMDeviceBt      NMDeviceBt;
 typedef struct _NMDeviceBtClass NMDeviceBtClass;
 
 GType nm_device_bt_get_type(void);

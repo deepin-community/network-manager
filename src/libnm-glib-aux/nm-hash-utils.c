@@ -45,7 +45,7 @@ again:
             guint8 _extra_entropy[3 * HASH_KEY_SIZE];
         } t_arr;
 
-        nm_utils_random_bytes(&t_arr, sizeof(t_arr));
+        nm_random_get_bytes(&t_arr, sizeof(t_arr));
 
         /* We only initialize one random hash key. So we can spend some effort
          * of getting this right. For one, we collect more random bytes than
@@ -106,7 +106,7 @@ nm_hash_static(guint static_seed)
      *
      * Also, ensure that we don't return zero (like for nm_hash_complete()).
      */
-    return ((*((const guint *) _get_hash_key())) ^ static_seed) ?: 3679500967u;
+    return ((*NM_CAST_ALIGN(guint, _get_hash_key())) ^ static_seed) ?: 3679500967u;
 }
 
 void
@@ -139,12 +139,6 @@ nm_hash_str(const char *str)
 }
 
 guint
-nm_str_hash(gconstpointer str)
-{
-    return nm_hash_str(str);
-}
-
-guint
 nm_hash_ptr(gconstpointer ptr)
 {
     NMHashState h;
@@ -154,12 +148,6 @@ nm_hash_ptr(gconstpointer ptr)
     nm_hash_init(&h, 2907677551u);
     nm_hash_update(&h, &ptr, sizeof(ptr));
     return nm_hash_complete(&h);
-}
-
-guint
-nm_direct_hash(gconstpointer ptr)
-{
-    return nm_hash_ptr(ptr);
 }
 
 /*****************************************************************************/
@@ -255,9 +243,9 @@ nm_ppdirect_equal(gconstpointer a, gconstpointer b)
 /*****************************************************************************/
 
 guint
-nm_gbytes_hash(gconstpointer p)
+nm_g_bytes_hash(gconstpointer p)
 {
-    GBytes *      ptr = (GBytes *) p;
+    GBytes       *ptr = (GBytes *) p;
     gconstpointer arr;
     gsize         len;
 
@@ -266,7 +254,7 @@ nm_gbytes_hash(gconstpointer p)
 }
 
 guint
-nm_pgbytes_hash(gconstpointer p)
+nm_pg_bytes_hash(gconstpointer p)
 {
     GBytes *const *ptr = p;
     gconstpointer  arr;
@@ -277,10 +265,38 @@ nm_pgbytes_hash(gconstpointer p)
 }
 
 gboolean
-nm_pgbytes_equal(gconstpointer a, gconstpointer b)
+nm_pg_bytes_equal(gconstpointer a, gconstpointer b)
 {
     GBytes *const *ptr_a = a;
     GBytes *const *ptr_b = b;
 
     return g_bytes_equal(*ptr_a, *ptr_b);
+}
+
+/*****************************************************************************/
+
+guint64
+nm_hash_obfuscate_ptr(guint static_seed, gconstpointer val)
+{
+    NMHashState h;
+
+    if (NM_MORE_ASSERTS > 0) {
+        static int obfuscate_static = -1;
+        int        obfuscate;
+
+again:
+        obfuscate = g_atomic_int_get(&obfuscate_static);
+        if (G_UNLIKELY(obfuscate == -1)) {
+            obfuscate = _nm_utils_ascii_str_to_int64(g_getenv("NM_OBFUSCATE_PTR"), 10, 0, 1, 1);
+            if (!g_atomic_int_compare_and_exchange(&obfuscate_static, -1, obfuscate))
+                goto again;
+        }
+
+        if (!obfuscate)
+            return (uintptr_t) val;
+    }
+
+    nm_hash_init(&h, static_seed);
+    nm_hash_update_val(&h, val);
+    return nm_hash_complete_u64(&h);
 }

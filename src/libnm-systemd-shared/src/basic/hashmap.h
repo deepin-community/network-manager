@@ -90,12 +90,7 @@ OrderedHashmap* _ordered_hashmap_new(const struct hash_ops *hash_ops  HASHMAP_DE
 #define ordered_hashmap_new(ops) _ordered_hashmap_new(ops  HASHMAP_DEBUG_SRC_ARGS)
 
 #define hashmap_free_and_replace(a, b)          \
-        ({                                      \
-                hashmap_free(a);                \
-                (a) = (b);                      \
-                (b) = NULL;                     \
-                0;                              \
-        })
+        free_and_replace_full(a, b, hashmap_free)
 
 HashmapBase* _hashmap_free(HashmapBase *h, free_func_t default_free_key, free_func_t default_free_value);
 static inline Hashmap* hashmap_free(Hashmap *h) {
@@ -224,7 +219,7 @@ static inline int ordered_hashmap_remove_and_replace(OrderedHashmap *h, const vo
         return hashmap_remove_and_replace(PLAIN_HASHMAP(h), old_key, new_key, value);
 }
 
-/* Since merging data from a OrderedHashmap into a Hashmap or vice-versa
+/* Since merging data from an OrderedHashmap into a Hashmap or vice-versa
  * should just work, allow this by having looser type-checking here. */
 int _hashmap_merge(Hashmap *h, Hashmap *other);
 #define hashmap_merge(h, other) _hashmap_merge(PLAIN_HASHMAP(h), PLAIN_HASHMAP(other))

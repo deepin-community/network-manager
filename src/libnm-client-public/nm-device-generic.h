@@ -7,7 +7,7 @@
 #define __NM_DEVICE_GENERIC_H__
 
 #if !defined(__NETWORKMANAGER_H_INSIDE__) && !defined(NETWORKMANAGER_COMPILATION)
-    #error "Only <NetworkManager.h> can be included directly."
+#error "Only <NetworkManager.h> can be included directly."
 #endif
 
 #include "nm-device.h"
@@ -30,6 +30,7 @@ G_BEGIN_DECLS
 /**
  * NMDeviceGeneric:
  */
+typedef struct _NMDeviceGeneric      NMDeviceGeneric;
 typedef struct _NMDeviceGenericClass NMDeviceGenericClass;
 
 GType nm_device_generic_get_type(void);

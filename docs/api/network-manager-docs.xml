@@ -9,7 +9,7 @@
     <releaseinfo>
       for NetworkManager &version;
       The latest version of this documentation can be found on-line at
-      <ulink url="https://developer.gnome.org/NetworkManager/stable/">https://developer.gnome.org/NetworkManager/stable/</ulink>.
+      <ulink url="https://networkmanager.dev/docs/api/latest/">https://networkmanager.dev/docs/api/latest/</ulink>.
     </releaseinfo>
 
     <copyright>
@@ -71,6 +71,7 @@
     <xi:include href="../../man/NetworkManager.xml"/>
     <xi:include href="../../man/NetworkManager.conf.xml"/>
     <xi:include href="../../man/NetworkManager-dispatcher.xml"/>
+    <xi:include href="../../man/NetworkManager-wait-online.service.xml"/>
     <xi:include href="../../man/nmcli.xml"/>
     <xi:include href="../../man/nmcli-examples.xml"/>
     <xi:include href="../../man/nmtui.xml"/>
@@ -192,6 +193,7 @@
       <xi:include href="dbus-org.freedesktop.NetworkManager.Device.Generic.xml"/>
       <xi:include href="dbus-org.freedesktop.NetworkManager.Device.IPTunnel.xml"/>
       <xi:include href="dbus-org.freedesktop.NetworkManager.Device.Infiniband.xml"/>
+      <xi:include href="dbus-org.freedesktop.NetworkManager.Device.Loopback.xml"/>
       <xi:include href="dbus-org.freedesktop.NetworkManager.Device.Lowpan.xml"/>
       <xi:include href="dbus-org.freedesktop.NetworkManager.Device.Macsec.xml"/>
       <xi:include href="dbus-org.freedesktop.NetworkManager.Device.Macvlan.xml"/>

@@ -6,7 +6,7 @@
 #include "libnm-client-impl/nm-default-libnm.h"
 
 #if defined(HAVE_DECL_MEMFD_CREATE) && HAVE_DECL_MEMFD_CREATE
-    #include <linux/memfd.h>
+#include <linux/memfd.h>
 #endif
 
 #include <sys/mman.h>
@@ -2272,6 +2272,12 @@ _memfd_create(const char *name)
     return -1;
 }
 
+typedef enum {
+    READ_VPN_DETAIL_TYPE_GOOD,
+    READ_VPN_DETAIL_TYPE_NO_DONE,
+    READ_VPN_DETAIL_TYPE_BROKEN,
+} ReadVpnDetailType;
+
 typedef struct {
     const char *key;
     const char *val;
@@ -2280,23 +2286,41 @@ typedef struct {
 #define READ_VPN_DETAIL_DATA(...) ((ReadVpnDetailData[]){__VA_ARGS__})
 
 static gboolean
-_do_read_vpn_details_impl1(const char *             file,
+_do_read_vpn_details_impl1(const char              *file,
                            int                      line,
                            int                      memfd,
-                           char *                   mem,
+                           char                    *mem,
                            gsize                    len,
+                           ReadVpnDetailType        detail_type,
                            const ReadVpnDetailData *expected_data,
                            guint                    expected_data_len,
                            const ReadVpnDetailData *expected_secrets,
                            guint                    expected_secrets_len)
 {
-    gssize             written;
-    off_t              lseeked;
+    gssize                         written;
+    off_t                          lseeked;
     gs_unref_hashtable GHashTable *data    = NULL;
     gs_unref_hashtable GHashTable *secrets = NULL;
+    char                           ch;
+    gboolean                       append_quit;
+    char                           read_buf[1024];
+    gssize                         n_read;
+    gssize                         i;
 
     written = write(memfd, mem, len);
     g_assert_cmpint(written, ==, (gssize) len);
+
+    append_quit = nmtst_get_rand_bool();
+
+    if (append_quit) {
+        if (len > 0 && mem[len - 1] != '\n') {
+            ch      = '\n';
+            written = write(memfd, &ch, 1);
+            g_assert_cmpint(written, ==, 1);
+        }
+        written = write(memfd, "QUIT", 4);
+        g_assert_cmpint(written, ==, 4);
+    }
 
     lseeked = lseek(memfd, 0, SEEK_SET);
     g_assert_cmpint(lseeked, ==, 0);
@@ -2312,11 +2336,11 @@ _do_read_vpn_details_impl1(const char *             file,
 #define _assert_hash(hash, expected, expected_len)                                            \
     G_STMT_START                                                                              \
     {                                                                                         \
-        GHashTable *             _hash         = (hash);                                      \
+        GHashTable              *_hash         = (hash);                                      \
         guint                    _expected_len = (expected_len);                              \
         const ReadVpnDetailData *_expected     = (expected);                                  \
         GHashTableIter           _iter;                                                       \
-        const char *             _k, *_v;                                                     \
+        const char              *_k, *_v;                                                     \
         guint                    _i;                                                          \
                                                                                               \
         g_assert(_hash);                                                                      \
@@ -2327,13 +2351,14 @@ _do_read_vpn_details_impl1(const char *             file,
                 if (nm_streq(_expected[_i].key, _k))                                          \
                     break;                                                                    \
             }                                                                                 \
-            if (_i >= _expected_len)                                                          \
+            if (_i >= _expected_len) {                                                        \
                 g_error("%s:%d: hash '%s' contains unexpected data key '%s' with value '%s'", \
                         file,                                                                 \
                         line,                                                                 \
                         G_STRINGIFY(hash),                                                    \
                         _k,                                                                   \
                         _v);                                                                  \
+            }                                                                                 \
         }                                                                                     \
                                                                                               \
         for (_i = 0; _i < _expected_len; _i++) {                                              \
@@ -2342,7 +2367,7 @@ _do_read_vpn_details_impl1(const char *             file,
             g_assert(_d->key);                                                                \
             g_assert(_d->val);                                                                \
             _v = g_hash_table_lookup(_hash, _d->key);                                         \
-            if (!nm_streq0(_v, _d->val))                                                      \
+            if (!nm_streq0(_v, _d->val)) {                                                    \
                 g_error("%s:%d: hash '%s' contains data key '%s' with value %s%s%s but we "   \
                         "expected '%s'",                                                      \
                         file,                                                                 \
@@ -2351,20 +2376,71 @@ _do_read_vpn_details_impl1(const char *             file,
                         _d->key,                                                              \
                         NM_PRINT_FMT_QUOTE_STRING(_v),                                        \
                         _d->val);                                                             \
+            }                                                                                 \
         }                                                                                     \
                                                                                               \
         g_assert_cmpint(g_hash_table_size(_hash), ==, _expected_len);                         \
     }                                                                                         \
     G_STMT_END
 
+    NM_PRAGMA_WARNING_DISABLE_DANGLING_POINTER
     _assert_hash(data, expected_data, expected_data_len);
     _assert_hash(secrets, expected_secrets, expected_secrets_len);
+    NM_PRAGMA_WARNING_REENABLE
 
 #undef _assert_hash
+
+    n_read = read(memfd, read_buf, sizeof(read_buf));
+
+    if (0) {
+        gs_free char *ss = NULL;
+
+        g_print(">>>> n_read=%zd;  \"%s\"",
+                n_read,
+                n_read > 0 ? (
+                    ss = nm_utils_buf_utf8safe_escape_cp(read_buf,
+                                                         n_read,
+                                                         NM_UTILS_STR_UTF8_SAFE_FLAG_ESCAPE_CTRL))
+                           : "");
+    }
+
+    g_assert_cmpint(n_read, >=, 0);
+    g_assert_cmpint(n_read, <, sizeof(read_buf));
+
+    i = read(memfd, &ch, 1);
+    g_assert_cmpint(i, ==, 0);
+
+    switch (detail_type) {
+    case READ_VPN_DETAIL_TYPE_GOOD:
+        g_assert_cmpint(n_read, >=, 0);
+        i = 0;
+        while (i < n_read && NM_IN_SET(read_buf[i], '\n'))
+            i++;
+        if (append_quit)
+            g_assert_cmpmem("QUIT", 4, &read_buf[i], n_read - i);
+        else
+            g_assert_cmpint(n_read - i, ==, 0);
+        break;
+    case READ_VPN_DETAIL_TYPE_NO_DONE:
+        g_assert_cmpint(n_read, ==, 0);
+        break;
+    case READ_VPN_DETAIL_TYPE_BROKEN:
+        g_assert_cmpint(n_read, >, 0);
+        if (append_quit) {
+            g_assert_cmpint(n_read, >, 4);
+            g_assert(memmem(&read_buf[i], n_read + i, "QUIT", 4));
+        }
+        break;
+    default:
+        g_assert_not_reached();
+        break;
+    }
+
     return TRUE;
 }
 
 #define _do_read_vpn_details_impl0(str,                                          \
+                                   detail_type,                                  \
                                    expected_data,                                \
                                    expected_data_len,                            \
                                    expected_secrets,                             \
@@ -2385,6 +2461,7 @@ _do_read_vpn_details_impl1(const char *             file,
                                        _memfd,                                   \
                                        "" str "",                                \
                                        NM_STRLEN(str),                           \
+                                       (detail_type),                            \
                                        expected_data,                            \
                                        expected_data_len,                        \
                                        expected_secrets,                         \
@@ -2393,14 +2470,16 @@ _do_read_vpn_details_impl1(const char *             file,
     }                                                                            \
     G_STMT_END
 
-#define _do_read_vpn_details_empty(str) _do_read_vpn_details_impl0(str, NULL, 0, NULL, 0, {})
+#define _do_read_vpn_details_empty(str) \
+    _do_read_vpn_details_impl0(str, READ_VPN_DETAIL_TYPE_GOOD, NULL, 0, NULL, 0, {})
 
-#define _do_read_vpn_details(str, expected_data, expected_secrets, pre_setup_cmd) \
-    _do_read_vpn_details_impl0(str,                                               \
-                               expected_data,                                     \
-                               G_N_ELEMENTS(expected_data),                       \
-                               expected_secrets,                                  \
-                               G_N_ELEMENTS(expected_secrets),                    \
+#define _do_read_vpn_details(str, detail_type, expected_data, expected_secrets, pre_setup_cmd) \
+    _do_read_vpn_details_impl0(str,                                                            \
+                               detail_type,                                                    \
+                               expected_data,                                                  \
+                               G_N_ELEMENTS(expected_data),                                    \
+                               expected_secrets,                                               \
+                               G_N_ELEMENTS(expected_secrets),                                 \
                                pre_setup_cmd)
 
 static void
@@ -2426,6 +2505,7 @@ test_nm_vpn_service_plugin_read_vpn_details(void)
                          "DONE\n"
                          "\n"
                          "",
+                         READ_VPN_DETAIL_TYPE_GOOD,
                          READ_VPN_DETAIL_DATA({"some-key", "string"}, {"some-other-key", "val2"}, ),
                          READ_VPN_DETAIL_DATA({"some-secret", "val3"}, ), );
 
@@ -2433,6 +2513,7 @@ test_nm_vpn_service_plugin_read_vpn_details(void)
                          "DATA_KEY=some-key\n"
                          "DATA_VAL=string\n"
                          "DONE\n",
+                         READ_VPN_DETAIL_TYPE_GOOD,
                          READ_VPN_DETAIL_DATA({"some-key", "string"}, ),
                          READ_VPN_DETAIL_DATA(), );
 
@@ -2461,6 +2542,7 @@ test_nm_vpn_service_plugin_read_vpn_details(void)
         "\n"
         "DONE\n"
         "",
+        READ_VPN_DETAIL_TYPE_BROKEN,
         READ_VPN_DETAIL_DATA({"some-key", "string\ncontinued after a line break"}, ),
         READ_VPN_DETAIL_DATA({"key names\ncan have\ncontinuations too", "value"}, ), );
 
@@ -2474,6 +2556,7 @@ test_nm_vpn_service_plugin_read_vpn_details(void)
         "=continuations too\n"
         "SECRET_VAL=value\n"
         "",
+        READ_VPN_DETAIL_TYPE_NO_DONE,
         READ_VPN_DETAIL_DATA({"some-key", "string\ncontinued after a line break"}, ),
         READ_VPN_DETAIL_DATA({"key names\ncan have\ncontinuations too", "value"}, ), );
 
@@ -2507,6 +2590,7 @@ test_nm_vpn_service_plugin_read_vpn_details(void)
                          "DONE\n"
                          "\n"
                          "",
+                         READ_VPN_DETAIL_TYPE_GOOD,
                          READ_VPN_DETAIL_DATA({"some\nkey-2", "val2"},
                                               {"some-key", "string"},
                                               {"key3\nkey-2", "val3"}, ),
@@ -2546,8 +2630,15 @@ test_nm_vpn_service_plugin_read_vpn_details(void)
                          "DONE\n"
                          "\n"
                          "",
-                         READ_VPN_DETAIL_DATA({"some\nkey-2", "val2"}, {"some-key", "string"}, ),
-                         READ_VPN_DETAIL_DATA(), );
+                         READ_VPN_DETAIL_TYPE_GOOD,
+                         READ_VPN_DETAIL_DATA({"some\nkey-2", "val2"},
+                                              {"some-key", "string"},
+                                              {"key3\nkey-2", "val3"}, ),
+                         READ_VPN_DETAIL_DATA({"some-secret", "val3"},
+                                              {"key-inval", "in\xc1val"},
+                                              {"ke\xc0yx", "inval"},
+                                              {"keyx", ""},
+                                              {"", "val3"}), );
 }
 
 /*****************************************************************************/
@@ -2758,8 +2849,8 @@ test_types(void)
 
     for (i_type = 0; i_type < G_N_ELEMENTS(get_type_fcns); i_type++) {
         nm_auto_unref_gtypeclass GObjectClass *klass_unref = NULL;
-        GType                                  gtype       = (get_type_fcns[i_type]) ();
-        GObjectClass *                         klass;
+        GType                                  gtype       = (get_type_fcns[i_type])();
+        GObjectClass                          *klass;
 
         g_assert(g_str_has_prefix(g_type_name(gtype), "NM"));
 
@@ -2803,16 +2894,16 @@ test_types(void)
 static void
 test_nml_dbus_meta(void)
 {
-    const NMLDBusMetaIface *   meta_iface;
+    const NMLDBusMetaIface    *meta_iface;
     const NMLDBusMetaProperty *meta_property;
     guint                      prop_idx;
     gsize                      i, j;
     guint                      l, m;
 
     for (i = 0; i < G_N_ELEMENTS(_nml_dbus_meta_ifaces); i++) {
-        const NMLDBusMetaIface * mif                       = _nml_dbus_meta_ifaces[i];
+        const NMLDBusMetaIface                *mif         = _nml_dbus_meta_ifaces[i];
         nm_auto_unref_gtypeclass GObjectClass *klass_unref = NULL;
-        GObjectClass *                         klass;
+        GObjectClass                          *klass;
         GType                                  gtype;
 
 #define COMMON_PREFIX "org.freedesktop.NetworkManager"
@@ -2836,6 +2927,11 @@ test_nml_dbus_meta(void)
         }
 
         g_assert((mif->n_dbus_properties > 0) == (!!mif->dbus_properties));
+
+        if (nm_streq(mif->dbus_iface_name, "org.freedesktop.NetworkManager.Device"))
+            g_assert(nm_streq(
+                mif->dbus_properties[_NML_DEVICE_META_PROPERTY_INDEX_PORTS].dbus_property_name,
+                "Ports"));
 
         if (mif->interface_prio == NML_DBUS_META_INTERFACE_PRIO_NONE) {
             g_assert(!mif->get_type_fcn);
@@ -2999,11 +3095,11 @@ test_nml_dbus_meta(void)
 check_dbus_properties:
         for (l = 0; l < mif->n_dbus_properties; l++) {
             const NMLDBusMetaProperty *mpr               = &mif->dbus_properties[l];
-            gs_free char *             obj_property_name = NULL;
+            gs_free char              *obj_property_name = NULL;
             const struct {
                 const char *dbus_type;
                 GType       default_gtype;
-            } * p_expected_type, *p_expected_type_2,
+            } *p_expected_type, *p_expected_type_2,
                 expected_types[] = {
                     {"b", G_TYPE_BOOLEAN},        {"q", G_TYPE_UINT},
                     {"y", G_TYPE_UCHAR},          {"i", G_TYPE_INT},
@@ -3044,10 +3140,12 @@ check_dbus_properties:
                     break;
                 p_expected_type++;
                 if (p_expected_type >= &expected_types[G_N_ELEMENTS(expected_types)]) {
+                    NM_PRAGMA_WARNING_DISABLE_DANGLING_POINTER
                     g_error("D-Bus type \"%s\" is not implemented (in property %s.%s)",
                             (const char *) mpr->dbus_type,
                             mif->dbus_iface_name,
                             mpr->dbus_property_name);
+                    NM_PRAGMA_WARNING_REENABLE
                 }
             }
 
@@ -3068,7 +3166,7 @@ check_dbus_properties:
                 pspec = mif->obj_properties[mpr->obj_properties_idx];
             }
 
-            if (mpr->use_notify_update_prop) {
+            if (mpr->notify_update_prop) {
                 g_assert(mpr->notify_update_prop);
             } else {
                 if (klass)
@@ -3129,7 +3227,7 @@ check_dbus_properties:
 
                 g_assert_cmpstr(expected_property_name, ==, pspec->name);
 
-                if (!mpr->use_notify_update_prop) {
+                if (!mpr->notify_update_prop) {
                     for (p_expected_type_2 = &expected_types[0];
                          p_expected_type_2 < &expected_types[G_N_ELEMENTS(expected_types)];
                          p_expected_type_2++) {
@@ -3146,6 +3244,7 @@ check_dbus_properties:
                             break;
                     }
                     if (p_expected_type_2 >= &expected_types[G_N_ELEMENTS(expected_types)]) {
+                        NM_PRAGMA_WARNING_DISABLE_DANGLING_POINTER
                         g_error("D-Bus property \"%s.%s\" (type \"%s\") maps to property \"%s\", "
                                 "but that has an unexpected property type %s (expected %s)",
                                 mif->dbus_iface_name,
@@ -3154,6 +3253,7 @@ check_dbus_properties:
                                 pspec->name,
                                 g_type_name(pspec->value_type),
                                 g_type_name(p_expected_type->default_gtype));
+                        NM_PRAGMA_WARNING_REENABLE
                     }
                 }
 
@@ -3213,7 +3313,7 @@ static void
 test_dbus_meta_types(void)
 {
     struct list_data {
-        const char *            dbus_iface_name;
+        const char             *dbus_iface_name;
         GType                   gtype;
         NMLDBusMetaInteracePrio interface_prio;
     } list[] = {
@@ -3459,8 +3559,8 @@ test_nm_auth_permissions(void)
     for (i = 1; i < NM_CLIENT_PERMISSION_LAST; i++) {
         NMClientPermission a   = nm_auth_permission_sorted[i - 1];
         NMClientPermission b   = nm_auth_permission_sorted[i];
-        const char *       s_a = nm_auth_permission_names_by_idx[a - 1];
-        const char *       s_b = nm_auth_permission_names_by_idx[b - 1];
+        const char        *s_a = nm_auth_permission_names_by_idx[a - 1];
+        const char        *s_b = nm_auth_permission_names_by_idx[b - 1];
 
         g_assert_cmpstr(s_a, <, s_b);
         g_assert(a != b);

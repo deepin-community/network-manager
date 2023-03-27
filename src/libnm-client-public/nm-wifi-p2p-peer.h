@@ -7,7 +7,7 @@
 #define __NM_WIFI_P2P_PEER_H__
 
 #if !defined(__NETWORKMANAGER_H_INSIDE__) && !defined(NETWORKMANAGER_COMPILATION)
-    #error "Only <NetworkManager.h> can be included directly."
+#error "Only <NetworkManager.h> can be included directly."
 #endif
 
 #include "nm-object.h"
@@ -37,7 +37,10 @@ G_BEGIN_DECLS
 
 /**
  * NMWifiP2PPeer:
+ *
+ * Since: 1.16
  */
+typedef struct _NMWifiP2PPeer      NMWifiP2PPeer;
 typedef struct _NMWifiP2PPeerClass NMWifiP2PPeerClass;
 
 NM_AVAILABLE_IN_1_16

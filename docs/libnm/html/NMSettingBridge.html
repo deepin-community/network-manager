@@ -8,7 +8,7 @@
 <link rel="up" href="ch03.html" title="Connection and Setting API Reference">
 <link rel="prev" href="NMSettingBridgePort.html" title="NMSettingBridgePort">
 <link rel="next" href="NMSettingCdma.html" title="NMSettingCdma">
-<meta name="generator" content="GTK-Doc V1.33.0 (XML mode)">
+<meta name="generator" content="GTK-Doc V1.33.1 (XML mode)">
 <link rel="stylesheet" href="style.css" type="text/css">
 </head>
 <body bgcolor="white" text="black" link="#0000FF" vlink="#840084" alink="#0000FF">
@@ -567,7 +567,7 @@ nm_setting_bridge_new (<em class="parameter"><code><span class="type">void</span
 <div class="refsect3">
 <a name="nm-setting-bridge-new.returns"></a><h4>Returns</h4>
 <p>the new empty <a class="link" href="NMSettingBridge.html" title="NMSettingBridge"><span class="type">NMSettingBridge</span></a> object. </p>
-<p><span class="annotation">[<acronym title="Free data after the code is done."><span class="acronym">transfer full</span></acronym>]</span></p>
+<p><span class="annotation">[<acronym title="The caller owns the data, and is responsible for free it."><span class="acronym">transfer full</span></acronym>]</span></p>
 </div>
 </div>
 <hr>
@@ -942,7 +942,7 @@ nm_setting_bridge_get_vlan (<em class="parameter"><code><a class="link" href="NM
 <a name="nm-setting-bridge-get-vlan.returns"></a><h4>Returns</h4>
 <p>the VLAN at index <em class="parameter"><code>idx</code></em>
 . </p>
-<p><span class="annotation">[<acronym title="Don't free data after the code is done."><span class="acronym">transfer none</span></acronym>]</span></p>
+<p><span class="annotation">[<acronym title="The data is owned by the callee, which is responsible of freeing it."><span class="acronym">transfer none</span></acronym>]</span></p>
 </div>
 <p class="since">Since: 1.18</p>
 </div>
@@ -1060,6 +1060,7 @@ Setting <em class="parameter"><code>vid_end</code></em>
  to 0 is equivalent to setting it to <em class="parameter"><code>vid_start</code></em>
 
 and creates a single-id VLAN.</p>
+<p>Since 1.42, ref-counting of <a class="link" href="NMSettingBridge.html#NMBridgeVlan"><span class="type">NMBridgeVlan</span></a> is thread-safe.</p>
 <div class="refsect3">
 <a name="nm-bridge-vlan-new.parameters"></a><h4>Parameters</h4>
 <div class="informaltable"><table class="informaltable" width="100%" border="0">
@@ -1086,7 +1087,7 @@ and 4094.</p></td>
 <div class="refsect3">
 <a name="nm-bridge-vlan-new.returns"></a><h4>Returns</h4>
 <p>the new <a class="link" href="NMSettingBridge.html#NMBridgeVlan"><span class="type">NMBridgeVlan</span></a> object. </p>
-<p><span class="annotation">[<acronym title="Free data after the code is done."><span class="acronym">transfer full</span></acronym>]</span></p>
+<p><span class="annotation">[<acronym title="The caller owns the data, and is responsible for free it."><span class="acronym">transfer full</span></acronym>]</span></p>
 </div>
 <p class="since">Since: 1.18</p>
 </div>
@@ -1115,6 +1116,7 @@ nm_bridge_vlan_ref (<em class="parameter"><code><a class="link" href="NMSettingB
 <a name="nm-bridge-vlan-ref.returns"></a><h4>Returns</h4>
 <p> the input argument <em class="parameter"><code>vlan</code></em>
 object.</p>
+<p>Since 1.42, ref-counting of <a class="link" href="NMSettingBridge.html#NMBridgeVlan"><span class="type">NMBridgeVlan</span></a> is thread-safe.</p>
 </div>
 <p class="since">Since: 1.18</p>
 </div>
@@ -1125,6 +1127,7 @@ object.</p>
 nm_bridge_vlan_unref (<em class="parameter"><code><a class="link" href="NMSettingBridge.html#NMBridgeVlan"><span class="type">NMBridgeVlan</span></a> *vlan</code></em>);</pre>
 <p>Decreases the reference count of the object.  If the reference count
 reaches zero the object will be destroyed.</p>
+<p>Since 1.42, ref-counting of <a class="link" href="NMSettingBridge.html#NMBridgeVlan"><span class="type">NMBridgeVlan</span></a> is thread-safe.</p>
 <div class="refsect3">
 <a name="nm-bridge-vlan-unref.parameters"></a><h4>Parameters</h4>
 <div class="informaltable"><table class="informaltable" width="100%" border="0">
@@ -1167,7 +1170,7 @@ nm_bridge_vlan_new_clone (<em class="parameter"><code>const <a class="link" href
 <p>a clone of <em class="parameter"><code>vlan</code></em>
 . This instance
 is always unsealed. </p>
-<p><span class="annotation">[<acronym title="Free data after the code is done."><span class="acronym">transfer full</span></acronym>]</span></p>
+<p><span class="annotation">[<acronym title="The caller owns the data, and is responsible for free it."><span class="acronym">transfer full</span></acronym>]</span></p>
 </div>
 <p class="since">Since: 1.18</p>
 </div>
@@ -1516,8 +1519,8 @@ nm_setting_bridge_get_group_address (<em class="parameter"><code>const <a class=
 <div class="refsect3">
 <a name="nm-setting-bridge-get-group-address.returns"></a><h4>Returns</h4>
 <p> the <span class="type">“group-address”</span> property of the setting</p>
-<p>Since 1.24</p>
 </div>
+<p class="since">Since: 1.24</p>
 </div>
 <hr>
 <div class="refsect2">
@@ -1542,8 +1545,8 @@ nm_setting_bridge_get_vlan_protocol (<em class="parameter"><code>const <a class=
 <div class="refsect3">
 <a name="nm-setting-bridge-get-vlan-protocol.returns"></a><h4>Returns</h4>
 <p> the <span class="type">“vlan-protocol”</span> property of the setting</p>
-<p>Since 1.24</p>
 </div>
+<p class="since">Since: 1.24</p>
 </div>
 <hr>
 <div class="refsect2">
@@ -1569,8 +1572,8 @@ nm_setting_bridge_get_vlan_stats_enabled
 <div class="refsect3">
 <a name="nm-setting-bridge-get-vlan-stats-enabled.returns"></a><h4>Returns</h4>
 <p> the <span class="type">“vlan-stats-enabled”</span> property of the setting</p>
-<p>Since 1.24</p>
 </div>
+<p class="since">Since: 1.24</p>
 </div>
 <hr>
 <div class="refsect2">
@@ -1596,8 +1599,8 @@ nm_setting_bridge_get_multicast_router
 <div class="refsect3">
 <a name="nm-setting-bridge-get-multicast-router.returns"></a><h4>Returns</h4>
 <p> the <span class="type">“multicast-router”</span> property of the setting</p>
-<p>Since 1.24</p>
 </div>
+<p class="since">Since: 1.24</p>
 </div>
 <hr>
 <div class="refsect2">
@@ -1623,8 +1626,8 @@ nm_setting_bridge_get_multicast_query_use_ifaddr
 <div class="refsect3">
 <a name="nm-setting-bridge-get-multicast-query-use-ifaddr.returns"></a><h4>Returns</h4>
 <p> the <span class="type">“multicast-query-use-ifaddr”</span> property of the setting</p>
-<p>Since 1.24</p>
 </div>
+<p class="since">Since: 1.24</p>
 </div>
 <hr>
 <div class="refsect2">
@@ -1650,8 +1653,8 @@ nm_setting_bridge_get_multicast_querier
 <div class="refsect3">
 <a name="nm-setting-bridge-get-multicast-querier.returns"></a><h4>Returns</h4>
 <p> the <span class="type">“multicast-querier”</span> property of the setting</p>
-<p>Since 1.24</p>
 </div>
+<p class="since">Since: 1.24</p>
 </div>
 <hr>
 <div class="refsect2">
@@ -1677,8 +1680,8 @@ nm_setting_bridge_get_multicast_hash_max
 <div class="refsect3">
 <a name="nm-setting-bridge-get-multicast-hash-max.returns"></a><h4>Returns</h4>
 <p> the <span class="type">“multicast-hash-max”</span> property of the setting</p>
-<p>Since 1.26</p>
 </div>
+<p class="since">Since: 1.26</p>
 </div>
 <hr>
 <div class="refsect2">
@@ -1704,8 +1707,8 @@ nm_setting_bridge_get_multicast_last_member_count
 <div class="refsect3">
 <a name="nm-setting-bridge-get-multicast-last-member-count.returns"></a><h4>Returns</h4>
 <p> the <span class="type">“multicast-last-member-count”</span> property of the setting</p>
-<p>Since 1.26</p>
 </div>
+<p class="since">Since: 1.26</p>
 </div>
 <hr>
 <div class="refsect2">
@@ -1731,8 +1734,8 @@ nm_setting_bridge_get_multicast_last_member_interval
 <div class="refsect3">
 <a name="nm-setting-bridge-get-multicast-last-member-interval.returns"></a><h4>Returns</h4>
 <p> the <span class="type">“multicast-last-member-interval”</span> property of the setting</p>
-<p>Since 1.26</p>
 </div>
+<p class="since">Since: 1.26</p>
 </div>
 <hr>
 <div class="refsect2">
@@ -1758,8 +1761,8 @@ nm_setting_bridge_get_multicast_membership_interval
 <div class="refsect3">
 <a name="nm-setting-bridge-get-multicast-membership-interval.returns"></a><h4>Returns</h4>
 <p> the <span class="type">“multicast-membership-interval”</span> property of the setting</p>
-<p>Since 1.26</p>
 </div>
+<p class="since">Since: 1.26</p>
 </div>
 <hr>
 <div class="refsect2">
@@ -1785,8 +1788,8 @@ nm_setting_bridge_get_multicast_querier_interval
 <div class="refsect3">
 <a name="nm-setting-bridge-get-multicast-querier-interval.returns"></a><h4>Returns</h4>
 <p> the <span class="type">“multicast-querier-interval”</span> property of the setting</p>
-<p>Since 1.26</p>
 </div>
+<p class="since">Since: 1.26</p>
 </div>
 <hr>
 <div class="refsect2">
@@ -1812,8 +1815,8 @@ nm_setting_bridge_get_multicast_query_interval
 <div class="refsect3">
 <a name="nm-setting-bridge-get-multicast-query-interval.returns"></a><h4>Returns</h4>
 <p> the <span class="type">“multicast-query-interval”</span> property of the setting</p>
-<p>Since 1.26</p>
 </div>
+<p class="since">Since: 1.26</p>
 </div>
 <hr>
 <div class="refsect2">
@@ -1839,8 +1842,8 @@ nm_setting_bridge_get_multicast_query_response_interval
 <div class="refsect3">
 <a name="nm-setting-bridge-get-multicast-query-response-interval.returns"></a><h4>Returns</h4>
 <p> the <span class="type">“multicast-query-response-interval”</span> property of the setting</p>
-<p>Since 1.26</p>
 </div>
+<p class="since">Since: 1.26</p>
 </div>
 <hr>
 <div class="refsect2">
@@ -1866,8 +1869,8 @@ nm_setting_bridge_get_multicast_startup_query_count
 <div class="refsect3">
 <a name="nm-setting-bridge-get-multicast-startup-query-count.returns"></a><h4>Returns</h4>
 <p> the <span class="type">“multicast-query-response-interval”</span> property of the setting</p>
-<p>Since 1.26</p>
 </div>
+<p class="since">Since: 1.26</p>
 </div>
 <hr>
 <div class="refsect2">
@@ -1893,8 +1896,8 @@ nm_setting_bridge_get_multicast_startup_query_interval
 <div class="refsect3">
 <a name="nm-setting-bridge-get-multicast-startup-query-interval.returns"></a><h4>Returns</h4>
 <p> the <span class="type">“multicast-startup-query-interval”</span> property of the setting</p>
-<p>Since 1.26</p>
 </div>
+<p class="since">Since: 1.26</p>
 </div>
 </div>
 <div class="refsect1">
@@ -2081,6 +2084,6 @@ nm_setting_bridge_get_multicast_startup_query_interval
 </div>
 </div>
 <div class="footer">
-<hr>Generated by GTK-Doc V1.33.0</div>
+<hr>Generated by GTK-Doc V1.33.1</div>
 </body>
 </html>

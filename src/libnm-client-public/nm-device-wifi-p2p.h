@@ -7,7 +7,7 @@
 #define __NM_DEVICE_WIFI_P2P_H__
 
 #if !defined(__NETWORKMANAGER_H_INSIDE__) && !defined(NETWORKMANAGER_COMPILATION)
-    #error "Only <NetworkManager.h> can be included directly."
+#error "Only <NetworkManager.h> can be included directly."
 #endif
 
 #include "nm-device.h"
@@ -34,25 +34,26 @@ G_BEGIN_DECLS
  *
  * Since: 1.16
  */
+typedef struct _NMDeviceWifiP2P      NMDeviceWifiP2P;
 typedef struct _NMDeviceWifiP2PClass NMDeviceWifiP2PClass;
 
 NM_AVAILABLE_IN_1_16
 GType nm_device_wifi_p2p_get_type(void);
 
-NM_AVAILABLE_IN_1_16
 NM_DEPRECATED_IN_1_24_FOR(nm_device_get_hw_address)
+NM_AVAILABLE_IN_1_16
 const char *nm_device_wifi_p2p_get_hw_address(NMDeviceWifiP2P *device);
 
-NM_AVAILABLE_IN_1_16
+NM_AVAILABLE_IN_1_42
 NMWifiP2PPeer *nm_device_wifi_p2p_get_peer_by_path(NMDeviceWifiP2P *device, const char *path);
 
 NM_AVAILABLE_IN_1_16
 const GPtrArray *nm_device_wifi_p2p_get_peers(NMDeviceWifiP2P *device);
 
 NM_AVAILABLE_IN_1_16
-void nm_device_wifi_p2p_start_find(NMDeviceWifiP2P *   device,
-                                   GVariant *          options,
-                                   GCancellable *      cancellable,
+void nm_device_wifi_p2p_start_find(NMDeviceWifiP2P    *device,
+                                   GVariant           *options,
+                                   GCancellable       *cancellable,
                                    GAsyncReadyCallback callback,
                                    gpointer            user_data);
 NM_AVAILABLE_IN_1_16
@@ -60,8 +61,8 @@ gboolean
 nm_device_wifi_p2p_start_find_finish(NMDeviceWifiP2P *device, GAsyncResult *result, GError **error);
 
 NM_AVAILABLE_IN_1_16
-void nm_device_wifi_p2p_stop_find(NMDeviceWifiP2P *   device,
-                                  GCancellable *      cancellable,
+void nm_device_wifi_p2p_stop_find(NMDeviceWifiP2P    *device,
+                                  GCancellable       *cancellable,
                                   GAsyncReadyCallback callback,
                                   gpointer            user_data);
 NM_AVAILABLE_IN_1_16

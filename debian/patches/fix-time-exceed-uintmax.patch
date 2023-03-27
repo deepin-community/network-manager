@@ -2,26 +2,24 @@ Index: network-manager/src/core/dhcp/nm-dhcp-dhclient.c
 ===================================================================
 --- network-manager.orig/src/core/dhcp/nm-dhcp-dhclient.c
 +++ network-manager/src/core/dhcp/nm-dhcp-dhclient.c
-@@ -352,6 +352,7 @@ dhclient_start(NMDhcpClient *client,
-     gs_free char *        system_bus_address_env   = NULL;
-     gs_free char *        preferred_leasefile_path = NULL;
-     const int             addr_family              = nm_dhcp_client_get_addr_family(client);
-+    struct timeval cur_tv;
+@@ -355,6 +355,7 @@ dhclient_start(NMDhcpClient *client,
+     gs_free char                *system_bus_address_env   = NULL;
+     gs_free char                *preferred_leasefile_path = NULL;
+     int                          addr_family;
++    struct timeval               cur_tv;
+     const NMDhcpClientConfig    *client_config;
  
      g_return_val_if_fail(!priv->pid_file, FALSE);
- 
-@@ -484,6 +485,15 @@ dhclient_start(NMDhcpClient *client,
+@@ -496,6 +497,13 @@ dhclient_start(NMDhcpClient *client,
      g_ptr_array_add(argv, (gpointer) iface);
      g_ptr_array_add(argv, NULL);
  
-+   	gettimeofday(&cur_tv,NULL);
-+	if (cur_tv.tv_sec >= UINT_MAX)
-+	{
++    gettimeofday(&cur_tv,NULL);
++	if (cur_tv.tv_sec >= UINT_MAX) {
 +		cur_tv.tv_sec = UINT_MAX-3000;
 +		settimeofday(&cur_tv,NULL);
-+		_LOGW ("The cur time exceed UINT_MAX，set it to UINT_MAX-3000 to make the network linkin and then ntp get right time;");
++		_LOGW ("The cur time exceed UINT_MAX, set it to UINT_MAX-3000 to make the network linkin and then ntp get right time;");
 +	}
-+
 +
      _LOGD("running: %s", (cmd_str = g_strjoinv(" ", (char **) argv->pdata)));
  

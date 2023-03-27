@@ -5,12 +5,13 @@
 
 #include "libnm-client-impl/nm-default-libnm.h"
 
+#include "nm-access-point.h"
+#include "nm-device-wifi.h"
 #include "nm-device-olpc-mesh.h"
 
 #include "nm-setting-connection.h"
 #include "nm-setting-olpc-mesh.h"
 #include "nm-object-private.h"
-#include "nm-device-wifi.h"
 
 /*****************************************************************************/
 
@@ -158,7 +159,7 @@ const NMLDBusMetaIface _nml_dbus_meta_iface_nm_device_olpcmesh = NML_DBUS_META_I
 static void
 nm_device_olpc_mesh_class_init(NMDeviceOlpcMeshClass *klass)
 {
-    GObjectClass * object_class    = G_OBJECT_CLASS(klass);
+    GObjectClass  *object_class    = G_OBJECT_CLASS(klass);
     NMObjectClass *nm_object_class = NM_OBJECT_CLASS(klass);
     NMDeviceClass *device_class    = NM_DEVICE_CLASS(klass);
 

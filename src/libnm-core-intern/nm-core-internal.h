@@ -17,7 +17,7 @@
  * and some test programs.
  **/
 #if !((NETWORKMANAGER_COMPILATION) &NM_NETWORKMANAGER_COMPILATION_WITH_LIBNM_CORE_INTERNAL)
-    #error Cannot use this header.
+#error Cannot use this header.
 #endif
 
 #include "libnm-base/nm-base.h"
@@ -29,6 +29,7 @@
 #include "nm-setting-adsl.h"
 #include "nm-setting-bluetooth.h"
 #include "nm-setting-bond.h"
+#include "nm-setting-bond-port.h"
 #include "nm-setting-bridge-port.h"
 #include "nm-setting-bridge.h"
 #include "nm-setting-cdma.h"
@@ -42,6 +43,7 @@
 #include "nm-setting-ip-tunnel.h"
 #include "nm-setting-ip4-config.h"
 #include "nm-setting-ip6-config.h"
+#include "nm-setting-loopback.h"
 #include "nm-setting-macsec.h"
 #include "nm-setting-macvlan.h"
 #include "nm-setting-match.h"
@@ -79,6 +81,7 @@
 #include "nm-vpn-dbus-interface.h"
 #include "nm-vpn-editor-plugin.h"
 #include "libnm-core-aux-intern/nm-libnm-core-utils.h"
+#include "libnm-glib-aux/nm-value-type.h"
 
 #define NM_USER_TAG_ORIGIN "org.freedesktop.NetworkManager.origin"
 
@@ -170,41 +173,41 @@ NM_VLAN_FLAGS_CAST(_NMVlanFlags v)
 static inline NMTernary
 NM_TERNARY_FROM_OPTION_BOOL(NMOptionBool v)
 {
-    nm_assert(NM_IN_SET(v, NM_OPTION_BOOL_DEFAULT, NM_OPTION_BOOL_TRUE, NM_OPTION_BOOL_FALSE));
+    nm_assert_is_ternary(v);
 
-    return (NMTernary) v;
+    return (int) v;
 }
 
 static inline NMOptionBool
 NM_TERNARY_TO_OPTION_BOOL(NMTernary v)
 {
-    nm_assert(NM_IN_SET(v, NM_TERNARY_DEFAULT, NM_TERNARY_TRUE, NM_TERNARY_FALSE));
+    nm_assert_is_ternary(v);
 
-    return (NMOptionBool) v;
+    return (int) v;
 }
 
 /*****************************************************************************/
 
 NMSetting **_nm_connection_get_settings_arr(NMConnection *connection);
 
-typedef enum { /*< skip >*/
-               NM_SETTING_PARSE_FLAGS_NONE        = 0,
-               NM_SETTING_PARSE_FLAGS_STRICT      = 1LL << 0,
-               NM_SETTING_PARSE_FLAGS_BEST_EFFORT = 1LL << 1,
-               NM_SETTING_PARSE_FLAGS_NORMALIZE   = 1LL << 2,
+typedef enum /*< skip >*/ {
+    NM_SETTING_PARSE_FLAGS_NONE        = 0,
+    NM_SETTING_PARSE_FLAGS_STRICT      = 1LL << 0,
+    NM_SETTING_PARSE_FLAGS_BEST_EFFORT = 1LL << 1,
+    NM_SETTING_PARSE_FLAGS_NORMALIZE   = 1LL << 2,
 
-               _NM_SETTING_PARSE_FLAGS_LAST,
-               NM_SETTING_PARSE_FLAGS_ALL = ((_NM_SETTING_PARSE_FLAGS_LAST - 1) << 1) - 1,
+    _NM_SETTING_PARSE_FLAGS_LAST,
+    NM_SETTING_PARSE_FLAGS_ALL = ((_NM_SETTING_PARSE_FLAGS_LAST - 1) << 1) - 1,
 } NMSettingParseFlags;
 
-gboolean _nm_connection_replace_settings(NMConnection *      connection,
-                                         GVariant *          new_settings,
+gboolean _nm_connection_replace_settings(NMConnection       *connection,
+                                         GVariant           *new_settings,
                                          NMSettingParseFlags parse_flags,
-                                         GError **           error);
+                                         GError            **error);
 
 gpointer _nm_connection_check_main_setting(NMConnection *connection,
-                                           const char *  setting_name,
-                                           GError **     error);
+                                           const char   *setting_name,
+                                           GError      **error);
 
 typedef struct {
     struct {
@@ -219,7 +222,7 @@ typedef struct {
 gboolean nm_connection_serialization_options_equal(const NMConnectionSerializationOptions *a,
                                                    const NMConnectionSerializationOptions *b);
 
-GVariant *nm_connection_to_dbus_full(NMConnection *                          connection,
+GVariant *nm_connection_to_dbus_full(NMConnection                           *connection,
                                      NMConnectionSerializationFlags          flags,
                                      const NMConnectionSerializationOptions *options);
 
@@ -260,27 +263,27 @@ typedef enum {
 
 NMSettingVerifyResult _nm_connection_verify(NMConnection *connection, GError **error);
 
-gboolean _nm_connection_ensure_normalized(NMConnection * connection,
+gboolean _nm_connection_ensure_normalized(NMConnection  *connection,
                                           gboolean       allow_modify,
-                                          const char *   expected_uuid,
+                                          const char    *expected_uuid,
                                           gboolean       coerce_uuid,
                                           NMConnection **out_connection_clone,
-                                          GError **      error);
+                                          GError       **error);
 
 gboolean _nm_connection_remove_setting(NMConnection *connection, GType setting_type);
 
 #if NM_MORE_ASSERTS
-extern const char _nmtst_connection_unchanging_user_data;
-void              nmtst_connection_assert_unchanging(NMConnection *connection);
+extern const char _nm_assert_connection_unchanging_user_data;
+void              nm_assert_connection_unchanging(NMConnection *connection);
 #else
 static inline void
-nmtst_connection_assert_unchanging(NMConnection *connection)
+nm_assert_connection_unchanging(NMConnection *connection)
 {}
 #endif
 
-NMConnection *_nm_simple_connection_new_from_dbus(GVariant *          dict,
+NMConnection *_nm_simple_connection_new_from_dbus(GVariant           *dict,
                                                   NMSettingParseFlags parse_flags,
-                                                  GError **           error);
+                                                  GError            **error);
 
 NMSettingPriority _nm_setting_get_setting_priority(NMSetting *setting);
 
@@ -292,9 +295,9 @@ GHashTable *_nm_setting_option_hash(NMSetting *setting, gboolean create_if_neces
 
 void _nm_setting_option_notify(NMSetting *setting, gboolean keys_changed);
 
-guint _nm_setting_option_get_all(NMSetting *         setting,
+guint _nm_setting_option_get_all(NMSetting          *setting,
                                  const char *const **out_names,
-                                 GVariant *const **  out_values);
+                                 GVariant *const   **out_values);
 
 gboolean _nm_setting_option_clear(NMSetting *setting, const char *optname);
 
@@ -302,7 +305,7 @@ gboolean _nm_setting_option_clear(NMSetting *setting, const char *optname);
 
 guint nm_setting_ethtool_init_features(
     NMSettingEthtool *setting,
-    NMOptionBool *    requested /* indexed by NMEthtoolID - _NM_ETHTOOL_ID_FEATURE_FIRST */);
+    NMOptionBool     *requested /* indexed by NMEthtoolID - _NM_ETHTOOL_ID_FEATURE_FIRST */);
 
 /*****************************************************************************/
 
@@ -333,31 +336,31 @@ GHashTable *_nm_ip_route_get_attributes(NMIPRoute *route);
 NMSriovVF *_nm_utils_sriov_vf_from_strparts(const char *index,
                                             const char *detail,
                                             gboolean    ignore_unknown,
-                                            GError **   error);
+                                            GError    **error);
 gboolean   _nm_sriov_vf_attribute_validate_all(const NMSriovVF *vf, GError **error);
 
 GPtrArray *
 _nm_utils_copy_array(const GPtrArray *array, NMUtilsCopyFunc copy_func, GDestroyNotify free_func);
 GPtrArray *_nm_utils_copy_object_array(const GPtrArray *array);
 
-GSList *_nm_utils_strv_to_slist(char **strv, gboolean deep_copy);
-char ** _nm_utils_slist_to_strv(const GSList *slist, gboolean deep_copy);
+GSList *nm_strv_to_gslist(char **strv, gboolean deep_copy);
+char  **_nm_utils_slist_to_strv(const GSList *slist, gboolean deep_copy);
 
-GPtrArray *_nm_utils_strv_to_ptrarray(char **strv);
-char **    _nm_utils_ptrarray_to_strv(const GPtrArray *ptrarray);
+GPtrArray *nm_strv_to_ptrarray(char **strv);
+char     **_nm_utils_ptrarray_to_strv(const GPtrArray *ptrarray);
 
-gboolean _nm_utils_check_file(const char *              filename,
+gboolean _nm_utils_check_file(const char               *filename,
                               gint64                    check_owner,
                               NMUtilsCheckFilePredicate check_file,
                               gpointer                  user_data,
-                              struct stat *             out_st,
-                              GError **                 error);
+                              struct stat              *out_st,
+                              GError                  **error);
 
-gboolean _nm_utils_check_module_file(const char *              name,
+gboolean _nm_utils_check_module_file(const char               *name,
                                      int                       check_owner,
                                      NMUtilsCheckFilePredicate check_file,
                                      gpointer                  user_data,
-                                     GError **                 error);
+                                     GError                  **error);
 
 /*****************************************************************************/
 
@@ -365,50 +368,25 @@ void _nm_dbus_errors_init(void);
 
 extern gboolean _nm_utils_is_manager_process;
 
-gboolean
-_nm_dbus_typecheck_response(GVariant *response, const GVariantType *reply_type, GError **error);
-
-gulong _nm_dbus_signal_connect_data(GDBusProxy *        proxy,
-                                    const char *        signal_name,
-                                    const GVariantType *signature,
-                                    GCallback           c_handler,
-                                    gpointer            data,
-                                    GClosureNotify      destroy_data,
-                                    GConnectFlags       connect_flags);
-#define _nm_dbus_signal_connect(proxy, name, signature, handler, data) \
-    _nm_dbus_signal_connect_data(proxy, name, signature, handler, data, NULL, (GConnectFlags) 0)
-
-GVariant *_nm_dbus_proxy_call_finish(GDBusProxy *        proxy,
-                                     GAsyncResult *      res,
-                                     const GVariantType *reply_type,
-                                     GError **           error);
-
-GVariant *_nm_dbus_connection_call_finish(GDBusConnection *   dbus_connection,
-                                          GAsyncResult *      result,
-                                          const GVariantType *reply_type,
-                                          GError **           error);
-
-gboolean _nm_dbus_error_has_name(GError *error, const char *dbus_error_name);
-
 /*****************************************************************************/
 
 char *_nm_utils_ssid_to_utf8(GBytes *ssid);
 
 /*****************************************************************************/
 
-gboolean _nm_vpn_plugin_info_check_file(const char *              filename,
+gboolean _nm_vpn_plugin_info_check_file(const char               *filename,
                                         gboolean                  check_absolute,
                                         gboolean                  do_validate_filename,
                                         gint64                    check_owner,
                                         NMUtilsCheckFilePredicate check_file,
                                         gpointer                  user_data,
-                                        GError **                 error);
+                                        GError                  **error);
 
 const char *_nm_vpn_plugin_info_get_default_dir_etc(void);
 const char *_nm_vpn_plugin_info_get_default_dir_lib(void);
 const char *_nm_vpn_plugin_info_get_default_dir_user(void);
 
-GSList *_nm_vpn_plugin_info_list_load_dir(const char *              dirname,
+GSList *_nm_vpn_plugin_info_list_load_dir(const char               *dirname,
                                           gboolean                  do_validate_filename,
                                           gint64                    check_owner,
                                           NMUtilsCheckFilePredicate check_file,
@@ -417,6 +395,7 @@ GSList *_nm_vpn_plugin_info_list_load_dir(const char *              dirname,
 /*****************************************************************************/
 
 GHashTable *_nm_setting_ovs_external_ids_get_data(NMSettingOvsExternalIDs *self);
+GHashTable *_nm_setting_ovs_other_config_get_data(NMSettingOvsOtherConfig *self);
 
 /*****************************************************************************/
 
@@ -428,9 +407,9 @@ typedef struct {
 
 extern const NMUtilsDNSOptionDesc _nm_utils_dns_option_descs[];
 
-gboolean _nm_utils_dns_option_validate(const char *                option,
-                                       char **                     out_name,
-                                       long *                      out_value,
+gboolean _nm_utils_dns_option_validate(const char                 *option,
+                                       char                      **out_name,
+                                       long                       *out_value,
                                        gboolean                    ipv6,
                                        const NMUtilsDNSOptionDesc *option_descs);
 gssize   _nm_utils_dns_option_find_idx(GPtrArray *array, const char *option);
@@ -448,24 +427,24 @@ NMUtilsStrStrDictKey *_nm_utils_strstrdictkey_create(const char *v1, const char 
 
 /*****************************************************************************/
 
-gboolean _nm_setting_vlan_set_priorities(NMSettingVlan *         setting,
+gboolean _nm_setting_vlan_set_priorities(NMSettingVlan          *setting,
                                          NMVlanPriorityMap       map,
                                          const NMVlanQosMapping *qos_map,
                                          guint                   n_qos_map);
-void     _nm_setting_vlan_get_priorities(NMSettingVlan *    setting,
+void     _nm_setting_vlan_get_priorities(NMSettingVlan     *setting,
                                          NMVlanPriorityMap  map,
                                          NMVlanQosMapping **out_qos_map,
-                                         guint *            out_n_qos_map);
+                                         guint             *out_n_qos_map);
 
 /*****************************************************************************/
 
 struct ether_addr;
 
-gboolean _nm_utils_generate_mac_address_mask_parse(const char *        value,
-                                                   struct ether_addr * out_mask,
+gboolean _nm_utils_generate_mac_address_mask_parse(const char         *value,
+                                                   struct ether_addr  *out_mask,
                                                    struct ether_addr **out_ouis,
-                                                   gsize *             out_ouis_len,
-                                                   GError **           error);
+                                                   gsize              *out_ouis_len,
+                                                   GError            **error);
 
 /*****************************************************************************/
 
@@ -479,6 +458,14 @@ NMSettingIPConfig *nm_connection_get_setting_ip_config(NMConnection *connection,
 
 /*****************************************************************************/
 
+struct _NMRefString;
+
+void _nm_connection_set_path_rstr(NMConnection *connection, struct _NMRefString *path);
+
+struct _NMRefString *_nm_connection_get_path_rstr(NMConnection *connection);
+
+/*****************************************************************************/
+
 typedef enum {
     NM_BOND_OPTION_TYPE_INT,
     NM_BOND_OPTION_TYPE_BOTH,
@@ -488,8 +475,6 @@ typedef enum {
 } NMBondOptionType;
 
 NMBondOptionType _nm_setting_bond_get_option_type(NMSettingBond *setting, const char *name);
-
-const char *nm_setting_bond_get_option_or_default(NMSettingBond *self, const char *option);
 
 #define NM_BOND_AD_ACTOR_SYSTEM_DEFAULT "00:00:00:00:00:00"
 
@@ -516,6 +501,11 @@ NMConnectionMultiConnect _nm_connection_get_multi_connect(NMConnection *connecti
 /*****************************************************************************/
 
 gboolean _nm_setting_bond_option_supported(const char *option, NMBondMode mode);
+
+guint8  _nm_setting_bond_opt_value_as_u8(NMSettingBond *s_bond, const char *opt);
+guint16 _nm_setting_bond_opt_value_as_u16(NMSettingBond *s_bond, const char *opt);
+guint32 _nm_setting_bond_opt_value_as_u32(NMSettingBond *s_bond, const char *opt);
+bool    _nm_setting_bond_opt_value_as_intbool(NMSettingBond *s_bond, const char *opt);
 
 /*****************************************************************************/
 
@@ -577,6 +567,7 @@ gboolean _nm_utils_dhcp_duid_valid(const char *duid, GBytes **out_duid_bin);
 gboolean _nm_setting_sriov_sort_vfs(NMSettingSriov *setting);
 gboolean _nm_setting_bridge_port_sort_vlans(NMSettingBridgePort *setting);
 gboolean _nm_setting_bridge_sort_vlans(NMSettingBridge *setting);
+gboolean _nm_setting_ovs_port_sort_trunks(NMSettingOvsPort *self);
 
 /*****************************************************************************/
 
@@ -643,7 +634,7 @@ gboolean nm_ip_routing_rule_get_xifname_bin(const NMIPRoutingRule *self,
 #define NM_IP_ROUTING_RULE_ATTR_UID_RANGE_END         "uid-range-end"
 
 NMIPRoutingRule *nm_ip_routing_rule_from_dbus(GVariant *variant, gboolean strict, GError **error);
-GVariant *       nm_ip_routing_rule_to_dbus(const NMIPRoutingRule *self);
+GVariant        *nm_ip_routing_rule_to_dbus(const NMIPRoutingRule *self);
 
 /*****************************************************************************/
 
@@ -654,48 +645,82 @@ GVariant *nm_utils_hwaddr_to_dbus(const char *str);
 typedef struct _NMSettInfoSetting  NMSettInfoSetting;
 typedef struct _NMSettInfoProperty NMSettInfoProperty;
 
-typedef GVariant *(*NMSettInfoPropToDBusFcn)(const NMSettInfoSetting *               sett_info,
-                                             guint                                   property_idx,
-                                             NMConnection *                          connection,
-                                             NMSetting *                             setting,
-                                             NMConnectionSerializationFlags          flags,
-                                             const NMConnectionSerializationOptions *options);
-typedef gboolean (*NMSettInfoPropFromDBusFcn)(NMSetting *         setting,
-                                              GVariant *          connection_dict,
-                                              const char *        property,
-                                              GVariant *          value,
-                                              NMSettingParseFlags parse_flags,
-                                              GError **           error);
-typedef gboolean (*NMSettInfoPropMissingFromDBusFcn)(NMSetting *         setting,
-                                                     GVariant *          connection_dict,
-                                                     const char *        property,
-                                                     NMSettingParseFlags parse_flags,
-                                                     GError **           error);
-typedef GVariant *(*NMSettInfoPropGPropToDBusFcn)(const GValue *from);
-typedef void (*NMSettInfoPropGPropFromDBusFcn)(GVariant *from, GValue *to);
-
 const NMSettInfoSetting *nmtst_sett_info_settings(void);
 
 typedef enum _nm_packed {
     NM_SETTING_PROPERTY_TO_DBUS_FCN_GPROP_TYPE_DEFAULT = 0,
-    NM_SETTING_PROPERTY_TO_DBUS_FCN_GPROP_TYPE_BYTES,
-    NM_SETTING_PROPERTY_TO_DBUS_FCN_GPROP_TYPE_ENUM,
-    NM_SETTING_PROPERTY_TO_DBUS_FCN_GPROP_TYPE_FLAGS,
     NM_SETTING_PROPERTY_TO_DBUS_FCN_GPROP_TYPE_GARRAY_UINT,
     NM_SETTING_PROPERTY_TO_DBUS_FCN_GPROP_TYPE_STRDICT,
-    NM_SETTING_PROPERTY_TO_DBUS_FCN_GPROP_TYPE_MAC_ADDRESS,
 } NMSettingPropertyToDBusFcnGPropType;
 
 typedef struct {
     const GVariantType *dbus_type;
 
-    NMSettInfoPropToDBusFcn          to_dbus_fcn;
-    NMSettInfoPropFromDBusFcn        from_dbus_fcn;
-    NMSettInfoPropMissingFromDBusFcn missing_from_dbus_fcn;
+    /* If this is not NM_VALUE_TYPE_UNSPEC, then this is a "direct" property,
+     * meaning that _nm_setting_get_private() at NMSettInfoProperty.direct_offset
+     * gives direct access to the field.
+     *
+     * Direct properties can use this information to generically implement access
+     * to the property value. */
+    NMValueType direct_type;
 
-    /* Simpler variants of @from_dbus_fcn that operate solely
-     * on the GValue value of the GObject property. */
-    NMSettInfoPropGPropFromDBusFcn gprop_from_dbus_fcn;
+    /* Whether from_dbus_fcn() has special capabilities
+     *
+     * - whether the from_dbus_fcn expects to handle differences between
+     *   the D-Bus types and can convert between them. Otherwise, the caller
+     *   will already pre-validate that the D-Bus types match.
+     * - by default, with NM_SETTING_PARSE_FLAGS_BEST_EFFORT all errors from
+     *   from_dbus_fcn() are ignored. If true, then error are propagated. */
+    bool from_dbus_is_full : 1;
+
+    /* Only if from_dbus_fcn is set to _nm_setting_property_from_dbus_fcn_direct.
+     * Historically, libnm used g_dbus_gvariant_to_gvalue() and g_value_transform() to
+     * convert from D-Bus to the GObject property. Thereby, various transformations are
+     * allowed and supported. If this is TRUE, then such transformations are still
+     * allowed for backward compatibility. */
+    bool from_dbus_direct_allow_transform : 1;
+
+#define _NM_SETT_INFO_PROP_COMPARE_FCN_ARGS                                           \
+    const NMSettInfoSetting *sett_info, const NMSettInfoProperty *property_info,      \
+        NMConnection *con_a, NMSetting *set_a, NMConnection *con_b, NMSetting *set_b, \
+        NMSettingCompareFlags flags
+
+    /* compare_fcn() returns a ternary, where DEFAULT means that the property should not
+     * be compared due to the compare @flags. A TRUE/FALSE result means that the property is
+     * equal/not-equal.
+     *
+     * The "b" setting may be %NULL, in which case the function only determines whether
+     * the setting should be compared (TRUE) or not (DEFAULT). */
+    NMTernary (*compare_fcn)(_NM_SETT_INFO_PROP_COMPARE_FCN_ARGS _nm_nil);
+
+#define _NM_SETT_INFO_PROP_TO_DBUS_FCN_ARGS                                                 \
+    const NMSettInfoSetting *sett_info, const NMSettInfoProperty *property_info,            \
+        NMConnection *connection, NMSetting *setting, NMConnectionSerializationFlags flags, \
+        const NMConnectionSerializationOptions *options
+
+    GVariant *(*to_dbus_fcn)(_NM_SETT_INFO_PROP_TO_DBUS_FCN_ARGS _nm_nil);
+
+#define _NM_SETT_INFO_PROP_FROM_DBUS_FCN_ARGS                                    \
+    const NMSettInfoSetting *sett_info, const NMSettInfoProperty *property_info, \
+        NMSetting *setting, GVariant *connection_dict, GVariant *value,          \
+        NMSettingParseFlags parse_flags, NMTernary *out_is_modified, GError **error
+
+    gboolean (*from_dbus_fcn)(_NM_SETT_INFO_PROP_FROM_DBUS_FCN_ARGS _nm_nil);
+
+#define _NM_SETT_INFO_PROP_MISSING_FROM_DBUS_FCN_ARGS                    \
+    NMSetting *setting, GVariant *connection_dict, const char *property, \
+        NMSettingParseFlags parse_flags, GError **error
+
+    gboolean (*missing_from_dbus_fcn)(_NM_SETT_INFO_PROP_MISSING_FROM_DBUS_FCN_ARGS _nm_nil);
+
+    struct {
+#define _NM_SETT_INFO_PROP_FROM_DBUS_GPROP_FCN_ARGS GVariant *from, GValue *to
+
+        /* Only if from_dbus_fcn is set to _nm_setting_property_from_dbus_fcn_gprop.
+         * This is an optional handler for converting between GVariant and
+         * GValue. */
+        void (*gprop_fcn)(_NM_SETT_INFO_PROP_FROM_DBUS_GPROP_FCN_ARGS _nm_nil);
+    } typdata_from_dbus;
 
     struct {
         union {
@@ -710,28 +735,128 @@ struct _NMSettInfoProperty {
 
     GParamSpec *param_spec;
 
+    /* We want that our properties follow a small number of "default" types
+     * and behaviors. For example, we have int32 and string properties, but
+     * most properties of a certain type should behave in a similar way.
+     *
+     * That common behavior is realized via the property_type, which defines
+     * general behaviors for the property.
+     *
+     * Note that we still will need some property-specific additional tweaks.
+     * Of course, the name and param_spec are per-property. But below there are
+     * also flags and hooks, that can augment the behavior in the property_type.
+     * For example, the property_type in general might be of type string, but
+     * then we might want for some properties that the setter will strip
+     * whitespace. That is for example express with the flag direct_set_string_strip,
+     * which now is per-property-info, and no longer per-property-type.
+     *
+     * The distinction between those two is fixed. At the most extreme, we could
+     * move all fields from property_type to NMSettInfoProperty or we could move
+     * behavioral tweaks into the classes themselves. It's chosen this way so
+     * that we still have sensible common behaviors (string type), but minor
+     * tweaks are per property-info (and don't require a separate property-type). */
     const NMSettInfoPropertType *property_type;
 
-    struct {
-        union {
-            gpointer                     none;
-            NMSettInfoPropGPropToDBusFcn gprop_to_dbus_fcn;
-            gboolean (*get_boolean)(NMSetting *);
-            const char *(*get_string)(NMSetting *);
-        };
+    union {
+        /* Optional hook for direct string properties, this gets called when setting the string.
+         * Return whether the value changed. */
+        gboolean (*set_string_fcn)(const NMSettInfoSetting  *sett_info,
+                                   const NMSettInfoProperty *property_info,
+                                   NMSetting                *setting,
+                                   const char               *src);
+    } direct_hook;
 
-        /* Usually, properties that are set to the default value for the GParamSpec
-         * are not serialized to GVariant (and NULL is returned by to_dbus_data().
-         * Set this flag to force always converting the property even if the value
-         * is the default. */
-        bool including_default : 1;
-    } to_dbus_data;
+    /* This only has meaning for direct properties (property_type->direct_type != NM_VALUE_TYPE_UNSPEC).
+     * In that case, this is the offset where _nm_setting_get_private() can find
+     * the direct location. */
+    guint16 direct_offset;
+
+    /* If TRUE, this is a NM_VALUE_TYPE_STRING direct property, and the setter will
+     * normalize the string via g_ascii_strdown(). */
+    bool direct_set_string_ascii_strdown : 1;
+
+    /* If TRUE, this is a NM_VALUE_TYPE_STRING direct property, and the setter will
+     * normalize the string via g_strstrip(). */
+    bool direct_set_string_strip : 1;
+
+    /* If non-zero, this is a NM_VALUE_TYPE_STRING direct property. Actually, it is
+     * a _nm_setting_property_define_direct_mac_address(), and the setter will
+     * call _nm_utils_hwaddr_canonical_or_invalid() on the string, with the specified
+     * MAC address length. */
+    guint8 direct_set_string_mac_address_len : 5;
+
+    /* If non-zero, this is the addr-family (AF_UNSPEC/AF_INET/AF_INET6) for normalizing an IP
+     * address with _nm_utils_ipaddr_canonical_or_invalid().
+     * Note that AF_UNSPEC is zero, so to differentiate between zero and AF_UNSPEC
+     * this value is actually the address family + 1. So either zero or AF_UNSPEC+1, AF_INET+1,
+     * or AF_INET6+1. */
+    guint8 direct_set_string_ip_address_addr_family : 5;
+
+    /* Only makes sense together with direct_set_string_ip_address_addr_family. This flag
+     * is passed to _nm_utils_ipaddr_canonical_or_invalid(). */
+    bool direct_set_string_ip_address_addr_family_map_zero_to_null : 1;
+
+    /* Whether the string property is implemented as a (downcast) NMRefString. */
+    bool direct_string_is_refstr : 1;
+
+    /* Usually, properties that are set to the default value for the GParamSpec
+     * are not serialized to GVariant (and NULL is returned by to_dbus_data().
+     * Set this flag to force always converting the property even if the value
+     * is the default. */
+    bool to_dbus_including_default : 1;
+
+    /* This indicates, that the property is deprecated (on D-Bus) for another property.
+     * See also _nm_setting_use_legacy_property() how that works.
+     *
+     * The to_dbus_fcn() will be skipped for such properties, if _nm_utils_is_manager_process
+     * is FALSE. */
+    bool to_dbus_only_in_manager_process : 1;
+
+    /* Whether the property is deprecated.
+     *
+     * Note that we have various representations of profiles, e.g. on D-Bus, keyfile,
+     * nmcli, libnm/NMSetting. Usually a property (in the general sense) is named and
+     * applies similarly to all those. But not always, for example, on D-Bus we
+     * have the field "ethernet.assigned-mac-address", but that exists nowhere
+     * as a property in the other parts (the real property is called
+     * "ethernet.cloned-mac-address").
+     *
+     * This flag indicates whether a property is deprecated. Here "property" means
+     * no specific representation. When a property is deprecated this way, it will
+     * also indirectly apply to setting the property on D-Bus, keyfile, nmcli, etc.
+     * It means the general concept of this thing is no longer useful/recommended.
+     */
+    bool is_deprecated : 1;
+
+    /* Whether the property is deprecated in the D-Bus API.
+     *
+     * This has no real effect (for now). It is only self-documenting code that
+     * this property is discouraged on D-Bus. We might honor this when generating
+     * documentation, or we might use it to find properties that are deprecated.
+     *
+     * Note what this means. For example, "802-1x.phase2-subject-match" is deprecated
+     * as a property altogether, but that does not mean it's deprecated specifically on
+     * D-Bus.
+     * "ethernet.cloned-mac-address" is deprecated on D-Bus in favor of
+     * "ethernet.assigned-mac-address", but the property clone-mac-address itself
+     * is not deprecated. This flag is about the deprecation of the D-Bus representation
+     * of a property. */
+    bool dbus_deprecated : 1;
 };
 
 typedef struct {
+    /* we want to do binary search by "GParamSpec *", but unrelated pointers
+     * are not directly comparable in C. No problem, we convert them to
+     * uintptr_t for the search, that is guaranteed to work. */
+    uintptr_t param_spec_as_uint;
+
+    const NMSettInfoProperty *property_info;
+} NMSettInfoPropertLookupByParamSpec;
+
+typedef struct {
     const GVariantType *(*get_variant_type)(const struct _NMSettInfoSetting *sett_info,
-                                            const char *                     name,
-                                            GError **                        error);
+                                            const char                      *name,
+                                            GError                         **error);
 } NMSettInfoSettGendata;
 
 typedef struct {
@@ -767,12 +892,46 @@ struct _NMSettInfoSetting {
      */
     const NMSettInfoProperty *const *property_infos_sorted;
 
-    guint                property_infos_len;
+    const NMSettInfoPropertLookupByParamSpec *property_lookup_by_param_spec;
+
+    guint16 property_infos_len;
+
+    guint16 property_lookup_by_param_spec_len;
+
+    /* the offset in bytes to get the private data from the @self pointer. */
+    gint16 private_offset;
+
     NMSettInfoSettDetail detail;
 };
 
+#define NM_SETT_INFO_PRIVATE_OFFSET_FROM_CLASS ((gint16) G_MININT16)
+
+static inline gpointer
+_nm_setting_get_private(NMSetting *self, const NMSettInfoSetting *sett_info, guint16 offset)
+{
+    nm_assert(NM_IS_SETTING(self));
+    nm_assert(sett_info);
+    nm_assert(NM_SETTING_GET_CLASS(self) == sett_info->setting_class);
+
+    return ((((char *) ((gpointer) self)) + sett_info->private_offset) + offset);
+}
+
+static inline gpointer
+_nm_setting_get_private_field(NMSetting                *self,
+                              const NMSettInfoSetting  *sett_info,
+                              const NMSettInfoProperty *prop_info)
+{
+    nm_assert(sett_info);
+    nm_assert(prop_info);
+    nm_assert(prop_info->property_type);
+    nm_assert(prop_info->property_type->direct_type > NM_VALUE_TYPE_UNSPEC);
+    nm_assert(sett_info->private_offset != 0 || prop_info->direct_offset != 0);
+
+    return _nm_setting_get_private(self, sett_info, prop_info->direct_offset);
+}
+
 static inline const NMSettInfoProperty *
-_nm_sett_info_property_info_get_sorted(const NMSettInfoSetting *sett_info, guint idx)
+_nm_sett_info_property_info_get_sorted(const NMSettInfoSetting *sett_info, guint16 idx)
 {
     nm_assert(sett_info);
     nm_assert(idx < sett_info->property_infos_len);
@@ -784,7 +943,7 @@ _nm_sett_info_property_info_get_sorted(const NMSettInfoSetting *sett_info, guint
 
 const NMSettInfoProperty *
 _nm_sett_info_setting_get_property_info(const NMSettInfoSetting *sett_info,
-                                        const char *             property_name);
+                                        const char              *property_name);
 
 const NMSettInfoSetting *_nm_setting_class_get_sett_info(NMSettingClass *setting_class);
 
@@ -797,26 +956,26 @@ _nm_setting_class_get_property_info(NMSettingClass *setting_class, const char *p
 
 /*****************************************************************************/
 
-gboolean _nm_setting_compare(NMConnection *        con_a,
-                             NMSetting *           set_a,
-                             NMConnection *        con_b,
-                             NMSetting *           set_b,
+gboolean _nm_setting_compare(NMConnection         *con_a,
+                             NMSetting            *set_a,
+                             NMConnection         *con_b,
+                             NMSetting            *set_b,
                              NMSettingCompareFlags flags);
 
-gboolean _nm_setting_diff(NMConnection *        con_a,
-                          NMSetting *           set_a,
-                          NMConnection *        con_b,
-                          NMSetting *           set_b,
+gboolean _nm_setting_diff(NMConnection         *con_a,
+                          NMSetting            *set_a,
+                          NMConnection         *con_b,
+                          NMSetting            *set_b,
                           NMSettingCompareFlags flags,
                           gboolean              invert_results,
-                          GHashTable **         results);
+                          GHashTable          **results);
 
 NMSetting8021xCKScheme _nm_setting_802_1x_cert_get_scheme(GBytes *bytes, GError **error);
 
 GBytes *_nm_setting_802_1x_cert_value_to_bytes(NMSetting8021xCKScheme scheme,
-                                               const guint8 *         val_bin,
+                                               const guint8          *val_bin,
                                                gssize                 val_len,
-                                               GError **              error);
+                                               GError               **error);
 
 /*****************************************************************************/
 
@@ -859,19 +1018,19 @@ _nm_connection_serialize_secrets(NMConnectionSerializationFlags flags,
     return FALSE;
 }
 
-void _nm_connection_clear_secrets_by_secret_flags(NMConnection *       self,
+void _nm_connection_clear_secrets_by_secret_flags(NMConnection        *self,
                                                   NMSettingSecretFlags filter_flags);
 
-GVariant *_nm_connection_for_each_secret(NMConnection *                 self,
-                                         GVariant *                     secrets,
+GVariant *_nm_connection_for_each_secret(NMConnection                  *self,
+                                         GVariant                      *secrets,
                                          gboolean                       remove_non_secrets,
                                          _NMConnectionForEachSecretFunc callback,
                                          gpointer                       callback_data);
 
 typedef gboolean (*NMConnectionFindSecretFunc)(NMSettingSecretFlags flags, gpointer user_data);
 
-gboolean _nm_connection_find_secret(NMConnection *             self,
-                                    GVariant *                 secrets,
+gboolean _nm_connection_find_secret(NMConnection              *self,
+                                    GVariant                  *secrets,
                                     NMConnectionFindSecretFunc callback,
                                     gpointer                   callback_data);
 
@@ -879,7 +1038,7 @@ gboolean _nm_connection_find_secret(NMConnection *             self,
 
 gboolean nm_utils_base64secret_normalize(const char *base64_key,
                                          gsize       required_key_len,
-                                         char **     out_base64_key_norm);
+                                         char      **out_base64_key_norm);
 
 /*****************************************************************************/
 
@@ -900,10 +1059,16 @@ gboolean _nmtst_variant_attribute_spec_assert_sorted(const NMVariantAttributeSpe
 const NMVariantAttributeSpec *
 _nm_variant_attribute_spec_find_binary_search(const NMVariantAttributeSpec *const *array,
                                               gsize                                len,
-                                              const char *                         name);
+                                              const char                          *name);
 
 /*****************************************************************************/
 
 gboolean _nm_ip_tunnel_mode_is_layer2(NMIPTunnelMode mode);
+
+GPtrArray *_nm_setting_ip_config_get_dns_array(NMSettingIPConfig *setting);
+
+gboolean nm_connection_need_secrets_for_rerequest(NMConnection *connection);
+
+const GPtrArray *_nm_setting_ovs_port_get_trunks_arr(NMSettingOvsPort *self);
 
 #endif

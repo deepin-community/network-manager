@@ -10,11 +10,19 @@
 
 #include "libnm-glib-aux/nm-time-utils.h"
 #include "libnm-core-aux-intern/nm-common-macros.h"
+#include "libnm-crypto/nm-crypto.h"
 #include "nm-object.h"
+#include "nm-utils.h"
 
 /*****************************************************************************/
 
-volatile int _nml_dbus_log_level = 0;
+#define LOG_FILE_FD_UNSET   -3
+#define LOG_FILE_FD_NONE    -2
+#define LOG_FILE_FD_DEFUNCT -1
+
+volatile int _nml_dbus_log_level   = 0;
+const char  *_nml_dbus_log_file    = NULL;
+int          _nml_dbus_log_file_fd = LOG_FILE_FD_UNSET;
 
 int
 _nml_dbus_log_level_init(void)
@@ -38,13 +46,104 @@ _nml_dbus_log_level_init(void)
     return l;
 }
 
+static const char *
+_nml_dbus_log_file_init(void)
+{
+    const char *s;
+
+    s = g_getenv("LIBNM_CLIENT_DEBUG_FILE");
+    if (nm_str_not_empty(s)) {
+        if (strstr(s, "%p")) {
+            gs_strfreev char **tokens = NULL;
+            char               pid_str[100];
+
+            tokens = g_strsplit(s, "%p", -1);
+            nm_sprintf_buf(pid_str, "%lld", (long long) getpid());
+            s = nm_str_realloc(g_strjoinv(pid_str, tokens));
+        } else
+            s = g_strdup(s);
+    } else
+        s = "";
+
+    if (!g_atomic_pointer_compare_and_exchange(&_nml_dbus_log_file, NULL, s)) {
+        if (s[0] != '\0')
+            g_free((gpointer) s);
+        s = g_atomic_pointer_get(&_nml_dbus_log_file);
+    }
+
+    return s;
+}
+
+#define nml_dbus_log_file()                             \
+    ({                                                  \
+        const char *_l;                                 \
+                                                        \
+        _l = g_atomic_pointer_get(&_nml_dbus_log_file); \
+        if (G_UNLIKELY(!_l))                            \
+            _l = _nml_dbus_log_file_init();             \
+                                                        \
+        _l[0] ? _l : NULL;                              \
+    })
+
+static int
+_nml_dbus_log_file_fd_init(void)
+{
+    static GMutex mutex;
+    NM_G_MUTEX_LOCKED(&mutex);
+    int fd;
+
+    fd = g_atomic_int_get(&_nml_dbus_log_file_fd);
+    if (fd == LOG_FILE_FD_UNSET) {
+        const char *name;
+
+        name = nml_dbus_log_file();
+        if (!name)
+            fd = LOG_FILE_FD_NONE;
+        else {
+            fd = open(name, O_WRONLY | O_TRUNC | O_CREAT | O_CLOEXEC, 0600);
+            if (fd < 0)
+                fd = LOG_FILE_FD_DEFUNCT;
+        }
+        g_atomic_int_set(&_nml_dbus_log_file_fd, fd);
+    }
+
+    return fd;
+}
+
+#define nml_dbus_log_file_fd()                                                          \
+    ({                                                                                  \
+        int _fd2;                                                                       \
+                                                                                        \
+        _fd2 = g_atomic_int_get(&_nml_dbus_log_file_fd);                                \
+        if (G_UNLIKELY(_fd2 == LOG_FILE_FD_UNSET))                                      \
+            _fd2 = _nml_dbus_log_file_fd_init();                                        \
+                                                                                        \
+        nm_assert(NM_IN_SET(_fd2, LOG_FILE_FD_NONE, LOG_FILE_FD_DEFUNCT) || _fd2 >= 0); \
+        _fd2;                                                                           \
+    })
+
+#define _log_printf(use_stdout, ...)            \
+    G_STMT_START                                \
+    {                                           \
+        const int _fd = nml_dbus_log_file_fd(); \
+                                                \
+        if (_fd != LOG_FILE_FD_NONE) {          \
+            if (_fd >= 0)                       \
+                dprintf(_fd, __VA_ARGS__);      \
+        } else if (use_stdout)                  \
+            g_print(__VA_ARGS__);               \
+        else                                    \
+            g_printerr(__VA_ARGS__);            \
+    }                                           \
+    G_STMT_END
+
 void
 _nml_dbus_log(NMLDBusLogLevel level, gboolean use_stdout, const char *fmt, ...)
 {
     NMLDBusLogLevel configured_log_level;
-    gs_free char *  msg = NULL;
+    gs_free char   *msg = NULL;
     va_list         args;
-    const char *    prefix = "";
+    const char     *prefix = "";
     gint64          ts;
     pid_t           pid;
 
@@ -92,21 +191,13 @@ _nml_dbus_log(NMLDBusLogLevel level, gboolean use_stdout, const char *fmt, ...)
 
     pid = getpid();
 
-    if (use_stdout) {
-        g_print("libnm-dbus[%lld]: %s[%" G_GINT64_FORMAT ".%05" G_GINT64_FORMAT "] %s\n",
+    _log_printf(use_stdout,
+                "libnm-dbus[%lld]: %s[%" G_GINT64_FORMAT ".%05" G_GINT64_FORMAT "] %s\n",
                 (long long) pid,
                 prefix,
                 ts / NM_UTILS_NSEC_PER_SEC,
-                (ts / (NM_UTILS_NSEC_PER_SEC / 10000)) % 10000,
+                (ts / (NM_UTILS_NSEC_PER_SEC / 100000)) % 100000,
                 msg);
-    } else {
-        g_printerr("libnm-dbus[%lld]: %s[%" G_GINT64_FORMAT ".%05" G_GINT64_FORMAT "] %s\n",
-                   (long long) pid,
-                   prefix,
-                   ts / NM_UTILS_NSEC_PER_SEC,
-                   (ts / (NM_UTILS_NSEC_PER_SEC / 10000)) % 10000,
-                   msg);
-    }
 }
 
 /*****************************************************************************/
@@ -116,7 +207,7 @@ char *
 nm_utils_wincaps_to_dash(const char *caps)
 {
     const char *p;
-    GString *   str;
+    GString    *str;
 
     str = g_string_new(NULL);
     p   = caps;
@@ -136,14 +227,14 @@ nm_utils_wincaps_to_dash(const char *caps)
 /*****************************************************************************/
 
 static char *
-_fixup_string(const char *       desc,
+_fixup_string(const char        *desc,
               const char *const *ignored_phrases,
               const char *const *ignored_words,
               gboolean           square_brackets_sensible)
 {
-    char *   desc_full;
+    char    *desc_full;
     gboolean in_paren = FALSE;
-    char *   p, *q;
+    char    *p, *q;
     int      i;
 
     if (!desc || !desc[0])
@@ -208,7 +299,7 @@ _fixup_string(const char *       desc,
         if (eow)
             *eow = '\0';
 
-        if (nm_utils_strv_find_first((char **) ignored_words, -1, p) >= 0)
+        if (nm_strv_find_first(ignored_words, -1, p) >= 0)
             goto next;
 
         l = strlen(p);
@@ -691,6 +782,7 @@ const NMLDBusMetaIface *const _nml_dbus_meta_ifaces[] = {
     &_nml_dbus_meta_iface_nm_device_generic,
     &_nml_dbus_meta_iface_nm_device_iptunnel,
     &_nml_dbus_meta_iface_nm_device_infiniband,
+    &_nml_dbus_meta_iface_nm_device_loopback,
     &_nml_dbus_meta_iface_nm_device_lowpan,
     &_nml_dbus_meta_iface_nm_device_macsec,
     &_nml_dbus_meta_iface_nm_device_macvlan,
@@ -727,7 +819,7 @@ static int
 _strcmp_common_prefix(gconstpointer a, gconstpointer b, gpointer user_data)
 {
     const NMLDBusMetaIface *iface           = a;
-    const char *            dbus_iface_name = b;
+    const char             *dbus_iface_name = b;
 
     nm_assert(g_str_has_prefix(iface->dbus_iface_name, COMMON_PREFIX));
 
@@ -750,11 +842,11 @@ nml_dbus_meta_iface_get(const char *dbus_iface_name)
 
     if (NM_STR_HAS_PREFIX(dbus_iface_name, COMMON_PREFIX)) {
         /* optimize, that in fact all our interfaces have the same prefix. */
-        idx = nm_utils_ptrarray_find_binary_search((gconstpointer *) _nml_dbus_meta_ifaces,
-                                                   G_N_ELEMENTS(_nml_dbus_meta_ifaces),
-                                                   &dbus_iface_name[NM_STRLEN(COMMON_PREFIX)],
-                                                   _strcmp_common_prefix,
-                                                   NULL);
+        idx = nm_ptrarray_find_bsearch((gconstpointer *) _nml_dbus_meta_ifaces,
+                                       G_N_ELEMENTS(_nml_dbus_meta_ifaces),
+                                       &dbus_iface_name[NM_STRLEN(COMMON_PREFIX)],
+                                       _strcmp_common_prefix,
+                                       NULL);
     } else
         return NULL;
 
@@ -765,20 +857,20 @@ nml_dbus_meta_iface_get(const char *dbus_iface_name)
 
 const NMLDBusMetaProperty *
 nml_dbus_meta_property_get(const NMLDBusMetaIface *meta_iface,
-                           const char *            dbus_property_name,
-                           guint *                 out_idx)
+                           const char             *dbus_property_name,
+                           guint                  *out_idx)
 {
     gssize idx;
 
     nm_assert(meta_iface);
     nm_assert(dbus_property_name);
 
-    idx = nm_utils_array_find_binary_search(meta_iface->dbus_properties,
-                                            sizeof(meta_iface->dbus_properties[0]),
-                                            meta_iface->n_dbus_properties,
-                                            &dbus_property_name,
-                                            nm_strcmp_p_with_data,
-                                            NULL);
+    idx = nm_array_find_bsearch(meta_iface->dbus_properties,
+                                meta_iface->n_dbus_properties,
+                                sizeof(meta_iface->dbus_properties[0]),
+                                &dbus_property_name,
+                                nm_strcmp_p_with_data,
+                                NULL);
     if (idx < 0) {
         NM_SET_OUT(out_idx, meta_iface->n_dbus_properties);
         return NULL;
@@ -788,7 +880,7 @@ nml_dbus_meta_property_get(const NMLDBusMetaIface *meta_iface,
 }
 
 void
-_nml_dbus_meta_class_init_with_properties_impl(GObjectClass *                 object_class,
+_nml_dbus_meta_class_init_with_properties_impl(GObjectClass                  *object_class,
                                                const NMLDBusMetaIface *const *meta_ifaces)
 {
     int i_iface;
@@ -799,7 +891,7 @@ _nml_dbus_meta_class_init_with_properties_impl(GObjectClass *                 ob
 
     for (i_iface = 0; meta_ifaces[i_iface]; i_iface++) {
         const NMLDBusMetaIface *meta_iface = meta_ifaces[i_iface];
-        guint8 *                reverse_idx;
+        guint8                 *reverse_idx;
         guint8                  i;
 
         nm_assert(g_type_is_a(meta_iface->get_type_fcn(), G_OBJECT_CLASS_TYPE(object_class)));
@@ -881,8 +973,10 @@ nm_utils_g_param_spec_is_default(const GParamSpec *pspec)
 /**
  * nm_utils_print:
  * @output_mode: if 1 it uses g_print(). If 2, it uses g_printerr().
- *   If 0, it uses either g_print() or g_printerr(), depending
- *   on LIBNM_CLIENT_DEBUG (and the "stdout" flag).
+ *   If 0, it uses the same output as internal libnm debug logging
+ *   does. That is, depending on LIBNM_CLIENT_DEBUG's "stdout" flag
+ *   it uses g_print() or g_printerr() and if LIBNM_CLIENT_DEBUG_FILE is
+ *   set, it writes the output to file instead
  * @msg: the message to print. The function does not append
  *   a trailing newline.
  *
@@ -893,6 +987,11 @@ nm_utils_g_param_spec_is_default(const GParamSpec *pspec)
  * with these functions (it implements additional buffering). By
  * using nm_utils_print(), the same logging mechanisms can be used.
  *
+ * Also, libnm honors LIBNM_CLIENT_DEBUG_FILE environment. If this
+ * is set to a filename pattern (accepting "%p" for the process ID),
+ * then the debug log is written to that file instead. With @output_mode
+ * zero, the same location will be written. Since: 1.44.
+ *
  * Since: 1.30
  */
 void
@@ -902,15 +1001,74 @@ nm_utils_print(int output_mode, const char *msg)
 
     g_return_if_fail(msg);
 
-    if (output_mode == 0) {
+    switch (output_mode) {
+    case 0:
         nml_dbus_log_enabled_full(NML_DBUS_LOG_LEVEL_ANY, &use_stdout);
-        output_mode = use_stdout ? 1 : 2;
-    }
-
-    if (output_mode == 1)
+        _log_printf(use_stdout, "%s", msg);
+        break;
+    case 1:
         g_print("%s", msg);
-    else if (output_mode == 2)
+        break;
+    case 2:
         g_printerr("%s", msg);
-    else
+        break;
+    default:
         g_return_if_reached();
+        break;
+    }
+}
+
+/*****************************************************************************/
+
+/**
+ * nm_utils_file_is_certificate:
+ * @filename: name of the file to test
+ *
+ * Tests if @filename has a valid extension for an X.509 certificate file
+ * (".cer", ".crt", ".der", or ".pem"), and contains a certificate in a format
+ * recognized by NetworkManager.
+ *
+ * Returns: %TRUE if the file is a certificate, %FALSE if it is not
+ **/
+gboolean
+nm_utils_file_is_certificate(const char *filename)
+{
+    g_return_val_if_fail(filename != NULL, FALSE);
+
+    return nm_crypto_utils_file_is_certificate(filename);
+}
+
+/**
+ * nm_utils_file_is_private_key:
+ * @filename: name of the file to test
+ * @out_encrypted: (out): on return, whether the file is encrypted
+ *
+ * Tests if @filename has a valid extension for an X.509 private key file
+ * (".der", ".key", ".pem", or ".p12"), and contains a private key in a format
+ * recognized by NetworkManager.
+ *
+ * Returns: %TRUE if the file is a private key, %FALSE if it is not
+ **/
+gboolean
+nm_utils_file_is_private_key(const char *filename, gboolean *out_encrypted)
+{
+    g_return_val_if_fail(filename != NULL, FALSE);
+
+    return nm_crypto_utils_file_is_private_key(filename, out_encrypted);
+}
+
+/**
+ * nm_utils_file_is_pkcs12:
+ * @filename: name of the file to test
+ *
+ * Tests if @filename is a PKCS#<!-- -->12 file.
+ *
+ * Returns: %TRUE if the file is PKCS#<!-- -->12, %FALSE if it is not
+ **/
+gboolean
+nm_utils_file_is_pkcs12(const char *filename)
+{
+    g_return_val_if_fail(filename != NULL, FALSE);
+
+    return nm_crypto_is_pkcs12_file(filename, NULL);
 }

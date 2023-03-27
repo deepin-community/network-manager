@@ -10,6 +10,7 @@
 #include "nm-setting-private.h"
 #include "nm-utils-private.h"
 #include "nm-connection-private.h"
+#include "nm-setting-ovs-other-config.h"
 
 #define MAX_NUM_KEYS 256
 
@@ -28,7 +29,7 @@
 NM_GOBJECT_PROPERTIES_DEFINE(NMSettingOvsExternalIDs, PROP_DATA, );
 
 typedef struct {
-    GHashTable * data;
+    GHashTable  *data;
     const char **data_keys;
 } NMSettingOvsExternalIDsPrivate;
 
@@ -52,15 +53,6 @@ G_DEFINE_TYPE(NMSettingOvsExternalIDs, nm_setting_ovs_external_ids, NM_TYPE_SETT
     _NM_GET_PRIVATE(self, NMSettingOvsExternalIDs, NM_IS_SETTING_OVS_EXTERNAL_IDS)
 
 /*****************************************************************************/
-
-static gboolean
-_exid_key_char_is_regular(char ch)
-{
-    /* allow words of printable characters, plus some
-     * special characters, for example to support base64 encoding. */
-    return (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') || (ch >= '0' && ch <= '9')
-           || NM_IN_SET(ch, '-', '_', '+', '/', '=', '.');
-}
 
 /**
  * nm_setting_ovs_external_ids_check_key:
@@ -105,7 +97,7 @@ nm_setting_ovs_external_ids_check_key(const char *key, GError **error)
                             _("key must be UTF8"));
         return FALSE;
     }
-    if (!NM_STRCHAR_ALL(key, ch, _exid_key_char_is_regular(ch))) {
+    if (!NM_STRCHAR_ALL(key, ch, nm_ascii_is_regular_char(ch))) {
         /* Probably OVS is more forgiving about what makes a valid key for
          * an external-id. However, we are strict (at least, for now). */
         g_set_error_literal(error,
@@ -125,6 +117,56 @@ nm_setting_ovs_external_ids_check_key(const char *key, GError **error)
     }
 
     return TRUE;
+}
+
+gboolean
+_nm_setting_ovs_verify_connection_type(GType gtype, NMConnection *connection, GError **error)
+{
+    NMSettingConnection *s_con;
+    const char          *type;
+    const char          *slave_type;
+
+    nm_assert(!connection || NM_IS_CONNECTION(connection));
+    nm_assert(NM_IN_SET(gtype, NM_TYPE_SETTING_OVS_EXTERNAL_IDS, NM_TYPE_SETTING_OVS_OTHER_CONFIG));
+    nm_assert(!error || !*error);
+
+    if (!connection) {
+        /* We don't know. It's valid. */
+        return TRUE;
+    }
+
+    type = nm_connection_get_connection_type(connection);
+    if (!type) {
+        NMSetting *s_base;
+
+        s_base = _nm_connection_find_base_type_setting(connection);
+        if (s_base)
+            type = nm_setting_get_name(s_base);
+    }
+    if (NM_IN_STRSET(type,
+                     NM_SETTING_OVS_BRIDGE_SETTING_NAME,
+                     NM_SETTING_OVS_PORT_SETTING_NAME,
+                     NM_SETTING_OVS_INTERFACE_SETTING_NAME))
+        return TRUE;
+
+    if ((s_con = nm_connection_get_setting_connection(connection))
+        && _nm_connection_detect_slave_type_full(s_con,
+                                                 connection,
+                                                 &slave_type,
+                                                 NULL,
+                                                 NULL,
+                                                 NULL,
+                                                 NULL)
+        && nm_streq0(slave_type, NM_SETTING_OVS_PORT_SETTING_NAME))
+        return TRUE;
+
+    g_set_error(error,
+                NM_CONNECTION_ERROR,
+                NM_CONNECTION_ERROR_INVALID_PROPERTY,
+                _("OVS %s can only be added to a profile of type OVS "
+                  "bridge/port/interface or to OVS system interface"),
+                gtype == NM_TYPE_SETTING_OVS_EXTERNAL_IDS ? "external-ids" : "other-config");
+    return FALSE;
 }
 
 /**
@@ -195,12 +237,16 @@ _nm_setting_ovs_external_ids_get_data(NMSettingOvsExternalIDs *self)
  *
  * Returns: (array length=out_len) (transfer none): a
  *   %NULL-terminated array containing each key from the table.
+ *
+ * Since: 1.30
   **/
 const char *const *
 nm_setting_ovs_external_ids_get_data_keys(NMSettingOvsExternalIDs *setting, guint *out_len)
 {
-    NMSettingOvsExternalIDs *       self = setting;
+    NMSettingOvsExternalIDs        *self = setting;
     NMSettingOvsExternalIDsPrivate *priv;
+
+    NM_SET_OUT(out_len, 0);
 
     g_return_val_if_fail(NM_IS_SETTING_OVS_EXTERNAL_IDS(self), NULL);
 
@@ -211,7 +257,7 @@ nm_setting_ovs_external_ids_get_data_keys(NMSettingOvsExternalIDs *setting, guin
         return priv->data_keys;
     }
 
-    priv->data_keys = nm_utils_strdict_get_keys(priv->data, TRUE, out_len);
+    priv->data_keys = nm_strdict_get_keys(priv->data, TRUE, out_len);
 
     /* don't return %NULL, but hijack the @data_keys fields as a pseudo
      * empty strv array. */
@@ -233,7 +279,7 @@ nm_setting_ovs_external_ids_get_data_keys(NMSettingOvsExternalIDs *setting, guin
 const char *
 nm_setting_ovs_external_ids_get_data(NMSettingOvsExternalIDs *setting, const char *key)
 {
-    NMSettingOvsExternalIDs *       self = setting;
+    NMSettingOvsExternalIDs        *self = setting;
     NMSettingOvsExternalIDsPrivate *priv;
 
     g_return_val_if_fail(NM_IS_SETTING_OVS_EXTERNAL_IDS(self), NULL);
@@ -257,10 +303,10 @@ nm_setting_ovs_external_ids_get_data(NMSettingOvsExternalIDs *setting, const cha
  */
 void
 nm_setting_ovs_external_ids_set_data(NMSettingOvsExternalIDs *setting,
-                                     const char *             key,
-                                     const char *             val)
+                                     const char              *key,
+                                     const char              *val)
 {
-    NMSettingOvsExternalIDs *       self = setting;
+    NMSettingOvsExternalIDs        *self = setting;
     NMSettingOvsExternalIDsPrivate *priv;
 
     g_return_if_fail(NM_IS_SETTING_OVS_EXTERNAL_IDS(self));
@@ -295,17 +341,21 @@ out_changed:
 static gboolean
 verify(NMSetting *setting, NMConnection *connection, GError **error)
 {
-    NMSettingOvsExternalIDs *       self = NM_SETTING_OVS_EXTERNAL_IDS(setting);
+    NMSettingOvsExternalIDs        *self = NM_SETTING_OVS_EXTERNAL_IDS(setting);
     NMSettingOvsExternalIDsPrivate *priv = NM_SETTING_OVS_EXTERNAL_IDS_GET_PRIVATE(self);
 
     if (priv->data) {
         gs_free_error GError *local = NULL;
-        GHashTableIter        iter;
-        const char *          key;
-        const char *          val;
+        const char *const    *keys;
+        guint                 len;
+        guint                 i;
 
-        g_hash_table_iter_init(&iter, priv->data);
-        while (g_hash_table_iter_next(&iter, (gpointer *) &key, (gpointer *) &val)) {
+        keys = nm_setting_ovs_external_ids_get_data_keys(self, &len);
+
+        for (i = 0; i < len; i++) {
+            const char *key = keys[i];
+            const char *val = g_hash_table_lookup(priv->data, key);
+
             if (!nm_setting_ovs_external_ids_check_key(key, &local)) {
                 g_set_error(error,
                             NM_CONNECTION_ERROR,
@@ -334,7 +384,7 @@ verify(NMSetting *setting, NMConnection *connection, GError **error)
         g_set_error(error,
                     NM_CONNECTION_ERROR,
                     NM_CONNECTION_ERROR_INVALID_PROPERTY,
-                    _("maximum number of user data entries reached (%u instead of %u)"),
+                    _("maximum number of entries reached (%u instead of %u)"),
                     g_hash_table_size(priv->data),
                     (unsigned) MAX_NUM_KEYS);
         g_prefix_error(error,
@@ -344,74 +394,29 @@ verify(NMSetting *setting, NMConnection *connection, GError **error)
         return FALSE;
     }
 
-    if (connection) {
-        NMSettingConnection *s_con;
-        const char *         type;
-        const char *         slave_type;
-
-        type = nm_connection_get_connection_type(connection);
-        if (!type) {
-            NMSetting *s_base;
-
-            s_base = _nm_connection_find_base_type_setting(connection);
-            if (s_base)
-                type = nm_setting_get_name(s_base);
-        }
-        if (NM_IN_STRSET(type,
-                         NM_SETTING_OVS_BRIDGE_SETTING_NAME,
-                         NM_SETTING_OVS_PORT_SETTING_NAME,
-                         NM_SETTING_OVS_INTERFACE_SETTING_NAME))
-            goto connection_type_is_good;
-
-        if ((s_con = nm_connection_get_setting_connection(connection))
-            && _nm_connection_detect_slave_type_full(s_con,
-                                                     connection,
-                                                     &slave_type,
-                                                     NULL,
-                                                     NULL,
-                                                     NULL,
-                                                     NULL)
-            && nm_streq0(slave_type, NM_SETTING_OVS_PORT_SETTING_NAME))
-            goto connection_type_is_good;
-
-        g_set_error_literal(error,
-                            NM_CONNECTION_ERROR,
-                            NM_CONNECTION_ERROR_INVALID_PROPERTY,
-                            _("OVS external IDs can only be added to a profile of type OVS "
-                              "bridge/port/interface or to OVS system interface"));
+    if (!_nm_setting_ovs_verify_connection_type(NM_TYPE_SETTING_OVS_EXTERNAL_IDS,
+                                                connection,
+                                                error))
         return FALSE;
-    }
-connection_type_is_good:
 
     return TRUE;
 }
 
 static NMTernary
-compare_property(const NMSettInfoSetting *sett_info,
-                 guint                    property_idx,
-                 NMConnection *           con_a,
-                 NMSetting *              set_a,
-                 NMConnection *           con_b,
-                 NMSetting *              set_b,
-                 NMSettingCompareFlags    flags)
+compare_fcn_data(_NM_SETT_INFO_PROP_COMPARE_FCN_ARGS _nm_nil)
 {
     NMSettingOvsExternalIDsPrivate *priv;
     NMSettingOvsExternalIDsPrivate *pri2;
 
-    if (nm_streq(sett_info->property_infos[property_idx].name, NM_SETTING_OVS_EXTERNAL_IDS_DATA)) {
-        if (NM_FLAGS_HAS(flags, NM_SETTING_COMPARE_FLAG_INFERRABLE))
-            return NM_TERNARY_DEFAULT;
+    if (NM_FLAGS_HAS(flags, NM_SETTING_COMPARE_FLAG_INFERRABLE))
+        return NM_TERNARY_DEFAULT;
 
-        if (!set_b)
-            return TRUE;
+    if (!set_b)
+        return TRUE;
 
-        priv = NM_SETTING_OVS_EXTERNAL_IDS_GET_PRIVATE(NM_SETTING_OVS_EXTERNAL_IDS(set_a));
-        pri2 = NM_SETTING_OVS_EXTERNAL_IDS_GET_PRIVATE(NM_SETTING_OVS_EXTERNAL_IDS(set_b));
-        return nm_utils_hashtable_equal(priv->data, pri2->data, TRUE, g_str_equal);
-    }
-
-    return NM_SETTING_CLASS(nm_setting_ovs_external_ids_parent_class)
-        ->compare_property(sett_info, property_idx, con_a, set_a, con_b, set_b, flags);
+    priv = NM_SETTING_OVS_EXTERNAL_IDS_GET_PRIVATE(NM_SETTING_OVS_EXTERNAL_IDS(set_a));
+    pri2 = NM_SETTING_OVS_EXTERNAL_IDS_GET_PRIVATE(NM_SETTING_OVS_EXTERNAL_IDS(set_b));
+    return nm_utils_hashtable_equal(priv->data, pri2->data, TRUE, g_str_equal);
 }
 
 /*****************************************************************************/
@@ -419,12 +424,12 @@ compare_property(const NMSettInfoSetting *sett_info,
 static void
 get_property(GObject *object, guint prop_id, GValue *value, GParamSpec *pspec)
 {
-    NMSettingOvsExternalIDs *       self = NM_SETTING_OVS_EXTERNAL_IDS(object);
+    NMSettingOvsExternalIDs        *self = NM_SETTING_OVS_EXTERNAL_IDS(object);
     NMSettingOvsExternalIDsPrivate *priv = NM_SETTING_OVS_EXTERNAL_IDS_GET_PRIVATE(self);
     GHashTableIter                  iter;
-    GHashTable *                    data;
-    const char *                    key;
-    const char *                    val;
+    GHashTable                     *data;
+    const char                     *key;
+    const char                     *val;
 
     switch (prop_id) {
     case PROP_DATA:
@@ -445,7 +450,7 @@ get_property(GObject *object, guint prop_id, GValue *value, GParamSpec *pspec)
 static void
 set_property(GObject *object, guint prop_id, const GValue *value, GParamSpec *pspec)
 {
-    NMSettingOvsExternalIDs *       self = NM_SETTING_OVS_EXTERNAL_IDS(object);
+    NMSettingOvsExternalIDs        *self = NM_SETTING_OVS_EXTERNAL_IDS(object);
     NMSettingOvsExternalIDsPrivate *priv = NM_SETTING_OVS_EXTERNAL_IDS_GET_PRIVATE(self);
 
     switch (prop_id) {
@@ -453,9 +458,9 @@ set_property(GObject *object, guint prop_id, const GValue *value, GParamSpec *ps
     {
         gs_unref_hashtable GHashTable *old = NULL;
         GHashTableIter                 iter;
-        GHashTable *                   data;
-        const char *                   key;
-        const char *                   val;
+        GHashTable                    *data;
+        const char                    *key;
+        const char                    *val;
 
         nm_clear_g_free(&priv->data_keys);
 
@@ -502,7 +507,7 @@ nm_setting_ovs_external_ids_new(void)
 static void
 finalize(GObject *object)
 {
-    NMSettingOvsExternalIDs *       self = NM_SETTING_OVS_EXTERNAL_IDS(object);
+    NMSettingOvsExternalIDs        *self = NM_SETTING_OVS_EXTERNAL_IDS(object);
     NMSettingOvsExternalIDsPrivate *priv = NM_SETTING_OVS_EXTERNAL_IDS_GET_PRIVATE(self);
 
     g_free(priv->data_keys);
@@ -515,21 +520,20 @@ finalize(GObject *object)
 static void
 nm_setting_ovs_external_ids_class_init(NMSettingOvsExternalIDsClass *klass)
 {
-    GObjectClass *  object_class        = G_OBJECT_CLASS(klass);
+    GObjectClass   *object_class        = G_OBJECT_CLASS(klass);
     NMSettingClass *setting_class       = NM_SETTING_CLASS(klass);
-    GArray *        properties_override = _nm_sett_info_property_override_create_array();
+    GArray         *properties_override = _nm_sett_info_property_override_create_array();
 
     object_class->get_property = get_property;
     object_class->set_property = set_property;
     object_class->finalize     = finalize;
 
-    setting_class->compare_property = compare_property;
-    setting_class->verify           = verify;
+    setting_class->verify = verify;
 
     /**
      * NMSettingOvsExternalIDs:data: (type GHashTable(utf8,utf8))
      *
-     * A dictionary of key/value pairs with exernal-ids for OVS.
+     * A dictionary of key/value pairs with external-ids for OVS.
      *
      * Since: 1.30
      **/
@@ -538,14 +542,22 @@ nm_setting_ovs_external_ids_class_init(NMSettingOvsExternalIDsClass *klass)
                                                    "",
                                                    G_TYPE_HASH_TABLE,
                                                    G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS);
-    _nm_properties_override_gobj(properties_override,
-                                 obj_properties[PROP_DATA],
-                                 &nm_sett_info_propert_type_strdict);
+    _nm_properties_override_gobj(
+        properties_override,
+        obj_properties[PROP_DATA],
+        NM_SETT_INFO_PROPERT_TYPE_GPROP(NM_G_VARIANT_TYPE("a{ss}"),
+                                        .typdata_from_dbus.gprop_fcn = _nm_utils_strdict_from_dbus,
+                                        .typdata_to_dbus.gprop_type =
+                                            NM_SETTING_PROPERTY_TO_DBUS_FCN_GPROP_TYPE_STRDICT,
+                                        .compare_fcn   = compare_fcn_data,
+                                        .from_dbus_fcn = _nm_setting_property_from_dbus_fcn_gprop,
+                                        .from_dbus_is_full = TRUE));
 
     g_object_class_install_properties(object_class, _PROPERTY_ENUMS_LAST, obj_properties);
 
-    _nm_setting_class_commit_full(setting_class,
-                                  NM_META_SETTING_TYPE_OVS_EXTERNAL_IDS,
-                                  NULL,
-                                  properties_override);
+    _nm_setting_class_commit(setting_class,
+                             NM_META_SETTING_TYPE_OVS_EXTERNAL_IDS,
+                             NULL,
+                             properties_override,
+                             0);
 }

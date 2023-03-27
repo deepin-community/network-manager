@@ -12,9 +12,8 @@
 #include <sys/stat.h>
 #include <sys/types.h>
 
+#include "libnm-lldp/nm-lldp.h"
 #include "devices/nm-lldp-listener.h"
-#include "libnm-systemd-core/nm-sd.h"
-
 #include "platform/tests/test-common.h"
 
 #include "nm-test-utils-core.h"
@@ -22,15 +21,15 @@
 /*****************************************************************************/
 
 static GVariant *
-get_lldp_neighbor(GVariant *  neighbors,
+get_lldp_neighbor(GVariant   *neighbors,
                   int         chassis_id_type,
                   const char *chassis_id,
                   int         port_id_type,
                   const char *port_id)
 {
     GVariantIter iter;
-    GVariant *   variant;
-    GVariant *   result = NULL;
+    GVariant    *variant;
+    GVariant    *result = NULL;
 
     nmtst_assert_variant_is_of_type(neighbors, G_VARIANT_TYPE("aa{sv}"));
 
@@ -81,15 +80,15 @@ typedef struct {
 typedef struct {
     gsize          frame_len;
     const uint8_t *frame;
-    const char *   as_variant;
+    const char    *as_variant;
 } TestRecvFrame;
 
 #define TEST_RECV_FRAME_DEFINE(name, _as_variant, ...)        \
     static const guint8        _##name##_v[] = {__VA_ARGS__}; \
     static const TestRecvFrame name          = {              \
-        .as_variant = _as_variant,                   \
-        .frame_len  = sizeof(_##name##_v),           \
-        .frame      = _##name##_v,                   \
+                 .as_variant = _as_variant,                   \
+                 .frame_len  = sizeof(_##name##_v),           \
+                 .frame      = _##name##_v,                   \
     }
 
 typedef struct {
@@ -183,7 +182,7 @@ TEST_RECV_FRAME_DEFINE(
 static void
 _test_recv_data0_check_do(GMainLoop *loop, NMLldpListener *listener, const TestRecvFrame *frame)
 {
-    GVariant *       neighbors, *attr;
+    GVariant                  *neighbors, *attr;
     gs_unref_variant GVariant *neighbor = NULL;
 
     neighbors = nm_lldp_listener_get_neighbors(listener);
@@ -191,9 +190,9 @@ _test_recv_data0_check_do(GMainLoop *loop, NMLldpListener *listener, const TestR
     g_assert_cmpint(g_variant_n_children(neighbors), ==, 1);
 
     neighbor = get_lldp_neighbor(neighbors,
-                                 SD_LLDP_CHASSIS_SUBTYPE_MAC_ADDRESS,
+                                 NM_LLDP_CHASSIS_SUBTYPE_MAC_ADDRESS,
                                  "00:01:02:03:04:05",
-                                 SD_LLDP_PORT_SUBTYPE_INTERFACE_NAME,
+                                 NM_LLDP_PORT_SUBTYPE_INTERFACE_NAME,
                                  "1/3");
     g_assert(neighbor);
     g_assert_cmpint(g_variant_n_children(neighbor), ==, 1 + 4 + 4);
@@ -537,19 +536,19 @@ TEST_RECV_FRAME_DEFINE(
 static void
 _test_recv_data1_check(GMainLoop *loop, NMLldpListener *listener, TestRecvCallbackInfo *info)
 {
-    GVariant *       neighbors, *attr, *child;
+    GVariant                  *neighbors, *attr, *child;
     gs_unref_variant GVariant *neighbor = NULL;
     guint                      v_uint   = 0;
-    const char *               v_str    = NULL;
+    const char                *v_str    = NULL;
 
     neighbors = nm_lldp_listener_get_neighbors(listener);
     nmtst_assert_variant_is_of_type(neighbors, G_VARIANT_TYPE("aa{sv}"));
     g_assert_cmpint(g_variant_n_children(neighbors), ==, 1);
 
     neighbor = get_lldp_neighbor(neighbors,
-                                 SD_LLDP_CHASSIS_SUBTYPE_MAC_ADDRESS,
+                                 NM_LLDP_CHASSIS_SUBTYPE_MAC_ADDRESS,
                                  "00:01:30:F9:AD:A0",
-                                 SD_LLDP_PORT_SUBTYPE_INTERFACE_NAME,
+                                 NM_LLDP_PORT_SUBTYPE_INTERFACE_NAME,
                                  "1/1");
     g_assert(neighbor);
     g_assert_cmpint(g_variant_n_children(neighbor), ==, 1 + 4 + 16);
@@ -868,13 +867,12 @@ lldp_neighbors_changed(NMLldpListener *lldp_listener, gpointer user_data)
 static void
 test_recv(TestRecvFixture *fixture, gconstpointer user_data)
 {
-    const TestRecvData * data = user_data;
-    NMLldpListener *     listener;
-    GMainLoop *          loop;
+    const TestRecvData  *data = user_data;
+    NMLldpListener      *listener;
+    GMainLoop           *loop;
     TestRecvCallbackInfo info = {};
     gsize                i_frames;
-    GError *             error = NULL;
-    guint                sd_id;
+    GError              *error = NULL;
 
     if (fixture->ifindex == 0) {
         g_test_skip("Tun device not available");
@@ -884,8 +882,7 @@ test_recv(TestRecvFixture *fixture, gconstpointer user_data)
     listener = nm_lldp_listener_new(fixture->ifindex, lldp_neighbors_changed, &info, &error);
     nmtst_assert_success(listener, error);
 
-    loop  = g_main_loop_new(NULL, FALSE);
-    sd_id = nm_sd_event_attach_default();
+    loop = g_main_loop_new(NULL, FALSE);
 
     for (i_frames = 0; i_frames < data->frames_len; i_frames++) {
         const TestRecvFrame *f = data->frames[i_frames];
@@ -902,7 +899,6 @@ test_recv(TestRecvFixture *fixture, gconstpointer user_data)
 
     nm_clear_pointer(&listener, nm_lldp_listener_destroy);
 
-    nm_clear_g_source(&sd_id);
     nm_clear_pointer(&loop, g_main_loop_unref);
 }
 
@@ -918,10 +914,10 @@ _test_recv_fixture_teardown(TestRecvFixture *fixture, gconstpointer user_data)
 static void
 test_parse_frames(gconstpointer test_data)
 {
-    const TestRecvFrame *frame            = test_data;
+    const TestRecvFrame       *frame      = test_data;
     gs_unref_variant GVariant *v_neighbor = NULL;
     gs_unref_variant GVariant *attr       = NULL;
-    gs_free char *             as_variant = NULL;
+    gs_free char              *as_variant = NULL;
 
     v_neighbor = nmtst_lldp_parse_from_raw(frame->frame, frame->frame_len);
     g_assert(v_neighbor);

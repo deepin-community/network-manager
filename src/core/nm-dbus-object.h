@@ -46,7 +46,8 @@ typedef struct {
 /*****************************************************************************/
 
 #define NM_TYPE_DBUS_OBJECT (nm_dbus_object_get_type())
-#define NM_DBUS_OBJECT(obj) (G_TYPE_CHECK_INSTANCE_CAST((obj), NM_TYPE_DBUS_OBJECT, NMDBusObject))
+#define NM_DBUS_OBJECT(obj) \
+    (_NM_G_TYPE_CHECK_INSTANCE_CAST((obj), NM_TYPE_DBUS_OBJECT, NMDBusObject))
 #define NM_DBUS_OBJECT_CLASS(klass) \
     (G_TYPE_CHECK_CLASS_CAST((klass), NM_TYPE_DBUS_OBJECT, NMDBusObjectClass))
 #define NM_IS_DBUS_OBJECT(obj)         (G_TYPE_CHECK_INSTANCE_TYPE((obj), NM_TYPE_DBUS_OBJECT))
@@ -59,7 +60,7 @@ typedef struct {
 /* NMDBusObject and NMDBusManager cooperate strongly. Hence, there is an
  * internal data structure attached to the NMDBusObject accessible to both of them. */
 struct _NMDBusObjectInternal {
-    char *         path;
+    char          *path;
     NMDBusManager *bus_manager;
     CList          objects_lst;
     CList          registration_lst_head;
@@ -159,15 +160,15 @@ gboolean _nm_dbus_object_clear_and_unexport(NMDBusObject **location);
 #define nm_dbus_object_clear_and_unexport(location) \
     _nm_dbus_object_clear_and_unexport(NM_CAST_PPTR(NMDBusObject, (location)))
 
-void nm_dbus_object_emit_signal_variant(NMDBusObject *                     self,
+void nm_dbus_object_emit_signal_variant(NMDBusObject                      *self,
                                         const NMDBusInterfaceInfoExtended *interface_info,
-                                        const GDBusSignalInfo *            signal_info,
-                                        GVariant *                         args);
+                                        const GDBusSignalInfo             *signal_info,
+                                        GVariant                          *args);
 
-void nm_dbus_object_emit_signal(NMDBusObject *                     self,
+void nm_dbus_object_emit_signal(NMDBusObject                      *self,
                                 const NMDBusInterfaceInfoExtended *interface_info,
-                                const GDBusSignalInfo *            signal_info,
-                                const char *                       format,
+                                const GDBusSignalInfo             *signal_info,
+                                const char                        *format,
                                 ...);
 
 #endif /* __NM_DBUS_OBJECT_H__ */

@@ -31,16 +31,16 @@ struct _NML3IPv4LLRegistration {
 G_STATIC_ASSERT(G_STRUCT_OFFSET(NML3IPv4LLRegistration, self) == 0);
 
 struct _NML3IPv4LL {
-    NML3Cfg *                l3cfg;
+    NML3Cfg                 *l3cfg;
     int                      ref_count;
     in_addr_t                addr;
     guint                    reg_timeout_msec;
     CList                    reg_lst_head;
     NML3CfgCommitTypeHandle *l3cfg_commit_handle;
-    GSource *                state_change_on_idle_source;
-    GSource *                timed_out_source;
-    const NML3ConfigData *   l3cd;
-    const NMPObject *        plobj;
+    GSource                 *state_change_on_idle_source;
+    GSource                 *timed_out_source;
+    const NML3ConfigData    *l3cd;
+    const NMPObject         *plobj;
     struct {
         nm_le64_t value;
         nm_le64_t generation;
@@ -104,17 +104,17 @@ NM_UTILS_ENUM2STR_DEFINE(nm_l3_ipv4ll_state_to_string,
 
 /*****************************************************************************/
 
-#define _ASSERT(self)                                                                        \
-    G_STMT_START                                                                             \
-    {                                                                                        \
-        NML3IPv4LL *const _self = (self);                                                    \
-                                                                                             \
-        nm_assert(NM_IS_L3_IPV4LL(_self));                                                   \
-        if (NM_MORE_ASSERTS > 5) {                                                           \
-            nm_assert(_self->addr == 0u || nm_utils_ip4_address_is_link_local(_self->addr)); \
-            nm_assert(!_self->l3cd || NM_IS_L3_CONFIG_DATA(_self->l3cd));                    \
-        }                                                                                    \
-    }                                                                                        \
+#define _ASSERT(self)                                                               \
+    G_STMT_START                                                                    \
+    {                                                                               \
+        NML3IPv4LL *const _self = (self);                                           \
+                                                                                    \
+        nm_assert(NM_IS_L3_IPV4LL(_self));                                          \
+        if (NM_MORE_ASSERTS > 5) {                                                  \
+            nm_assert(_self->addr == 0u || nm_ip4_addr_is_link_local(_self->addr)); \
+            nm_assert(!_self->l3cd || NM_IS_L3_CONFIG_DATA(_self->l3cd));           \
+        }                                                                           \
+    }                                                                               \
     G_STMT_END
 
 /*****************************************************************************/
@@ -202,7 +202,7 @@ _ipv4ll_emit_signal_notify(NML3IPv4LL *self)
 /*****************************************************************************/
 
 static NML3IPv4LLRegistration *
-_registration_update(NML3IPv4LL *            self,
+_registration_update(NML3IPv4LL             *self,
                      NML3IPv4LLRegistration *reg,
                      gboolean                add,
                      guint                   timeout_msec)
@@ -290,7 +290,7 @@ _ip4_address_is_link_local(const NMPlatformIP4Address *a)
 {
     nm_assert(a);
 
-    return nm_utils_ip4_address_is_link_local(a->address) && a->plen == ADDR_IPV4LL_PREFIX_LEN
+    return nm_ip4_addr_is_link_local(a->address) && a->plen == ADDR_IPV4LL_PREFIX_LEN
            && a->address == a->peer_address;
 }
 
@@ -305,8 +305,8 @@ _acd_info_is_good(const NML3AcdAddrInfo *acd_info)
     case NM_L3_ACD_ADDR_STATE_PROBING:
     case NM_L3_ACD_ADDR_STATE_READY:
     case NM_L3_ACD_ADDR_STATE_DEFENDING:
-    case NM_L3_ACD_ADDR_STATE_EXTERNAL_REMOVED:
         return TRUE;
+    case NM_L3_ACD_ADDR_STATE_EXTERNAL_REMOVED:
     case NM_L3_ACD_ADDR_STATE_USED:
     case NM_L3_ACD_ADDR_STATE_CONFLICT:
         return FALSE;
@@ -317,51 +317,32 @@ _acd_info_is_good(const NML3AcdAddrInfo *acd_info)
 
 /*****************************************************************************/
 
-static NMPlatformIP4Address *
-_l3cd_config_plat_init_addr(NMPlatformIP4Address *a, int ifindex, in_addr_t addr)
-{
-    nm_assert(nm_utils_ip4_address_is_link_local(addr));
-
-    *a = (NMPlatformIP4Address){
-        .ifindex      = ifindex,
-        .address      = addr,
-        .peer_address = addr,
-        .plen         = ADDR_IPV4LL_PREFIX_LEN,
-        .addr_source  = NM_IP_CONFIG_SOURCE_IP4LL,
-    };
-    return a;
-}
-
-static NMPlatformIP4Route *
-_l3cd_config_plat_init_route(NMPlatformIP4Route *r, int ifindex)
-{
-    *r = (NMPlatformIP4Route){
-        .ifindex    = ifindex,
-        .network    = htonl(0xE0000000u),
-        .plen       = 4,
-        .rt_source  = NM_IP_CONFIG_SOURCE_IP4LL,
-        .table_any  = TRUE,
-        .metric_any = TRUE,
-    };
-    return r;
-}
-
 static const NML3ConfigData *
 _l3cd_config_create(int ifindex, in_addr_t addr, NMDedupMultiIndex *multi_idx)
 {
     nm_auto_unref_l3cd_init NML3ConfigData *l3cd = NULL;
-    NMPlatformIP4Address                    a;
-    NMPlatformIP4Route                      r;
 
-    nm_assert(nm_utils_ip4_address_is_link_local(addr));
+    nm_assert(nm_ip4_addr_is_link_local(addr));
     nm_assert(ifindex > 0);
     nm_assert(multi_idx);
 
-    l3cd = nm_l3_config_data_new(multi_idx, ifindex);
-    nm_l3_config_data_set_source(l3cd, NM_IP_CONFIG_SOURCE_IP4LL);
+    l3cd = nm_l3_config_data_new(multi_idx, ifindex, NM_IP_CONFIG_SOURCE_IP4LL);
 
-    nm_l3_config_data_add_address_4(l3cd, _l3cd_config_plat_init_addr(&a, ifindex, addr));
-    nm_l3_config_data_add_route_4(l3cd, _l3cd_config_plat_init_route(&r, ifindex));
+    nm_l3_config_data_add_address_4(
+        l3cd,
+        NM_PLATFORM_IP4_ADDRESS_INIT(.ifindex      = ifindex,
+                                     .address      = addr,
+                                     .peer_address = addr,
+                                     .plen         = ADDR_IPV4LL_PREFIX_LEN,
+                                     .addr_source  = NM_IP_CONFIG_SOURCE_IP4LL));
+
+    nm_l3_config_data_add_route_4(l3cd,
+                                  NM_PLATFORM_IP4_ROUTE_INIT(.ifindex   = ifindex,
+                                                             .network   = htonl(0xE0000000u),
+                                                             .plen      = 4,
+                                                             .rt_source = NM_IP_CONFIG_SOURCE_IP4LL,
+                                                             .table_any = TRUE,
+                                                             .metric_any = TRUE));
 
     return nm_l3_config_data_seal(g_steal_pointer(&l3cd));
 }
@@ -401,7 +382,7 @@ static void
 _ipv4ll_addrgen(NML3IPv4LL *self, gboolean generate_new_addr)
 {
     CSipHash  state;
-    char      sbuf_addr[NM_UTILS_INET_ADDRSTRLEN];
+    char      sbuf_addr[NM_INET_ADDRSTRLEN];
     gboolean  seed_changed = FALSE;
     in_addr_t addr_new;
     guint64   h;
@@ -478,7 +459,7 @@ _ipv4ll_addrgen(NML3IPv4LL *self, gboolean generate_new_addr)
     if (!seed_changed && !generate_new_addr) {
         /* neither did the caller request a new address, nor was the seed changed. The current
          * address is still to be used. */
-        nm_assert(nm_utils_ip4_address_is_link_local(self->addr));
+        nm_assert(nm_ip4_addr_is_link_local(self->addr));
         return;
     }
 
@@ -511,9 +492,9 @@ gen_addr:
     if (self->addr == addr_new || NM_IN_SET(ntohl(addr_new) & 0x0000FF00u, 0x0000u, 0xFF00u))
         goto gen_addr;
 
-    nm_assert(nm_utils_ip4_address_is_link_local(addr_new));
+    nm_assert(nm_ip4_addr_is_link_local(addr_new));
 
-    _LOGT("addr-gen: set address %s", _nm_utils_inet4_ntop(addr_new, sbuf_addr));
+    _LOGT("addr-gen: set address %s", nm_inet4_ntop(addr_new, sbuf_addr));
     self->addr = addr_new;
 }
 
@@ -522,9 +503,9 @@ gen_addr:
 static void
 _ipv4ll_update_link(NML3IPv4LL *self, const NMPObject *plobj)
 {
-    char                 sbuf[ETH_ALEN * 3];
+    char                            sbuf[ETH_ALEN * 3];
     nm_auto_nmpobj const NMPObject *pllink_old = NULL;
-    const NMEtherAddr *             mac_new;
+    const NMEtherAddr              *mac_new;
     gboolean                        changed;
 
     if (self->plobj == plobj)
@@ -568,7 +549,7 @@ static void
 _l3cd_config_add(NML3IPv4LL *self)
 {
     nm_auto_unref_l3cd const NML3ConfigData *l3cd = NULL;
-    char                                     sbuf_addr[NM_UTILS_INET_ADDRSTRLEN];
+    char                                     sbuf_addr[NM_INET_ADDRSTRLEN];
     gboolean                                 changed;
 
     _ASSERT(self);
@@ -590,7 +571,7 @@ _l3cd_config_add(NML3IPv4LL *self)
     self->l3cd_timeout_msec_changed = FALSE;
 
     _LOGT("add l3cd config with %s (acd-timeout %u msec%s)",
-          _nm_utils_inet4_ntop(self->addr, sbuf_addr),
+          nm_inet4_ntop(self->addr, sbuf_addr),
           self->reg_timeout_msec,
           changed ? "" : " changed");
 
@@ -610,15 +591,19 @@ _l3cd_config_add(NML3IPv4LL *self)
                              NM_PLATFORM_ROUTE_METRIC_DEFAULT_IP6,
                              0,
                              0,
+                             NM_DNS_PRIORITY_DEFAULT_NORMAL,
+                             NM_DNS_PRIORITY_DEFAULT_NORMAL,
                              NM_L3_ACD_DEFEND_TYPE_ONCE,
                              self->reg_timeout_msec,
-                             NM_L3_CONFIG_MERGE_FLAGS_ONLY_FOR_ACD))
+                             NM_L3CFG_CONFIG_FLAGS_ONLY_FOR_ACD,
+                             NM_L3_CONFIG_MERGE_FLAGS_NONE))
         nm_assert_not_reached();
 
     self->l3cfg_commit_handle = nm_l3cfg_commit_type_register(self->l3cfg,
-                                                              NM_L3_CFG_COMMIT_TYPE_ASSUME,
-                                                              self->l3cfg_commit_handle);
-    nm_l3cfg_commit_on_idle_schedule(self->l3cfg);
+                                                              NM_L3_CFG_COMMIT_TYPE_UPDATE,
+                                                              self->l3cfg_commit_handle,
+                                                              "ipv4ll");
+    nm_l3cfg_commit_on_idle_schedule(self->l3cfg, NM_L3_CFG_COMMIT_TYPE_AUTO);
 }
 
 static gboolean
@@ -640,7 +625,7 @@ _l3cd_config_remove(NML3IPv4LL *self)
         nm_assert_not_reached();
 
     nm_l3cfg_commit_type_unregister(self->l3cfg, g_steal_pointer(&self->l3cfg_commit_handle));
-    nm_l3cfg_commit_on_idle_schedule(self->l3cfg);
+    nm_l3cfg_commit_on_idle_schedule(self->l3cfg, NM_L3_CFG_COMMIT_TYPE_AUTO);
     return TRUE;
 }
 
@@ -654,7 +639,7 @@ _ipv4ll_platform_ip4_address_lookup(NML3IPv4LL *self, in_addr_t addr)
     if (addr == 0u)
         return NULL;
 
-    nm_assert(nm_utils_ip4_address_is_link_local(addr));
+    nm_assert(nm_ip4_addr_is_link_local(addr));
 
     pladdr = nm_platform_ip4_address_get(nm_l3_ipv4ll_get_platform(self),
                                          nm_l3_ipv4ll_get_ifindex(self),
@@ -673,7 +658,7 @@ _ipv4ll_l3cfg_get_acd_addr_info(NML3IPv4LL *self, in_addr_t addr)
     if (addr == 0u)
         return NULL;
 
-    nm_assert(nm_utils_ip4_address_is_link_local(addr));
+    nm_assert(nm_ip4_addr_is_link_local(addr));
     return nm_l3cfg_get_acd_addr_info(self->l3cfg, addr);
 }
 
@@ -683,11 +668,13 @@ _ipv4ll_platform_find_addr(NML3IPv4LL *self, const NML3AcdAddrInfo **out_acd_inf
     const NMPlatformIP4Address *addr_without_acd_info = NULL;
     NMDedupMultiIter            iter;
     NMPLookup                   lookup;
-    const NMPObject *           obj;
-    const NML3AcdAddrInfo *     acd_info;
+    const NMPObject            *obj;
+    const NML3AcdAddrInfo      *acd_info;
     const NMPlatformIP4Address *addr;
 
-    nmp_lookup_init_object(&lookup, NMP_OBJECT_TYPE_IP4_ADDRESS, nm_l3_ipv4ll_get_ifindex(self));
+    nmp_lookup_init_object_by_ifindex(&lookup,
+                                      NMP_OBJECT_TYPE_IP4_ADDRESS,
+                                      nm_l3_ipv4ll_get_ifindex(self));
     nm_platform_iter_obj_for_each (&iter, nm_l3_ipv4ll_get_platform(self), &lookup, &obj) {
         addr = NMP_OBJECT_CAST_IP4_ADDRESS(obj);
         if (!_ip4_address_is_link_local(addr))
@@ -763,12 +750,8 @@ _ipv4ll_set_timed_out_update(NML3IPv4LL *self, TimedOutState new_state)
         if (self->timed_out_expiry_msec == 0 || self->timed_out_expiry_msec < expiry_msec) {
             self->timed_out_expiry_msec = expiry_msec;
             nm_clear_g_source_inst(&self->timed_out_source);
-            self->timed_out_source = nm_g_timeout_source_new(timeout_msec,
-                                                             G_PRIORITY_DEFAULT,
-                                                             _ipv4ll_set_timed_out_timeout_cb,
-                                                             self,
-                                                             NULL);
-            g_source_attach(self->timed_out_source, NULL);
+            self->timed_out_source =
+                nm_g_timeout_add_source(timeout_msec, _ipv4ll_set_timed_out_timeout_cb, self);
         }
         break;
     }
@@ -783,7 +766,7 @@ _ipv4ll_set_timed_out_update(NML3IPv4LL *self, TimedOutState new_state)
 static gboolean
 _ipv4ll_set_state(NML3IPv4LL *self, NML3IPv4LLState state)
 {
-    char sbuf_addr[NM_UTILS_INET_ADDRSTRLEN];
+    char sbuf_addr[NM_INET_ADDRSTRLEN];
     char sbuf100[100];
 
     if (self->state == state)
@@ -792,7 +775,7 @@ _ipv4ll_set_state(NML3IPv4LL *self, NML3IPv4LLState state)
     self->notify_on_idle = TRUE;
     _LOGT("state: set state %s (addr=%s)",
           nm_l3_ipv4ll_state_to_string(state, sbuf100, sizeof(sbuf100)),
-          _nm_utils_inet4_ntop(self->addr, sbuf_addr));
+          nm_inet4_ntop(self->addr, sbuf_addr));
     return TRUE;
 }
 
@@ -800,12 +783,12 @@ static void
 _ipv4ll_state_change(NML3IPv4LL *self, gboolean is_on_idle_handler)
 {
     nm_auto_unref_l3ipv4ll NML3IPv4LL *self_keep_alive = NULL;
-    const NMPlatformIP4Address *       pladdr;
-    const NML3AcdAddrInfo *            acd_info;
+    const NMPlatformIP4Address        *pladdr;
+    const NML3AcdAddrInfo             *acd_info;
     gboolean                           generate_new_addr;
     NML3IPv4LLState                    new_state;
     in_addr_t                          addr0;
-    NML3IPv4LLRegistration *           reg;
+    NML3IPv4LLRegistration            *reg;
 
     _ASSERT(self);
 
@@ -937,8 +920,7 @@ _ipv4ll_state_change_on_idle(NML3IPv4LL *self)
 
     if (!self->state_change_on_idle_source) {
         self->state_change_on_idle_source =
-            nm_g_idle_source_new(G_PRIORITY_DEFAULT, _ipv4ll_state_change_on_idle_cb, self, NULL);
-        g_source_attach(self->state_change_on_idle_source, NULL);
+            nm_g_idle_add_source(_ipv4ll_state_change_on_idle_cb, self);
     }
 }
 
@@ -1044,7 +1026,7 @@ nm_l3_ipv4ll_unref(NML3IPv4LL *self)
             nm_assert_not_reached();
 
         nm_l3cfg_commit_type_unregister(self->l3cfg, g_steal_pointer(&self->l3cfg_commit_handle));
-        nm_l3cfg_commit_on_idle_schedule(self->l3cfg);
+        nm_l3cfg_commit_on_idle_schedule(self->l3cfg, NM_L3_CFG_COMMIT_TYPE_AUTO);
     } else
         nm_assert(!self->l3cfg_commit_handle);
 

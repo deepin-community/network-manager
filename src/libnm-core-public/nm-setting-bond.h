@@ -7,7 +7,7 @@
 #define __NM_SETTING_BOND_H__
 
 #if !defined(__NETWORKMANAGER_H_INSIDE__) && !defined(NETWORKMANAGER_COMPILATION)
-    #error "Only <NetworkManager.h> can be included directly."
+#error "Only <NetworkManager.h> can be included directly."
 #endif
 
 #include "nm-setting.h"
@@ -37,6 +37,7 @@ G_BEGIN_DECLS
 #define NM_SETTING_BOND_OPTION_ARP_IP_TARGET     "arp_ip_target"
 #define NM_SETTING_BOND_OPTION_ARP_VALIDATE      "arp_validate"
 #define NM_SETTING_BOND_OPTION_PRIMARY           "primary"
+#define NM_SETTING_BOND_OPTION_BALANCE_SLB       "balance-slb"
 #define NM_SETTING_BOND_OPTION_PRIMARY_RESELECT  "primary_reselect"
 #define NM_SETTING_BOND_OPTION_FAIL_OVER_MAC     "fail_over_mac"
 #define NM_SETTING_BOND_OPTION_USE_CARRIER       "use_carrier"
@@ -62,12 +63,12 @@ typedef struct _NMSettingBondClass NMSettingBondClass;
 
 GType nm_setting_bond_get_type(void);
 
-NMSetting * nm_setting_bond_new(void);
+NMSetting  *nm_setting_bond_new(void);
 guint32     nm_setting_bond_get_num_options(NMSettingBond *setting);
 gboolean    nm_setting_bond_get_option(NMSettingBond *setting,
                                        guint32        idx,
-                                       const char **  out_name,
-                                       const char **  out_value);
+                                       const char   **out_name,
+                                       const char   **out_value);
 const char *nm_setting_bond_get_option_by_name(NMSettingBond *setting, const char *name);
 gboolean    nm_setting_bond_add_option(NMSettingBond *setting, const char *name, const char *value);
 gboolean    nm_setting_bond_remove_option(NMSettingBond *setting, const char *name);

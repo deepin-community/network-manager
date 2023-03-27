@@ -8,7 +8,7 @@
 #define __NM_SETTING_H__
 
 #if !defined(__NETWORKMANAGER_H_INSIDE__) && !defined(NETWORKMANAGER_COMPILATION)
-    #error "Only <NetworkManager.h> can be included directly."
+#error "Only <NetworkManager.h> can be included directly."
 #endif
 
 #include "nm-core-types.h"
@@ -24,15 +24,15 @@ G_BEGIN_DECLS
     (G_TYPE_INSTANCE_GET_CLASS((obj), NM_TYPE_SETTING, NMSettingClass))
 
 /* The property of the #NMSetting is required for the setting to be valid */
-#define NM_SETTING_PARAM_REQUIRED (1 << (1 + G_PARAM_USER_SHIFT))
+#define NM_SETTING_PARAM_REQUIRED 0x200
 
 /* The property of the #NMSetting is a secret */
-#define NM_SETTING_PARAM_SECRET (1 << (2 + G_PARAM_USER_SHIFT))
+#define NM_SETTING_PARAM_SECRET 0x400
 
 /* The property of the #NMSetting should be ignored during comparisons that
  * use the %NM_SETTING_COMPARE_FLAG_FUZZY flag.
  */
-#define NM_SETTING_PARAM_FUZZY_IGNORE (1 << (3 + G_PARAM_USER_SHIFT))
+#define NM_SETTING_PARAM_FUZZY_IGNORE 0x800
 
 /* Note: all non-glib GParamFlags bits are reserved by NetworkManager */
 
@@ -57,13 +57,13 @@ G_BEGIN_DECLS
  * is to be stored and/or requested when it is needed.
  *
  **/
-typedef enum { /*< flags >*/
-               NM_SETTING_SECRET_FLAG_NONE         = 0x00000000,
-               NM_SETTING_SECRET_FLAG_AGENT_OWNED  = 0x00000001,
-               NM_SETTING_SECRET_FLAG_NOT_SAVED    = 0x00000002,
-               NM_SETTING_SECRET_FLAG_NOT_REQUIRED = 0x00000004
+typedef enum /*< flags >*/ {
+    NM_SETTING_SECRET_FLAG_NONE         = 0x00000000,
+    NM_SETTING_SECRET_FLAG_AGENT_OWNED  = 0x00000001,
+    NM_SETTING_SECRET_FLAG_NOT_SAVED    = 0x00000002,
+    NM_SETTING_SECRET_FLAG_NOT_REQUIRED = 0x00000004
 
-               /* NOTE: if adding flags, update nm-core-internal.h as well */
+    /* NOTE: if adding flags, update nm-core-internal.h as well */
 } NMSettingSecretFlags;
 
 /**
@@ -122,6 +122,8 @@ typedef enum {
  * @NM_SETTING_MAC_RANDOMIZATION_ALWAYS: a random MAC address is used.
  *
  * Controls if and how the MAC address of a device is randomzied.
+ *
+ * Since: 1.2
  **/
 typedef enum {
     NM_SETTING_MAC_RANDOMIZATION_DEFAULT = 0,
@@ -138,8 +140,8 @@ typedef enum {
  *
  * Returns: %TRUE to clear the secret, %FALSE to not clear the secret
  */
-typedef gboolean (*NMSettingClearSecretsWithFlagsFn)(NMSetting *          setting,
-                                                     const char *         secret,
+typedef gboolean (*NMSettingClearSecretsWithFlagsFn)(NMSetting           *setting,
+                                                     const char          *secret,
                                                      NMSettingSecretFlags flags,
                                                      gpointer             user_data);
 
@@ -156,8 +158,8 @@ struct _NMSettInfoProperty;
  * @flags: The property's flags, like %NM_SETTING_PARAM_SECRET
  * @user_data: User data passed to nm_setting_enumerate_values()
  */
-typedef void (*NMSettingValueIterFn)(NMSetting *   setting,
-                                     const char *  key,
+typedef void (*NMSettingValueIterFn)(NMSetting    *setting,
+                                     const char   *key,
                                      const GValue *value,
                                      GParamFlags   flags,
                                      gpointer      user_data);
@@ -202,11 +204,11 @@ typedef enum {
     NM_SETTING_DIFF_RESULT_IN_B_DEFAULT = 0x00000008,
 } NMSettingDiffResult;
 
-gboolean nm_setting_diff(NMSetting *           a,
-                         NMSetting *           b,
+gboolean nm_setting_diff(NMSetting            *a,
+                         NMSetting            *b,
                          NMSettingCompareFlags flags,
                          gboolean              invert_results,
-                         GHashTable **         results);
+                         GHashTable          **results);
 
 void nm_setting_enumerate_values(NMSetting *setting, NMSettingValueIterFn func, gpointer user_data);
 
@@ -214,15 +216,15 @@ char *nm_setting_to_string(NMSetting *setting);
 
 /*****************************************************************************/
 
-gboolean nm_setting_get_secret_flags(NMSetting *           setting,
-                                     const char *          secret_name,
+gboolean nm_setting_get_secret_flags(NMSetting            *setting,
+                                     const char           *secret_name,
                                      NMSettingSecretFlags *out_flags,
-                                     GError **             error);
+                                     GError              **error);
 
-gboolean nm_setting_set_secret_flags(NMSetting *          setting,
-                                     const char *         secret_name,
+gboolean nm_setting_set_secret_flags(NMSetting           *setting,
+                                     const char          *secret_name,
                                      NMSettingSecretFlags flags,
-                                     GError **            error);
+                                     GError             **error);
 
 /*****************************************************************************/
 
@@ -253,10 +255,29 @@ void nm_setting_option_clear_by_name(NMSetting *setting, NMUtilsPredicateStr pre
 
 /*****************************************************************************/
 
-const GVariantType *nm_setting_get_dbus_property_type(NMSetting * setting,
+const GVariantType *nm_setting_get_dbus_property_type(NMSetting  *setting,
                                                       const char *property_name);
 
 /*****************************************************************************/
+
+typedef struct _NMRange NMRange;
+
+NM_AVAILABLE_IN_1_42
+GType nm_range_get_type(void);
+NM_AVAILABLE_IN_1_42
+NMRange *nm_range_new(guint64 start, guint64 end);
+NM_AVAILABLE_IN_1_42
+NMRange *nm_range_ref(const NMRange *range);
+NM_AVAILABLE_IN_1_42
+void nm_range_unref(const NMRange *range);
+NM_AVAILABLE_IN_1_42
+int nm_range_cmp(const NMRange *a, const NMRange *b);
+NM_AVAILABLE_IN_1_42
+gboolean nm_range_get_range(const NMRange *range, guint64 *start, guint64 *end);
+NM_AVAILABLE_IN_1_42
+char *nm_range_to_str(const NMRange *range);
+NM_AVAILABLE_IN_1_42
+NMRange *nm_range_from_str(const char *str, GError **error);
 
 G_END_DECLS
 

@@ -8,12 +8,11 @@
 #define __NM_VPN_EDITOR_H__
 
 #if !defined(__NETWORKMANAGER_H_INSIDE__) && !defined(NETWORKMANAGER_COMPILATION)
-    #error "Only <NetworkManager.h> can be included directly."
+#error "Only <NetworkManager.h> can be included directly."
 #endif
 
 #include <glib.h>
 #include <glib-object.h>
-#include "nm-types.h"
 
 #include "nm-vpn-editor-plugin.h"
 

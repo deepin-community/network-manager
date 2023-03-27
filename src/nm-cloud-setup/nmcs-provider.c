@@ -68,11 +68,11 @@ static NMCSProviderGetConfigResult *
 nmcs_provider_get_config_result_new(GHashTable *iface_datas)
 {
     const NMCSProviderGetConfigIfaceData *iface_data;
-    NMCSProviderGetConfigResult *         result;
+    NMCSProviderGetConfigResult          *result;
     GHashTableIter                        h_iter;
     guint                                 num_valid_ifaces = 0;
     guint                                 num_ipv4s        = 0;
-    GPtrArray *                           ptrarr;
+    GPtrArray                            *ptrarr;
     guint                                 n_iface_datas;
 
     n_iface_datas = g_hash_table_size(iface_datas);
@@ -137,13 +137,13 @@ nmcs_provider_get_config_result_free(NMCSProviderGetConfigResult *result)
 /*****************************************************************************/
 
 void
-nmcs_provider_detect(NMCSProvider *      self,
-                     GCancellable *      cancellable,
+nmcs_provider_detect(NMCSProvider       *self,
+                     GCancellable       *cancellable,
                      GAsyncReadyCallback callback,
                      gpointer            user_data)
 {
     gs_unref_object GTask *task = NULL;
-    const char *           env;
+    const char            *env;
 
     g_return_if_fail(NMCS_IS_PROVIDER(self));
     g_return_if_fail(!cancellable || G_IS_CANCELLABLE(cancellable));
@@ -174,24 +174,38 @@ nmcs_provider_detect_finish(NMCSProvider *self, GAsyncResult *result, GError **e
 /*****************************************************************************/
 
 NMCSProviderGetConfigIfaceData *
-nmcs_provider_get_config_iface_data_create(GHashTable *iface_datas,
-                                           gboolean    was_requested,
-                                           const char *hwaddr)
+nmcs_provider_get_config_iface_data_create(NMCSProviderGetConfigTaskData *get_config_data,
+                                           gboolean                       was_requested,
+                                           const char                    *hwaddr)
 {
     NMCSProviderGetConfigIfaceData *iface_data;
 
     nm_assert(hwaddr);
+    nm_assert(get_config_data);
+    nm_assert(NMCS_IS_PROVIDER(get_config_data->self));
 
     iface_data  = g_slice_new(NMCSProviderGetConfigIfaceData);
     *iface_data = (NMCSProviderGetConfigIfaceData){
-        .hwaddr        = g_strdup(hwaddr),
-        .iface_idx     = -1,
-        .was_requested = was_requested,
+        .get_config_data = get_config_data,
+        .hwaddr          = g_strdup(hwaddr),
+        .iface_idx       = -1,
+        .was_requested   = was_requested,
     };
+
+    /* "priv" is a union, and according to C, it might not be properly initialized
+     * that all union members are set to false/0/NULL/0.0. We need to know which
+     * union field we are going to use, and that depends on the type of "self".
+     * Also, knowing the type would allow us to initialize to something other than
+     * false/0/NULL/0.0. */
+    if (G_OBJECT_TYPE(get_config_data->self) == nmcs_provider_aliyun_get_type()) {
+        iface_data->priv.aliyun = (typeof(iface_data->priv.aliyun)){
+            .has_primary_ip_address = FALSE,
+        };
+    }
 
     /* the has does not own the key (iface_datta->hwaddr), the lifetime of the
      * key is associated with the iface_data instance. */
-    g_hash_table_replace(iface_datas, (char *) iface_data->hwaddr, iface_data);
+    g_hash_table_replace(get_config_data->result_dict, (char *) iface_data->hwaddr, iface_data);
 
     return iface_data;
 }
@@ -251,7 +265,7 @@ _get_config_task_maybe_return(NMCSProviderGetConfigTaskData *get_config_data, GE
 
 void
 _nmcs_provider_get_config_task_maybe_return(NMCSProviderGetConfigTaskData *get_config_data,
-                                            GError *                       error_take)
+                                            GError                        *error_take)
 {
     nm_assert(!error_take || !nm_utils_error_is_cancelled(error_take));
     _get_config_task_maybe_return(get_config_data, error_take);
@@ -264,10 +278,10 @@ _get_config_cancelled_cb(GObject *object, gpointer user_data)
 }
 
 void
-nmcs_provider_get_config(NMCSProvider *      self,
+nmcs_provider_get_config(NMCSProvider       *self,
                          gboolean            any,
-                         const char *const * hwaddrs,
-                         GCancellable *      cancellable,
+                         const char *const  *hwaddrs,
+                         GCancellable       *cancellable,
                          GAsyncReadyCallback callback,
                          gpointer            user_data)
 {
@@ -280,6 +294,8 @@ nmcs_provider_get_config(NMCSProvider *      self,
 
     get_config_data  = g_slice_new(NMCSProviderGetConfigTaskData);
     *get_config_data = (NMCSProviderGetConfigTaskData){
+        /* "self" is kept alive by "task". */
+        .self = self,
         .task = nm_g_task_new(self, cancellable, nmcs_provider_get_config, callback, user_data),
         .any  = any,
         .result_dict = g_hash_table_new_full(nm_str_hash, g_str_equal, NULL, _iface_data_free),
@@ -288,7 +304,7 @@ nmcs_provider_get_config(NMCSProvider *      self,
     nmcs_wait_for_objects_register(get_config_data->task);
 
     for (; hwaddrs && hwaddrs[0]; hwaddrs++)
-        nmcs_provider_get_config_iface_data_create(get_config_data->result_dict, TRUE, hwaddrs[0]);
+        nmcs_provider_get_config_iface_data_create(get_config_data, TRUE, hwaddrs[0]);
 
     if (cancellable) {
         gulong cancelled_id;
@@ -351,7 +367,7 @@ nmcs_provider_init(NMCSProvider *self)
 static void
 dispose(GObject *object)
 {
-    NMCSProvider *       self = NMCS_PROVIDER(object);
+    NMCSProvider        *self = NMCS_PROVIDER(object);
     NMCSProviderPrivate *priv = NMCS_PROVIDER_GET_PRIVATE(self);
 
     g_clear_object(&priv->http_client);

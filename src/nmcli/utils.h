@@ -11,7 +11,7 @@
 /* === Types === */
 
 typedef struct {
-    const char * name;
+    const char  *name;
     gboolean     has_value;
     const char **value;
     gboolean     mandatory;
@@ -22,16 +22,16 @@ typedef struct {
 int      next_arg(NmCli *nmc, int *argc, const char *const **argv, ...);
 gboolean nmc_arg_is_help(const char *arg);
 gboolean nmc_arg_is_option(const char *arg, const char *opt_name);
-gboolean nmc_parse_args(nmc_arg_t *         arg_arr,
+gboolean nmc_parse_args(nmc_arg_t          *arg_arr,
                         gboolean            last,
-                        int *               argc,
+                        int                *argc,
                         const char *const **argv,
-                        GError **           error);
-char *   ssid_to_hex(const char *str, gsize len);
+                        GError            **error);
+char    *ssid_to_hex(const char *str, gsize len);
 void     nmc_terminal_erase_line(void);
 void     nmc_terminal_show_progress(const char *str);
 pid_t    nmc_terminal_spawn_pager(const NmcConfig *nmc_config);
-char *   nmc_colorize(const NmcConfig *nmc_config, NMMetaColor color, const char *fmt, ...)
+char    *nmc_colorize(const NmcConfig *nmc_config, NMMetaColor color, const char *fmt, ...)
     _nm_printf(3, 4);
 void  nmc_filter_out_colors_inplace(char *str);
 char *nmc_filter_out_colors(const char *str);
@@ -39,8 +39,8 @@ char *nmc_get_user_input(const char *ask_str);
 int   nmc_string_to_arg_array(const char *line,
                               const char *delim,
                               gboolean    unquote,
-                              char ***    argv,
-                              int *       argc);
+                              char     ***argv,
+                              int        *argc);
 char *nmc_util_strv_for_display(const char *const *strv, gboolean brackets);
 int   nmc_string_screen_width(const char *start, const char *end);
 void  set_val_str(NmcOutputField fields_array[], guint32 index, char *value);
@@ -50,25 +50,25 @@ void  set_val_arrc(NmcOutputField fields_array[], guint32 index, const char **va
 void  set_val_color_all(NmcOutputField fields_array[], NMMetaColor color);
 void  nmc_free_output_field_values(NmcOutputField fields_array[]);
 
-GArray *        parse_output_fields(const char *                     fields_str,
+GArray         *parse_output_fields(const char                      *fields_str,
                                     const NMMetaAbstractInfo *const *fields_array,
                                     gboolean                         parse_groups,
-                                    GPtrArray **                     group_fields,
-                                    GError **                        error);
+                                    GPtrArray                      **group_fields,
+                                    GError                         **error);
 NmcOutputField *nmc_dup_fields_array(const NMMetaAbstractInfo *const *fields, NmcOfFlags flags);
 void            nmc_empty_output_fields(NmcOutputData *output_data);
-void            print_required_fields(const NmcConfig *     nmc_config,
-                                      NmcPagerData *        pager_data,
+void            print_required_fields(const NmcConfig      *nmc_config,
+                                      NmcPagerData         *pager_data,
                                       NmcOfFlags            of_flags,
-                                      const GArray *        indices,
-                                      const char *          header_name,
+                                      const GArray         *indices,
+                                      const char           *header_name,
                                       int                   indent,
                                       const NmcOutputField *field_values);
 void            print_data_prepare_width(GPtrArray *output_data);
-void            print_data(const NmcConfig *    nmc_config,
-                           NmcPagerData *       pager_data,
-                           const GArray *       indices,
-                           const char *         header_name,
+void            print_data(const NmcConfig     *nmc_config,
+                           NmcPagerData        *pager_data,
+                           const GArray        *indices,
+                           const char          *header_name,
                            int                  indent,
                            const NmcOutputData *out);
 
@@ -251,8 +251,8 @@ struct _NmcMetaGenericInfo {
         const NMMetaType *meta_type;
     };
     NmcGenericInfoType               info_type;
-    const char *                     name;
-    const char *                     name_header;
+    const char                      *name;
+    const char                      *name_header;
     const NmcMetaGenericInfo *const *nested;
 
 #define NMC_META_GENERIC_INFO_GET_FCN_ARGS                                     \
@@ -327,7 +327,7 @@ typedef enum {
 static inline char *
 nmc_meta_generic_get_enum_with_detail(NmcMetaGenericGetEnumType get_enum_type,
                                       gint64                    enum_val,
-                                      const char *              str_val,
+                                      const char               *str_val,
                                       NMMetaAccessorGetType     get_type)
 {
     if (!NM_IN_SET(get_type, NM_META_ACCESSOR_GET_TYPE_PRETTY, NM_META_ACCESSOR_GET_TYPE_PARSABLE))
@@ -359,13 +359,43 @@ nmc_meta_generic_get_enum_with_detail(NmcMetaGenericGetEnumType get_enum_type,
 
 /*****************************************************************************/
 
-gboolean nmc_print(const NmcConfig *                nmc_config,
-                   gpointer const *                 targets,
-                   gpointer                         targets_data,
-                   const char *                     header_name_no_l10n,
-                   const NMMetaAbstractInfo *const *fields,
-                   const char *                     fields_str,
-                   GError **                        error);
+gboolean nmc_print_table(const NmcConfig                 *nmc_config,
+                         gpointer const                  *targets,
+                         gpointer                         targets_data,
+                         const char                      *header_name_no_l10n,
+                         const NMMetaAbstractInfo *const *fields,
+                         const char                      *fields_str,
+                         GError                         **error);
+
+/*****************************************************************************/
+
+#if 0
+/* For manual testing to sync output with LIBNM_CLIENT_DEBUG/LIBNM_CLIENT_DEBUG_FILE */
+#define nmc_print(...)                                               \
+    G_STMT_START                                                     \
+    {                                                                \
+        gs_free char *_ss  = g_strdup_printf(__VA_ARGS__);           \
+        gs_free char *_ss1 = g_strdup_printf("nmcli[out]: %s", _ss); \
+                                                                     \
+        nm_utils_print(0, _ss1);                                     \
+        nm_utils_print(1, _ss);                                      \
+    }                                                                \
+    G_STMT_END
+
+#define nmc_printerr(...)                                            \
+    G_STMT_START                                                     \
+    {                                                                \
+        gs_free char *_ss  = g_strdup_printf(__VA_ARGS__);           \
+        gs_free char *_ss1 = g_strdup_printf("nmcli[err]: %s", _ss); \
+                                                                     \
+        nm_utils_print(0, _ss1);                                     \
+        nm_utils_print(2, _ss);                                      \
+    }                                                                \
+    G_STMT_END
+#else
+#define nmc_print(...)    g_print(__VA_ARGS__)
+#define nmc_printerr(...) g_printerr(__VA_ARGS__)
+#endif
 
 /*****************************************************************************/
 

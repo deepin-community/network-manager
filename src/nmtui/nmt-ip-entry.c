@@ -76,7 +76,7 @@ static gboolean
 ip_entry_filter(NmtNewtEntry *entry, const char *text, int ch, int position, gpointer user_data)
 {
     NmtIPEntryPrivate *priv = NMT_IP_ENTRY_GET_PRIVATE(entry);
-    const char *       slash;
+    const char        *slash;
     gboolean           inaddr;
 
     if (g_ascii_isdigit(ch))
@@ -110,8 +110,8 @@ ip_entry_validate(NmtNewtEntry *entry, const char *text, gpointer user_data)
     if (!*text)
         return priv->optional;
     if (priv->prefix)
-        return nm_utils_parse_inaddr_prefix(priv->family, text, NULL, NULL);
-    return nm_utils_parse_inaddr(priv->family, text, NULL);
+        return nm_inet_parse_with_prefix_str(priv->family, text, NULL, NULL);
+    return nm_inet_parse_str(priv->family, text, NULL);
 }
 
 static void

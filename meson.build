@@ -6,7 +6,7 @@ project(
 #  - add corresponding NM_VERSION_x_y_z macros in
 #    "src/libnm-core-public/nm-version-macros.h.in"
 #  - update number in configure.ac
-  version: '1.32.12',
+  version: '1.42.4',
   license: 'GPL2+',
   default_options: [
     'buildtype=debugoptimized',
@@ -78,11 +78,6 @@ build_root = meson.current_build_dir()
 
 po_dir = join_paths(meson.source_root(), 'po')
 
-intltool_merge = find_program('intltool-merge')
-intltool_cache = join_paths(po_dir, '.intltool-merge-cache')
-intltool_desktop_cmd = [intltool_merge, '-d', '-u', '-c', intltool_cache, po_dir, '@INPUT@', '@OUTPUT@']
-intltool_xml_cmd = [intltool_merge, '-x', '-u', '-c', intltool_cache, po_dir, '@INPUT@', '@OUTPUT@']
-
 top_inc = include_directories('.')
 
 perl = find_program('perl')
@@ -101,7 +96,7 @@ set_defines = [
   ['VERSION', nm_version],
 ]
 
-default_test_timeout = 90
+default_test_timeout = 180
 
 foreach define: set_defines
   config_h.set_quoted(define[0], define[1])
@@ -179,21 +174,28 @@ endif
 common_flags += cc.get_supported_arguments([
   '-Wall',
   '-Wextra',
+  '-Wcast-align=strict',
   '-Wdeclaration-after-statement',
   '-Wfloat-equal',
   '-Wformat-nonliteral',
   '-Wformat-security',
   '-Wimplicit-function-declaration',
+  '-Wimplicit-int',
   '-Winit-self',
+  '-Wint-conversion',
   '-Wlogical-op',
   '-Wmissing-declarations',
   '-Wmissing-include-dirs',
   '-Wmissing-prototypes',
+  '-Wold-style-definition',
+  '-Wparentheses-equality',
   '-Wpointer-arith',
   '-Wshadow',
   '-Wshift-negative-value',
   '-Wstrict-prototypes',
+  '-Wtypedef-redefinition',
   '-Wundef',
+  '-Wunknown-attributes',
   '-Wvla',
   '-Wno-duplicate-decl-specifier',
   '-Wno-format-truncation',
@@ -205,13 +207,6 @@ common_flags += cc.get_supported_arguments([
   '-Wno-tautological-constant-out-of-range-compare',
   '-Wno-unknown-pragmas',
   '-Wno-unused-parameter',
-  '-Wparentheses-equality',
-  '-Wpointer-arith',
-  '-Wshadow',
-  '-Wstrict-prototypes',
-  '-Wtypedef-redefinition',
-  '-Wundef',
-  '-Wunknown-attributes',
   '-fno-strict-aliasing',
 ])
 
@@ -292,36 +287,25 @@ glib_dep = declare_dependency(
   ]
 )
 
-if run_command('test', '-e', '/etc/sysconfig/network-scripts').returncode() == 0
-  distro = 'redhat'
-elif run_command('test', '-e', '/etc/SuSE-release').returncode() == 0
-  distro = 'suse'
-elif run_command('test', '-e', '/etc/debian_version').returncode() == 0
-  distro = 'debian'
-elif run_command('test', '-e', '/etc/gentoo-release').returncode() == 0
-  distro = 'gentoo'
+enable_ifcfg_rh = get_option('ifcfg_rh')
+if enable_ifcfg_rh == 'auto'
+  enable_ifcfg_rh = (run_command('test', '-e', '/etc/sysconfig/network-scripts').returncode() == 0)
 else
-  distro = 'unknown'
+  enable_ifcfg_rh = (enable_ifcfg_rh != 'false')
 endif
 
-enable_ifcfg_rh = get_option('ifcfg_rh') or (distro == 'redhat')
-enable_ifupdown = get_option('ifupdown') or (distro == 'debian')
+enable_ifupdown = get_option('ifupdown')
+if enable_ifupdown == 'auto'
+  enable_ifupdown = (run_command('test', '-e', '/etc/debian_version').returncode() == 0)
+else
+  enable_ifupdown = (enable_ifupdown != 'false')
+endif
 
 config_plugins_default = get_option('config_plugins_default')
-if config_plugins_default == ''
-  config_plugins = []
-
-  if enable_ifcfg_rh
-    config_plugins += ['ifcfg-rh']
-  endif
-
-  if enable_ifupdown
-    config_plugins += ['ifupdown']
-  endif
-
-  config_plugins_default = ','.join(config_plugins)
-endif
 config_h.set_quoted('NM_CONFIG_DEFAULT_MAIN_PLUGINS', config_plugins_default)
+
+config_h.set10('WITH_CONFIG_PLUGIN_IFCFG_RH', enable_ifcfg_rh)
+config_h.set10('WITH_CONFIG_PLUGIN_IFUPDOWN', enable_ifupdown)
 
 config_h.set_quoted('NM_DIST_VERSION', dist_version)
 
@@ -363,10 +347,14 @@ if enable_introspection
 endif
 
 udev_udevdir = get_option('udev_dir')
-install_udevdir = (udev_udevdir != 'no')
-
-if install_udevdir and udev_udevdir == ''
-  udev_udevdir = dependency('udev').get_pkgconfig_variable('udevdir')
+if udev_udevdir == 'no'
+  install_udevdir = false
+else
+  install_udevdir = true
+  if (udev_udevdir == '' or udev_udevdir == 'yes')
+    udev_udevdir = join_paths(nm_prefix, 'lib/udev')
+  endif
+  assert(udev_udevdir.startswith('/'), 'udev_dir must be an absolute path, but is ' + udev_udevdir)
 endif
 
 systemd_systemdsystemunitdir = get_option('systemdsystemunitdir')
@@ -374,7 +362,7 @@ install_systemdunitdir = (systemd_systemdsystemunitdir != 'no')
 
 if install_systemdunitdir and systemd_systemdsystemunitdir == ''
   assert(systemd_dep.found(), 'systemd required but not found, please provide a valid systemd user unit dir or disable it')
-  systemd_systemdsystemunitdir = systemd_dep.get_pkgconfig_variable('systemdsystemunitdir')
+  systemd_systemdsystemunitdir = systemd_dep.get_pkgconfig_variable('systemdsystemunitdir', define_variable: ['rootprefix', nm_prefix])
 endif
 
 enable_systemd_journal = get_option('systemd_journal')
@@ -388,6 +376,14 @@ if config_logging_backend_default == 'default'
   config_logging_backend_default = (enable_systemd_journal ? 'journal' : 'syslog')
 endif
 config_h.set_quoted('NM_CONFIG_DEFAULT_LOGGING_BACKEND', config_logging_backend_default)
+
+config_wifi_backend_default = get_option('config_wifi_backend_default')
+if config_wifi_backend_default == 'default'
+  config_wifi_backend_default = 'wpa_supplicant'
+elif config_wifi_backend_default == 'iwd'
+  assert(enable_iwd, 'Setting the default Wi-Fi backend to iwd requires iwd support.')
+endif
+config_h.set_quoted('NM_CONFIG_DEFAULT_WIFI_BACKEND', config_wifi_backend_default)
 
 session_tracking = get_option('session_tracking')
 session_trackers = []
@@ -543,16 +539,17 @@ crypto = get_option('crypto')
 if crypto == 'nss'
     assert(crypto_nss_dep.found(), 'Requires nss crypto support')
     crypto_dep = crypto_nss_dep
-else
-    assert(crypto == 'gnutls', 'Unexpected setting "crypto=' + crypto + '"')
+elif crypto == 'gnutls'
     assert(crypto_gnutls_dep.found(), 'Requires gnutls crypto support')
     crypto_dep = crypto_gnutls_dep
+else
+    assert(crypto == 'null', 'Unexpected setting "crypto=' + crypto + '"')
 endif
 
 dbus_conf_dir = get_option('dbus_conf_dir')
 if dbus_conf_dir == ''
   assert(dbus_dep.found(), 'D-Bus required but not found, please provide a valid system bus config dir')
-  dbus_conf_dir = join_paths(dbus_dep.get_pkgconfig_variable('datadir'), 'dbus-1', 'system.d')
+  dbus_conf_dir = join_paths(dbus_dep.get_pkgconfig_variable('datarootdir', define_variable: ['prefix', nm_prefix]), 'dbus-1', 'system.d')
 endif
 
 dbus_interfaces_dir = dbus_dep.get_pkgconfig_variable('interfaces_dir',  define_variable: ['datadir', nm_datadir])
@@ -587,7 +584,10 @@ enable_modem_manager = get_option('modem_manager')
 if enable_modem_manager
   mm_glib_dep = dependency('mm-glib', version: '>= 0.7.991')
 
-  mobile_broadband_provider_info_database = dependency('mobile-broadband-provider-info').get_pkgconfig_variable('database')
+  mobile_broadband_provider_info_database = get_option('mobile_broadband_provider_info_database')
+  if mobile_broadband_provider_info_database == ''
+    mobile_broadband_provider_info_database = dependency('mobile-broadband-provider-info').get_pkgconfig_variable('database')
+  endif
   config_h.set_quoted('MOBILE_BROADBAND_PROVIDER_INFO_DATABASE', mobile_broadband_provider_info_database)
 endif
 
@@ -644,6 +644,7 @@ enable_ovs = get_option('ovs')
 if enable_ovs
   assert(jansson_dep.found(), 'jansson is needed for Open vSwitch integration. Use -Dovs=false to disable it')
 endif
+config_h.set10('WITH_OPENVSWITCH', enable_ovs)
 
 # DNS resolv.conf managers
 config_dns_rc_manager_default = get_option('config_dns_rc_manager_default')
@@ -683,18 +684,11 @@ endforeach
 
 # external misc tools paths
 default_paths = ['/sbin', '/usr/sbin']
-dnssec_ts_paths = ['/usr/local/libexec',
-                   '/usr/local/lib',
-                   '/usr/local/lib/dnssec-trigger',
-                   '/usr/libexec',
-                   '/usr/lib',
-                   '/usr/lib/dnssec-trigger']
 
 # 0: cmdline option, 1: paths, 2: fallback
-progs = [['iptables',       default_paths,   '/usr/sbin/iptables'],
-         ['nft',            default_paths,   '/usr/sbin/nft'],
-         ['dnsmasq',        default_paths,   ''],
-         ['dnssec_trigger', dnssec_ts_paths, join_paths(nm_libexecdir, 'dnssec-trigger-script') ],
+progs = [['iptables', default_paths, '/usr/sbin/iptables'],
+         ['nft',      default_paths, '/usr/sbin/nft'],
+         ['dnsmasq',  default_paths, ''],
         ]
 
 foreach prog : progs
@@ -733,24 +727,36 @@ if enable_concheck
 endif
 config_h.set10('WITH_CONCHECK', enable_concheck)
 
+config_h.set10('HAVE_READLINE_HISTORY', false)
+config_h.set10('HAVE_EDITLINE_READLINE', false)
+with_readline = get_option('readline')
+if with_readline != 'none'
+  if with_readline == 'libreadline' or with_readline == 'auto'
+    readline = cc.find_library('readline', required: false)
+    if readline.found()
+      readline_dep = declare_dependency(link_args: '-lreadline')
+      config_h.set10('HAVE_READLINE_HISTORY', true)
+      with_readline = 'libreadline'
+    else
+      assert(with_readline == 'auto', 'libreadline was not found')
+    endif
+  endif
+  if with_readline == 'libedit' or with_readline == 'auto'
+    edit = dependency('libedit', required: false)
+    if edit.found()
+      readline_dep = declare_dependency(link_args: '-ledit')
+      config_h.set10('HAVE_EDITLINE_READLINE', true)
+      with_readline = 'libedit'
+    else
+      assert(with_readline == 'auto', 'libedit was not found')
+      with_readline = 'none'
+    endif
+  endif
+endif
+
 enable_nmcli = get_option('nmcli')
 if enable_nmcli
-  # FIXME: check for readline
-  # AX_LIB_READLINE
-  readline_dep = declare_dependency(link_args: '-lreadline')
-  '''
-  foreach readline_lib: ['-lreadline', '-ledit', '-leditline']
-    if not is_variable('readline_dep')
-      foreach termcap_lib: ['', '-lncurses', '-ltermcap', '-lcurses']
-        test_dep = declare_dependency(link_args: ' '.join([readline_lib, termcap_lib]))
-        if cc.has_function('readline', dependencies: test_dep) and cc.has_header('readline', dependencies: test_dep)
-          readline_dep = test_dep
-        endif
-      endforeach
-    endif
-  endforeach
-  '''
-  assert(readline_dep.found(), 'readline library with terminfo support is required (one of readline, edit, or editline, AND one of ncurses, curses, or termcap)')
+  assert(with_readline != 'none', 'nmcli requires readline library (-Dnmcli=false or -Dreadline=auto|libreadline|libedit|none)')
 endif
 
 enable_nmtui = get_option('nmtui')
@@ -877,6 +883,7 @@ data_conf.set('NM_CONFIG_DEFAULT_LOGGING_BACKEND_TEXT',  config_logging_backend_
 data_conf.set('NM_CONFIG_DEFAULT_MAIN_AUTH_POLKIT_TEXT', config_auth_polkit_default)
 data_conf.set('NM_CONFIG_DEFAULT_MAIN_DHCP',             config_dhcp_default)
 data_conf.set('NM_CONFIG_DEFAULT_MAIN_RC_MANAGER',       config_dns_rc_manager_default)
+data_conf.set('NM_CONFIG_DEFAULT_WIFI_BACKEND_TEXT',     config_wifi_backend_default)
 data_conf.set('NM_MAJOR_VERSION',                        nm_major_version)
 data_conf.set('NM_MICRO_VERSION',                        nm_micro_version)
 data_conf.set('NM_MINOR_VERSION',                        nm_minor_version)
@@ -1007,6 +1014,7 @@ output = '\nSystem paths:\n'
 output += '  prefix: ' + nm_prefix + '\n'
 output += '  exec_prefix: ' + nm_prefix + '\n'
 output += '  systemdunitdir: ' + systemd_systemdsystemunitdir + '\n'
+output += '  udev_dir: ' + udev_udevdir + '\n'
 output += '  nmbinary: ' + nm_pkgsbindir + '\n'
 output += '  nmconfdir: ' + nm_pkgconfdir + '\n'
 output += '  nmlibdir: ' + nm_pkglibdir + '\n'
@@ -1015,7 +1023,8 @@ output += '  nmstatedir: ' + nm_pkgstatedir + '\n'
 output += '  nmrundir: ' + nm_pkgrundir + '\n'
 output += '  nmvpndir: ' + nm_vpndir + '\n'
 output += '  nmplugindir: ' + nm_plugindir + '\n'
-output += '  system-ca-path: ' + system_ca_path + '\n'
+output += '  system_ca_path: ' + system_ca_path + '\n'
+output += '  dbus_conf_dir: ' + dbus_conf_dir + '\n'
 output += '\nPlatform:\n'
 output += '  session tracking: ' + ','.join(session_trackers) + '\n'
 output += '  suspend/resume: ' + suspend_resume + '\n'
@@ -1048,6 +1057,9 @@ output += '  jansson: ' + jansson_msg + '\n'
 output += '  iptables: ' + config_h.get('IPTABLES_PATH') + '\n'
 output += '  nft: ' + config_h.get('NFT_PATH') + '\n'
 output += '  modemmanager-1: ' + enable_modem_manager.to_string() + '\n'
+if enable_modem_manager
+  output += '  mobile-broadband-provider-info-database: ' + mobile_broadband_provider_info_database + '\n'
+endif
 output += '  ofono: ' + enable_ofono.to_string() + '\n'
 output += '  concheck: ' + enable_concheck.to_string() + '\n'
 output += '  libteamdctl: ' + enable_teamdctl.to_string() + '\n'
@@ -1081,9 +1093,12 @@ output += '\n'
 output += '  code coverage: ' + get_option('b_coverage').to_string() + '\n'
 output += '  LTO: ' + enable_lto.to_string() + '\n'
 output += '  Linker garbage collection: ' + enable_ld_gc.to_string() + '\n'
-output += '  crypto: ' + crypto + '\n'
+output += '  crypto: ' + crypto + ' ('
+output +=      'have-gnutls: ' + crypto_gnutls_dep.found().to_string() + ', '
+output +=      'have-nss: ' + crypto_nss_dep.found().to_string() + ')\n'
 output += '  sanitizers: ' + get_option('b_sanitize') + '\n'
 output += '  Mozilla Public Suffix List: ' + enable_libpsl.to_string() + '\n'
 output += '  vapi: ' + enable_vapi.to_string() + '\n'
 output += '  ebpf: ' + enable_ebpf.to_string() + '\n'
+output += '  readline: ' + with_readline + '\n'
 message(output)

@@ -7,7 +7,7 @@
 #define __NM_DEVICE_INFINIBAND_H__
 
 #if !defined(__NETWORKMANAGER_H_INSIDE__) && !defined(NETWORKMANAGER_COMPILATION)
-    #error "Only <NetworkManager.h> can be included directly."
+#error "Only <NetworkManager.h> can be included directly."
 #endif
 
 #include "nm-device.h"
@@ -31,6 +31,7 @@ G_BEGIN_DECLS
 /**
  * NMDeviceInfiniband:
  */
+typedef struct _NMDeviceInfiniband      NMDeviceInfiniband;
 typedef struct _NMDeviceInfinibandClass NMDeviceInfinibandClass;
 
 GType nm_device_infiniband_get_type(void);

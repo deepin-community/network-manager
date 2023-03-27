@@ -20,9 +20,9 @@
 #include "devices/nm-device-private.h"
 #include "libnm-platform/nm-platform.h"
 #include "nm-config.h"
+#include "libnm-core-aux-intern/nm-libnm-core-utils.h"
 #include "libnm-core-intern/nm-core-internal.h"
 #include "nm-dbus-manager.h"
-#include "nm-ip4-config.h"
 #include "libnm-std-aux/nm-dbus-compat.h"
 
 #define _NMLOG_DEVICE_TYPE NMDeviceTeam
@@ -33,16 +33,17 @@
 NM_GOBJECT_PROPERTIES_DEFINE(NMDeviceTeam, PROP_CONFIG, );
 
 typedef struct {
-    struct teamdctl *  tdc;
-    char *             config;
+    struct teamdctl   *tdc;
+    char              *config;
     GPid               teamd_pid;
     guint              teamd_process_watch;
     guint              teamd_timeout;
     guint              teamd_read_timeout;
     guint              teamd_dbus_watch;
     bool               kill_in_progress : 1;
-    GFileMonitor *     usock_monitor;
+    GFileMonitor      *usock_monitor;
     NMDeviceStageState stage1_state : 3;
+    GHashTable        *port_configs;
 } NMDeviceTeamPrivate;
 
 struct _NMDeviceTeam {
@@ -65,6 +66,50 @@ static gboolean teamd_start(NMDeviceTeam *self);
 
 /*****************************************************************************/
 
+static struct teamdctl *
+_tdc_connect_new(NMDeviceTeam *self, const char *iface, GError **error)
+{
+    NMDeviceTeamPrivate *priv = NM_DEVICE_TEAM_GET_PRIVATE(self);
+    struct teamdctl     *tdc;
+    const char          *cli_type;
+    int                  r;
+
+    tdc = teamdctl_alloc();
+    if (!tdc) {
+        nm_utils_error_set(error, NM_UTILS_ERROR_UNKNOWN, "failure to allocate teamdctl structure");
+        g_return_val_if_reached(NULL);
+    }
+
+    if (priv->teamd_dbus_watch)
+        cli_type = "dbus";
+    else if (priv->usock_monitor)
+        cli_type = "usock";
+    else
+        cli_type = NULL;
+
+again:
+    r = teamdctl_connect(tdc, iface, NULL, cli_type);
+    if (r != 0) {
+        _LOGD(LOGD_TEAM,
+              "failure to connect to teamdctl%s%s, err=%d",
+              NM_PRINT_FMT_QUOTED2(cli_type, " with cli_type=", cli_type, ""),
+              r);
+        if (cli_type) {
+            /* How odd. Let's retry with any CLI type. */
+            cli_type = NULL;
+            goto again;
+        }
+        teamdctl_free(tdc);
+        nm_utils_error_set(error,
+                           NM_UTILS_ERROR_UNKNOWN,
+                           "failure to connect to teamd (err=%d)",
+                           r);
+        return NULL;
+    }
+
+    return tdc;
+}
+
 static NMDeviceCapabilities
 get_generic_capabilities(NMDevice *device)
 {
@@ -72,14 +117,12 @@ get_generic_capabilities(NMDevice *device)
 }
 
 static gboolean
-complete_connection(NMDevice *           device,
-                    NMConnection *       connection,
-                    const char *         specific_object,
+complete_connection(NMDevice            *device,
+                    NMConnection        *connection,
+                    const char          *specific_object,
                     NMConnection *const *existing_connections,
-                    GError **            error)
+                    GError             **error)
 {
-    NMSettingTeam *s_team;
-
     nm_utils_complete_generic(nm_device_get_platform(device),
                               connection,
                               NM_SETTING_TEAM_SETTING_NAME,
@@ -90,35 +133,48 @@ complete_connection(NMDevice *           device,
                               NULL,
                               TRUE);
 
-    s_team = nm_connection_get_setting_team(connection);
-    if (!s_team) {
-        s_team = (NMSettingTeam *) nm_setting_team_new();
-        nm_connection_add_setting(connection, NM_SETTING(s_team));
+    _nm_connection_ensure_setting(connection, NM_TYPE_SETTING_TEAM);
+
+    return TRUE;
+}
+
+static gboolean
+_update_port_config(NMDeviceTeam *self, const char *port_iface, const char *sanitized_config)
+{
+    NMDeviceTeamPrivate *priv = NM_DEVICE_TEAM_GET_PRIVATE(self);
+    int                  err;
+
+    _LOGT(LOGD_TEAM, "setting port config: %s", sanitized_config);
+    err = teamdctl_port_config_update_raw(priv->tdc, port_iface, sanitized_config);
+    if (err != 0) {
+        _LOGE(LOGD_TEAM, "failed to update config for port %s (err=%d)", port_iface, err);
+        return FALSE;
     }
 
     return TRUE;
 }
 
 static gboolean
-ensure_teamd_connection(NMDevice *device)
+ensure_teamd_connection(NMDevice *device, GError **error)
 {
-    NMDeviceTeam *       self = NM_DEVICE_TEAM(device);
+    NMDeviceTeam        *self = NM_DEVICE_TEAM(device);
     NMDeviceTeamPrivate *priv = NM_DEVICE_TEAM_GET_PRIVATE(self);
-    int                  err;
+    const char          *port_iface;
+    const char          *port_config;
+    GHashTableIter       iter;
 
     if (priv->tdc)
         return TRUE;
 
-    priv->tdc = teamdctl_alloc();
-    g_assert(priv->tdc);
-    err = teamdctl_connect(priv->tdc, nm_device_get_iface(device), NULL, NULL);
-    if (err != 0) {
-        _LOGE(LOGD_TEAM, "failed to connect to teamd (err=%d)", err);
-        teamdctl_free(priv->tdc);
-        priv->tdc = NULL;
-    }
+    priv->tdc = _tdc_connect_new(self, nm_device_get_iface(device), error);
+    if (!priv->tdc)
+        return FALSE;
 
-    return !!priv->tdc;
+    g_hash_table_iter_init(&iter, priv->port_configs);
+    while (g_hash_table_iter_next(&iter, (gpointer *) &port_iface, (gpointer *) &port_config))
+        _update_port_config(self, port_iface, port_config);
+
+    return TRUE;
 }
 
 static const char *
@@ -131,7 +187,7 @@ static gboolean
 teamd_read_config(NMDeviceTeam *self)
 {
     NMDeviceTeamPrivate *priv   = NM_DEVICE_TEAM_GET_PRIVATE(self);
-    const char *         config = NULL;
+    const char          *config = NULL;
     int                  err;
 
     if (priv->tdc) {
@@ -156,7 +212,7 @@ teamd_read_config(NMDeviceTeam *self)
 static gboolean
 teamd_read_timeout_cb(gpointer user_data)
 {
-    NMDeviceTeam *       self = user_data;
+    NMDeviceTeam        *self = user_data;
     NMDeviceTeamPrivate *priv = NM_DEVICE_TEAM_GET_PRIVATE(self);
 
     priv->teamd_read_timeout = 0;
@@ -167,19 +223,21 @@ teamd_read_timeout_cb(gpointer user_data)
 static void
 update_connection(NMDevice *device, NMConnection *connection)
 {
-    NMDeviceTeam *       self   = NM_DEVICE_TEAM(device);
-    NMSettingTeam *      s_team = nm_connection_get_setting_team(connection);
+    NMDeviceTeam        *self   = NM_DEVICE_TEAM(device);
+    NMSettingTeam       *s_team = _nm_connection_ensure_setting(connection, NM_TYPE_SETTING_TEAM);
     NMDeviceTeamPrivate *priv   = NM_DEVICE_TEAM_GET_PRIVATE(self);
-    struct teamdctl *    tdc    = priv->tdc;
-
-    if (!s_team) {
-        s_team = (NMSettingTeam *) nm_setting_team_new();
-        nm_connection_add_setting(connection, (NMSetting *) s_team);
-    }
+    struct teamdctl     *tdc    = priv->tdc;
+    GError              *error  = NULL;
 
     /* Read the configuration only if not already set */
-    if (!priv->config && ensure_teamd_connection(device))
-        teamd_read_config(self);
+    if (!priv->config) {
+        if (ensure_teamd_connection(device, &error)) {
+            teamd_read_config(self);
+        } else {
+            _LOGD(LOGD_TEAM, "could not connect to teamd: %s", error->message);
+            g_clear_error(&error);
+        }
+    }
 
     /* Restore previous tdc state */
     if (priv->tdc && !tdc) {
@@ -194,42 +252,32 @@ update_connection(NMDevice *device, NMConnection *connection)
 /*****************************************************************************/
 
 static gboolean
-master_update_slave_connection(NMDevice *    self,
-                               NMDevice *    slave,
+master_update_slave_connection(NMDevice     *device,
+                               NMDevice     *slave,
                                NMConnection *connection,
-                               GError **     error)
+                               GError      **error)
 {
-    NMSettingTeamPort *s_port;
-    char *             port_config = NULL;
-    int                err         = 0;
-    struct teamdctl *  tdc;
-    const char *       team_port_config = NULL;
-    const char *       iface            = nm_device_get_iface(self);
-    const char *       iface_slave      = nm_device_get_iface(slave);
+    NMDeviceTeam         *self = NM_DEVICE_TEAM(device);
+    NMSettingTeamPort    *s_port;
+    char                 *port_config   = NULL;
+    gs_free_error GError *connect_error = NULL;
+    int                   err           = 0;
+    struct teamdctl      *tdc;
+    const char           *team_port_config   = NULL;
+    const char           *iface              = nm_device_get_iface(device);
+    const char           *iface_slave        = nm_device_get_iface(slave);
+    NMConnection         *applied_connection = nm_device_get_applied_connection(device);
 
-    tdc = teamdctl_alloc();
+    tdc = _tdc_connect_new(self, iface, &connect_error);
     if (!tdc) {
         g_set_error(error,
                     NM_DEVICE_ERROR,
                     NM_DEVICE_ERROR_FAILED,
                     "update slave connection for slave '%s' failed to connect to teamd for master "
-                    "%s (out of memory?)",
-                    iface_slave,
-                    iface);
-        g_return_val_if_reached(FALSE);
-    }
-
-    err = teamdctl_connect(tdc, iface, NULL, NULL);
-    if (err) {
-        teamdctl_free(tdc);
-        g_set_error(error,
-                    NM_DEVICE_ERROR,
-                    NM_DEVICE_ERROR_FAILED,
-                    "update slave connection for slave '%s' failed to connect to teamd for master "
-                    "%s (err=%d)",
+                    "%s (%s)",
                     iface_slave,
                     iface,
-                    err);
+                    connect_error->message);
         return FALSE;
     }
 
@@ -250,18 +298,14 @@ master_update_slave_connection(NMDevice *    self,
         return FALSE;
     }
 
-    s_port = nm_connection_get_setting_team_port(connection);
-    if (!s_port) {
-        s_port = (NMSettingTeamPort *) nm_setting_team_port_new();
-        nm_connection_add_setting(connection, NM_SETTING(s_port));
-    }
+    s_port = _nm_connection_ensure_setting(connection, NM_TYPE_SETTING_TEAM_PORT);
 
     g_object_set(G_OBJECT(s_port), NM_SETTING_TEAM_PORT_CONFIG, port_config, NULL);
     g_free(port_config);
 
     g_object_set(nm_connection_get_setting_connection(connection),
                  NM_SETTING_CONNECTION_MASTER,
-                 iface,
+                 nm_connection_get_uuid(applied_connection),
                  NM_SETTING_CONNECTION_SLAVE_TYPE,
                  NM_SETTING_TEAM_SETTING_NAME,
                  NULL);
@@ -274,7 +318,7 @@ static void
 teamd_kill_cb(pid_t pid, gboolean success, int child_status, void *user_data)
 {
     gs_unref_object NMDeviceTeam *self = user_data;
-    NMDeviceTeamPrivate *         priv = NM_DEVICE_TEAM_GET_PRIVATE(self);
+    NMDeviceTeamPrivate          *priv = NM_DEVICE_TEAM_GET_PRIVATE(self);
 
     priv->kill_in_progress = FALSE;
 
@@ -322,8 +366,8 @@ teamd_cleanup(NMDeviceTeam *self, gboolean free_tdc)
 static gboolean
 teamd_timeout_cb(gpointer user_data)
 {
-    NMDeviceTeam *       self   = NM_DEVICE_TEAM(user_data);
-    NMDevice *           device = NM_DEVICE(self);
+    NMDeviceTeam        *self   = NM_DEVICE_TEAM(user_data);
+    NMDevice            *device = NM_DEVICE(self);
     NMDeviceTeamPrivate *priv   = NM_DEVICE_TEAM_GET_PRIVATE(self);
 
     g_return_val_if_fail(priv->teamd_timeout, FALSE);
@@ -357,8 +401,9 @@ static void
 teamd_ready(NMDeviceTeam *self)
 {
     NMDeviceTeamPrivate *priv   = NM_DEVICE_TEAM_GET_PRIVATE(self);
-    NMDevice *           device = NM_DEVICE(self);
+    NMDevice            *device = NM_DEVICE(self);
     gboolean             success;
+    GError              *error = NULL;
 
     if (priv->kill_in_progress) {
         /* If we are currently killing teamd, we are not
@@ -372,7 +417,11 @@ teamd_ready(NMDeviceTeam *self)
      * immediately.  But if we are, and grabbing it failed, fail the
      * device activation.
      */
-    success = ensure_teamd_connection(device);
+    success = ensure_teamd_connection(device, &error);
+    if (!success) {
+        _LOGW(LOGD_TEAM, "could not connect to teamd: %s", error->message);
+        g_clear_error(&error);
+    }
 
     if (nm_device_get_state(device) != NM_DEVICE_STATE_PREPARE
         || priv->stage1_state != NM_DEVICE_STAGE_STATE_PENDING)
@@ -396,7 +445,7 @@ teamd_ready(NMDeviceTeam *self)
 static void
 teamd_gone(NMDeviceTeam *self)
 {
-    NMDevice *    device = NM_DEVICE(self);
+    NMDevice     *device = NM_DEVICE(self);
     NMDeviceState state;
 
     teamd_cleanup(self, TRUE);
@@ -414,11 +463,11 @@ teamd_gone(NMDeviceTeam *self)
 
 static void
 teamd_dbus_appeared(GDBusConnection *connection,
-                    const char *     name,
-                    const char *     name_owner,
+                    const char      *name,
+                    const char      *name_owner,
                     gpointer         user_data)
 {
-    NMDeviceTeam *       self = NM_DEVICE_TEAM(user_data);
+    NMDeviceTeam        *self = NM_DEVICE_TEAM(user_data);
     NMDeviceTeamPrivate *priv = NM_DEVICE_TEAM_GET_PRIVATE(self);
 
     g_return_if_fail(priv->teamd_dbus_watch);
@@ -466,7 +515,7 @@ teamd_dbus_appeared(GDBusConnection *connection,
 static void
 teamd_dbus_vanished(GDBusConnection *dbus_connection, const char *name, gpointer user_data)
 {
-    NMDeviceTeam *       self = NM_DEVICE_TEAM(user_data);
+    NMDeviceTeam        *self = NM_DEVICE_TEAM(user_data);
     NMDeviceTeamPrivate *priv = NM_DEVICE_TEAM_GET_PRIVATE(self);
 
     g_return_if_fail(priv->teamd_dbus_watch);
@@ -486,9 +535,9 @@ teamd_dbus_vanished(GDBusConnection *dbus_connection, const char *name, gpointer
 }
 
 static void
-monitor_changed_cb(GFileMonitor *    monitor,
-                   GFile *           file,
-                   GFile *           other_file,
+monitor_changed_cb(GFileMonitor     *monitor,
+                   GFile            *file,
+                   GFile            *other_file,
                    GFileMonitorEvent event_type,
                    gpointer          user_data)
 {
@@ -510,9 +559,9 @@ monitor_changed_cb(GFileMonitor *    monitor,
 static void
 teamd_process_watch_cb(GPid pid, int status, gpointer user_data)
 {
-    NMDeviceTeam *       self   = NM_DEVICE_TEAM(user_data);
+    NMDeviceTeam        *self   = NM_DEVICE_TEAM(user_data);
     NMDeviceTeamPrivate *priv   = NM_DEVICE_TEAM_GET_PRIVATE(self);
-    NMDevice *           device = NM_DEVICE(self);
+    NMDevice            *device = NM_DEVICE(self);
     NMDeviceState        state  = nm_device_get_state(device);
 
     g_return_if_fail(priv->teamd_process_watch);
@@ -560,8 +609,8 @@ static gboolean
 teamd_kill(NMDeviceTeam *self, const char *teamd_binary, GError **error)
 {
     gs_unref_ptrarray GPtrArray *argv    = NULL;
-    gs_free char *               tmp_str = NULL;
-    gs_free const char **        envp    = NULL;
+    gs_free char                *tmp_str = NULL;
+    gs_free const char         **envp    = NULL;
 
     if (!teamd_binary) {
         teamd_binary = nm_utils_find_helper("teamd", NULL, error);
@@ -596,18 +645,18 @@ teamd_kill(NMDeviceTeam *self, const char *teamd_binary, GError **error)
 static gboolean
 teamd_start(NMDeviceTeam *self)
 {
-    NMDeviceTeamPrivate *priv  = NM_DEVICE_TEAM_GET_PRIVATE(self);
-    const char *         iface = nm_device_get_ip_iface(NM_DEVICE(self));
-    NMConnection *       connection;
-    gs_unref_ptrarray GPtrArray *argv = NULL;
-    gs_free_error GError *   error    = NULL;
-    gs_free char *           tmp_str  = NULL;
-    const char *             teamd_binary;
-    const char *             config;
-    nm_auto_free const char *config_free = NULL;
-    NMSettingTeam *          s_team;
-    gs_free char *           cloned_mac = NULL;
-    gs_free const char **    envp       = NULL;
+    NMDeviceTeamPrivate         *priv  = NM_DEVICE_TEAM_GET_PRIVATE(self);
+    const char                  *iface = nm_device_get_ip_iface(NM_DEVICE(self));
+    NMConnection                *connection;
+    gs_unref_ptrarray GPtrArray *argv    = NULL;
+    gs_free_error GError        *error   = NULL;
+    gs_free char                *tmp_str = NULL;
+    const char                  *teamd_binary;
+    const char                  *config;
+    nm_auto_free const char     *config_free = NULL;
+    NMSettingTeam               *s_team;
+    gs_free char                *cloned_mac = NULL;
+    gs_free const char         **envp       = NULL;
 
     connection = nm_device_get_applied_connection(NM_DEVICE(self));
 
@@ -654,7 +703,7 @@ teamd_start(NMDeviceTeam *self)
     }
 
     if (cloned_mac) {
-        json_t *     json, *hwaddr;
+        json_t      *json, *hwaddr;
         json_error_t jerror;
 
         /* Inject the hwaddr property into the JSON configuration.
@@ -721,18 +770,20 @@ teamd_start(NMDeviceTeam *self)
 static NMActStageReturn
 act_stage1_prepare(NMDevice *device, NMDeviceStateReason *out_failure_reason)
 {
-    NMDeviceTeam *       self   = NM_DEVICE_TEAM(device);
-    NMDeviceTeamPrivate *priv   = NM_DEVICE_TEAM_GET_PRIVATE(self);
-    gs_free_error GError *error = NULL;
-    NMSettingTeam *       s_team;
-    const char *          cfg;
+    NMDeviceTeam        *self  = NM_DEVICE_TEAM(device);
+    NMDeviceTeamPrivate *priv  = NM_DEVICE_TEAM_GET_PRIVATE(self);
+    GError              *error = NULL;
+    NMSettingTeam       *s_team;
+    const char          *cfg;
 
     if (nm_device_sys_iface_state_is_external(device))
         return NM_ACT_STAGE_RETURN_SUCCESS;
 
     if (nm_device_sys_iface_state_is_external_or_assume(device)) {
-        if (ensure_teamd_connection(device))
+        if (ensure_teamd_connection(device, &error))
             return NM_ACT_STAGE_RETURN_SUCCESS;
+        _LOGD(LOGD_TEAM, "could not connect to teamd: %s", error->message);
+        g_clear_error(&error);
     }
 
     s_team = nm_device_get_applied_setting(device, NM_TYPE_SETTING_TEAM);
@@ -765,6 +816,7 @@ act_stage1_prepare(NMDevice *device, NMDeviceStateReason *out_failure_reason)
                 _LOGW(LOGD_TEAM,
                       "existing teamd config mismatch; failed to kill existing teamd: %s",
                       error->message);
+                g_clear_error(&error);
                 NM_SET_OUT(out_failure_reason, NM_DEVICE_STATE_REASON_TEAMD_CONTROL_FAILED);
                 return NM_ACT_STAGE_RETURN_FAILURE;
             }
@@ -788,7 +840,7 @@ act_stage1_prepare(NMDevice *device, NMDeviceStateReason *out_failure_reason)
 static void
 deactivate(NMDevice *device)
 {
-    NMDeviceTeam *       self = NM_DEVICE_TEAM(device);
+    NMDeviceTeam        *self = NM_DEVICE_TEAM(device);
     NMDeviceTeamPrivate *priv = NM_DEVICE_TEAM_GET_PRIVATE(self);
 
     priv->stage1_state = NM_DEVICE_STAGE_STATE_INIT;
@@ -805,50 +857,48 @@ deactivate(NMDevice *device)
     teamd_cleanup(self, TRUE);
 }
 
-static gboolean
-enslave_slave(NMDevice *device, NMDevice *slave, NMConnection *connection, gboolean configure)
+static NMTernary
+attach_port(NMDevice                  *device,
+            NMDevice                  *port,
+            NMConnection              *connection,
+            gboolean                   configure,
+            GCancellable              *cancellable,
+            NMDeviceAttachPortCallback callback,
+            gpointer                   user_data)
 {
-    NMDeviceTeam *       self        = NM_DEVICE_TEAM(device);
-    NMDeviceTeamPrivate *priv        = NM_DEVICE_TEAM_GET_PRIVATE(self);
-    gboolean             success     = TRUE;
-    const char *         slave_iface = nm_device_get_ip_iface(slave);
-    NMSettingTeamPort *  s_team_port;
+    NMDeviceTeam        *self       = NM_DEVICE_TEAM(device);
+    NMDeviceTeamPrivate *priv       = NM_DEVICE_TEAM_GET_PRIVATE(self);
+    gboolean             success    = TRUE;
+    const char          *port_iface = nm_device_get_ip_iface(port);
+    NMSettingTeamPort   *s_team_port;
 
-    nm_device_master_check_slave_physical_port(device, slave, LOGD_TEAM);
+    nm_device_master_check_slave_physical_port(device, port, LOGD_TEAM);
 
     if (configure) {
-        nm_device_take_down(slave, TRUE);
+        nm_device_take_down(port, TRUE);
 
         s_team_port = nm_connection_get_setting_team_port(connection);
         if (s_team_port) {
-            const char *config = nm_setting_team_port_get_config(s_team_port);
+            char *sanitized_config;
 
-            if (config) {
-                if (!priv->tdc) {
-                    _LOGW(LOGD_TEAM,
-                          "enslaved team port %s config not changed, not connected to teamd",
-                          slave_iface);
-                } else {
-                    gs_free char *sanitized_config = NULL;
-                    int           err;
+            sanitized_config = g_strdup(nm_setting_team_port_get_config(s_team_port) ?: "{}");
+            g_strdelimit(sanitized_config, "\r\n", ' ');
 
-                    sanitized_config = g_strdup(config);
-                    g_strdelimit(sanitized_config, "\r\n", ' ');
-                    err = teamdctl_port_config_update_raw(priv->tdc, slave_iface, sanitized_config);
-                    if (err != 0) {
-                        _LOGE(LOGD_TEAM,
-                              "failed to update config for port %s (err=%d)",
-                              slave_iface,
-                              err);
-                        return FALSE;
-                    }
-                }
+            g_hash_table_insert(priv->port_configs, g_strdup(port_iface), sanitized_config);
+
+            if (!priv->tdc) {
+                _LOGW(LOGD_TEAM,
+                      "attached team port %s config not changed, not connected to teamd",
+                      port_iface);
+            } else {
+                if (!_update_port_config(self, port_iface, sanitized_config))
+                    return FALSE;
             }
         }
         success = nm_platform_link_enslave(nm_device_get_platform(device),
                                            nm_device_get_ip_ifindex(device),
-                                           nm_device_get_ip_ifindex(slave));
-        nm_device_bring_up(slave, TRUE, NULL);
+                                           nm_device_get_ip_ifindex(port));
+        nm_device_bring_up(port);
 
         if (!success)
             return FALSE;
@@ -856,21 +906,22 @@ enslave_slave(NMDevice *device, NMDevice *slave, NMConnection *connection, gbool
         nm_clear_g_source(&priv->teamd_read_timeout);
         priv->teamd_read_timeout = g_timeout_add_seconds(5, teamd_read_timeout_cb, self);
 
-        _LOGI(LOGD_TEAM, "enslaved team port %s", slave_iface);
+        _LOGI(LOGD_TEAM, "attached team port %s", port_iface);
     } else
-        _LOGI(LOGD_TEAM, "team port %s was enslaved", slave_iface);
+        _LOGI(LOGD_TEAM, "team port %s was attached", port_iface);
 
     return TRUE;
 }
 
 static void
-release_slave(NMDevice *device, NMDevice *slave, gboolean configure)
+detach_port(NMDevice *device, NMDevice *port, gboolean configure)
 {
-    NMDeviceTeam *       self = NM_DEVICE_TEAM(device);
-    NMDeviceTeamPrivate *priv = NM_DEVICE_TEAM_GET_PRIVATE(self);
+    NMDeviceTeam        *self       = NM_DEVICE_TEAM(device);
+    NMDeviceTeamPrivate *priv       = NM_DEVICE_TEAM_GET_PRIVATE(self);
+    const char          *port_iface = nm_device_get_ip_iface(port);
     gboolean             do_release, success;
-    NMSettingTeamPort *  s_port;
-    int                  ifindex_slave;
+    NMSettingTeamPort   *s_port;
+    int                  ifindex_port;
     int                  ifindex;
 
     do_release = configure;
@@ -880,47 +931,47 @@ release_slave(NMDevice *device, NMDevice *slave, gboolean configure)
             do_release = FALSE;
     }
 
-    ifindex_slave = nm_device_get_ip_ifindex(slave);
+    ifindex_port = nm_device_get_ip_ifindex(port);
 
-    if (ifindex_slave <= 0) {
-        _LOGD(LOGD_TEAM, "team port %s is already released", nm_device_get_ip_iface(slave));
+    if (ifindex_port <= 0) {
+        _LOGD(LOGD_TEAM, "team port %s is already detached", port_iface);
     } else if (do_release) {
         success = nm_platform_link_release(nm_device_get_platform(device),
                                            nm_device_get_ip_ifindex(device),
-                                           ifindex_slave);
+                                           ifindex_port);
         if (success)
-            _LOGI(LOGD_TEAM, "released team port %s", nm_device_get_ip_iface(slave));
+            _LOGI(LOGD_TEAM, "detached team port %s", port_iface);
         else
-            _LOGW(LOGD_TEAM, "failed to release team port %s", nm_device_get_ip_iface(slave));
+            _LOGW(LOGD_TEAM, "failed to detach team port %s", port_iface);
 
         /* Kernel team code "closes" the port when releasing it, (which clears
          * IFF_UP), so we must bring it back up here to ensure carrier changes and
          * other state is noticed by the now-released port.
          */
-        if (!nm_device_bring_up(slave, TRUE, NULL)) {
-            _LOGW(LOGD_TEAM,
-                  "released team port %s could not be brought up",
-                  nm_device_get_ip_iface(slave));
+        if (!nm_device_bring_up(port)) {
+            _LOGW(LOGD_TEAM, "detached team port %s could not be brought up", port_iface);
         }
 
         nm_clear_g_source(&priv->teamd_read_timeout);
         priv->teamd_read_timeout = g_timeout_add_seconds(5, teamd_read_timeout_cb, self);
     } else
-        _LOGI(LOGD_TEAM, "team port %s was released", nm_device_get_ip_iface(slave));
+        _LOGI(LOGD_TEAM, "team port %s was detached", port_iface);
 
     /* Delete any port configuration we previously set */
     if (configure && priv->tdc
-        && (s_port = nm_device_get_applied_setting(slave, NM_TYPE_SETTING_TEAM_PORT))
-        && (nm_setting_team_port_get_config(s_port)))
-        teamdctl_port_config_update_raw(priv->tdc, nm_device_get_ip_iface(slave), "{}");
+        && (s_port = nm_device_get_applied_setting(port, NM_TYPE_SETTING_TEAM_PORT))
+        && (nm_setting_team_port_get_config(s_port))) {
+        _update_port_config(self, port_iface, "{}");
+        g_hash_table_remove(priv->port_configs, port_iface);
+    }
 }
 
 static gboolean
-create_and_realize(NMDevice *             device,
-                   NMConnection *         connection,
-                   NMDevice *             parent,
+create_and_realize(NMDevice              *device,
+                   NMConnection          *connection,
+                   NMDevice              *parent,
                    const NMPlatformLink **out_plink,
-                   GError **              error)
+                   GError               **error)
 {
     const char *iface = nm_device_get_iface(device);
     int         r;
@@ -968,13 +1019,15 @@ nm_device_team_init(NMDeviceTeam *self)
 static void
 constructed(GObject *object)
 {
-    NMDevice *           device  = NM_DEVICE(object);
-    NMDeviceTeamPrivate *priv    = NM_DEVICE_TEAM_GET_PRIVATE(device);
-    gs_free char *       tmp_str = NULL;
-    gs_unref_object GFile *file  = NULL;
-    GError *               error;
+    NMDevice              *device  = NM_DEVICE(object);
+    NMDeviceTeamPrivate   *priv    = NM_DEVICE_TEAM_GET_PRIVATE(device);
+    gs_free char          *tmp_str = NULL;
+    gs_unref_object GFile *file    = NULL;
+    gs_free_error GError  *error   = NULL;
 
     G_OBJECT_CLASS(nm_device_team_parent_class)->constructed(object);
+
+    priv->port_configs = g_hash_table_new_full(nm_str_hash, g_str_equal, g_free, g_free);
 
     if (nm_dbus_manager_get_dbus_connection(nm_dbus_manager_get())) {
         /* Register D-Bus name watcher */
@@ -1020,7 +1073,7 @@ nm_device_team_new(const char *iface)
 static void
 dispose(GObject *object)
 {
-    NMDeviceTeam *       self = NM_DEVICE_TEAM(object);
+    NMDeviceTeam        *self = NM_DEVICE_TEAM(object);
     NMDeviceTeamPrivate *priv = NM_DEVICE_TEAM_GET_PRIVATE(self);
 
     if (priv->teamd_dbus_watch) {
@@ -1035,6 +1088,7 @@ dispose(GObject *object)
 
     teamd_cleanup(self, TRUE);
     nm_clear_g_free(&priv->config);
+    nm_clear_pointer(&priv->port_configs, g_hash_table_destroy);
 
     G_OBJECT_CLASS(nm_device_team_parent_class)->dispose(object);
 }
@@ -1054,9 +1108,9 @@ static const NMDBusInterfaceInfoExtended interface_info_device_team = {
 static void
 nm_device_team_class_init(NMDeviceTeamClass *klass)
 {
-    GObjectClass *     object_class      = G_OBJECT_CLASS(klass);
+    GObjectClass      *object_class      = G_OBJECT_CLASS(klass);
     NMDBusObjectClass *dbus_object_class = NM_DBUS_OBJECT_CLASS(klass);
-    NMDeviceClass *    device_class      = NM_DEVICE_CLASS(klass);
+    NMDeviceClass     *device_class      = NM_DEVICE_CLASS(klass);
 
     object_class->constructed  = constructed;
     object_class->dispose      = dispose;
@@ -1079,8 +1133,8 @@ nm_device_team_class_init(NMDeviceTeamClass *klass)
     device_class->act_stage1_prepare                             = act_stage1_prepare;
     device_class->get_configured_mtu = nm_device_get_configured_mtu_for_wired;
     device_class->deactivate         = deactivate;
-    device_class->enslave_slave      = enslave_slave;
-    device_class->release_slave      = release_slave;
+    device_class->attach_port        = attach_port;
+    device_class->detach_port        = detach_port;
 
     obj_properties[PROP_CONFIG] = g_param_spec_string(NM_DEVICE_TEAM_CONFIG,
                                                       "",

@@ -24,8 +24,8 @@
 static gboolean
 get_answer(const char *prop, const char *value)
 {
-    char *   tmp_str;
-    char *   question;
+    char    *tmp_str;
+    char    *question;
     gboolean answer = FALSE;
 
     if (value)
@@ -226,7 +226,7 @@ proxy_method_changed_cb(GObject *object, GParamSpec *pspec, gpointer user_data)
 static void
 wireless_band_channel_changed_cb(GObject *object, GParamSpec *pspec, gpointer user_data)
 {
-    const char *       value = NULL, *mode;
+    const char        *value = NULL, *mode;
     char               str[16];
     NMSettingWireless *s_wireless = NM_SETTING_WIRELESS(object);
 
@@ -246,10 +246,10 @@ wireless_band_channel_changed_cb(GObject *object, GParamSpec *pspec, gpointer us
 
     mode = nm_setting_wireless_get_mode(NM_SETTING_WIRELESS(object));
     if (!mode || !*mode || strcmp(mode, NM_SETTING_WIRELESS_MODE_INFRA) == 0) {
-        g_print(_("Warning: %s.%s set to '%s', but it might be ignored in infrastructure mode\n"),
-                nm_setting_get_name(NM_SETTING(s_wireless)),
-                g_param_spec_get_name(pspec),
-                value);
+        nmc_print(_("Warning: %s.%s set to '%s', but it might be ignored in infrastructure mode\n"),
+                  nm_setting_get_name(NM_SETTING(s_wireless)),
+                  g_param_spec_get_name(pspec),
+                  value);
     }
 }
 
@@ -257,18 +257,18 @@ static void
 connection_master_changed_cb(GObject *object, GParamSpec *pspec, gpointer user_data)
 {
     NMSettingConnection *s_con      = NM_SETTING_CONNECTION(object);
-    NMConnection *       connection = NM_CONNECTION(user_data);
-    NMSetting *          s_ipv4, *s_ipv6;
-    const char *         value, *tmp_str;
+    NMConnection        *connection = NM_CONNECTION(user_data);
+    NMSetting           *s_ipv4, *s_ipv6;
+    const char          *value, *tmp_str;
 
     value = nm_setting_connection_get_master(s_con);
     if (value) {
         s_ipv4 = nm_connection_get_setting_by_name(connection, NM_SETTING_IP4_CONFIG_SETTING_NAME);
         s_ipv6 = nm_connection_get_setting_by_name(connection, NM_SETTING_IP6_CONFIG_SETTING_NAME);
         if (s_ipv4 || s_ipv6) {
-            g_print(_("Warning: setting %s.%s requires removing ipv4 and ipv6 settings\n"),
-                    nm_setting_get_name(NM_SETTING(s_con)),
-                    g_param_spec_get_name(pspec));
+            nmc_print(_("Warning: setting %s.%s requires removing ipv4 and ipv6 settings\n"),
+                      nm_setting_get_name(NM_SETTING(s_con)),
+                      g_param_spec_get_name(pspec));
             tmp_str = nmc_get_user_input(_("Do you want to remove them? [yes] "));
             if (!tmp_str || matches(tmp_str, "yes")) {
                 if (s_ipv4)
@@ -350,19 +350,19 @@ nmc_setting_connection_connect_handlers(NMSettingConnection *setting, NMConnecti
 /*****************************************************************************/
 
 static gboolean
-_set_fcn_precheck_connection_secondaries(NMClient *  client,
+_set_fcn_precheck_connection_secondaries(NMClient   *client,
                                          const char *value,
-                                         char **     value_coerced,
-                                         GError **   error)
+                                         char      **value_coerced,
+                                         GError    **error)
 {
-    const GPtrArray *    connections;
-    NMConnection *       con;
+    const GPtrArray     *connections;
+    NMConnection        *con;
     gs_free const char **strv0 = NULL;
-    gs_strfreev char **  strv  = NULL;
-    char **              iter;
+    gs_strfreev char   **strv  = NULL;
+    char               **iter;
     gboolean             modified = FALSE;
 
-    strv0 = nm_utils_strsplit_set(value, " \t,");
+    strv0 = nm_strsplit_set(value, " \t,");
     if (!strv0)
         return TRUE;
 
@@ -373,8 +373,8 @@ _set_fcn_precheck_connection_secondaries(NMClient *  client,
         if (nm_utils_is_uuid(*iter)) {
             con = nmc_find_connection(connections, "uuid", *iter, NULL, FALSE);
             if (!con) {
-                g_print(_("Warning: %s is not an UUID of any existing connection profile\n"),
-                        *iter);
+                nmc_print(_("Warning: %s is not an UUID of any existing connection profile\n"),
+                          *iter);
             } else {
                 /* Currently, NM only supports VPN connections as secondaries */
                 if (!nm_connection_is_type(con, NM_SETTING_VPN_SETTING_NAME)) {
@@ -385,7 +385,7 @@ _set_fcn_precheck_connection_secondaries(NMClient *  client,
         } else {
             con = nmc_find_connection(connections, "id", *iter, NULL, FALSE);
             if (!con) {
-                g_set_error(error, 1, 0, _("'%s' is not a name of any exiting profile"), *iter);
+                g_set_error(error, 1, 0, _("'%s' is not a name of any existing profile"), *iter);
                 return FALSE;
             }
 
@@ -419,7 +419,7 @@ _env_warn_fcn_handle(
         fmt_l10n, /* the untranslated format string, but it is marked for translation using N_(). */
     va_list ap)
 {
-    NmCli *       nmc = environment_user_data;
+    NmCli        *nmc = environment_user_data;
     gs_free char *m   = NULL;
 
     if (nmc->complete)
@@ -431,21 +431,21 @@ _env_warn_fcn_handle(
 
     switch (warn_level) {
     case NM_META_ENV_WARN_LEVEL_WARN:
-        g_print(_("Warning: %s\n"), m);
+        nmc_print(_("Warning: %s\n"), m);
         return;
     case NM_META_ENV_WARN_LEVEL_INFO:
-        g_print(_("Info: %s\n"), m);
+        nmc_print(_("Info: %s\n"), m);
         return;
     }
-    g_print(_("Error: %s\n"), m);
+    nmc_print(_("Error: %s\n"), m);
 }
 
 static NMDevice *const *
 _env_get_nm_devices(const NMMetaEnvironment *environment,
                     gpointer                 environment_user_data,
-                    guint *                  out_len)
+                    guint                   *out_len)
 {
-    NmCli *          nmc = environment_user_data;
+    NmCli           *nmc = environment_user_data;
     const GPtrArray *devices;
 
     nm_assert(nmc);
@@ -467,9 +467,9 @@ _env_get_nm_devices(const NMMetaEnvironment *environment,
 static NMRemoteConnection *const *
 _env_get_nm_connections(const NMMetaEnvironment *environment,
                         gpointer                 environment_user_data,
-                        guint *                  out_len)
+                        guint                   *out_len)
 {
-    NmCli *          nmc = environment_user_data;
+    NmCli           *nmc = environment_user_data;
     const GPtrArray *values;
 
     nm_assert(nmc);
@@ -488,20 +488,31 @@ _env_get_nm_connections(const NMMetaEnvironment *environment,
     return (NMRemoteConnection *const *) values->pdata;
 }
 
+static NMMetaEnvFlags
+_env_get_env_flags(const NMMetaEnvironment *environment, gpointer environment_user_data)
+{
+    NmCli *nmc = environment_user_data;
+
+    nm_assert(nmc);
+
+    return (nmc->offline ? NM_META_ENV_FLAGS_OFFLINE : NM_META_ENV_FLAGS_NONE);
+}
+
 /*****************************************************************************/
 
 const NMMetaEnvironment *const nmc_meta_environment = &((NMMetaEnvironment){
     .warn_fcn           = _env_warn_fcn_handle,
     .get_nm_devices     = _env_get_nm_devices,
     .get_nm_connections = _env_get_nm_connections,
+    .get_env_flags      = _env_get_env_flags,
 });
 
 static char *
-get_property_val(NMSetting *           setting,
-                 const char *          prop,
+get_property_val(NMSetting            *setting,
+                 const char           *prop,
                  NMMetaAccessorGetType get_type,
                  gboolean              show_secrets,
-                 GError **             error)
+                 GError              **error)
 {
     const NMMetaPropertyInfo *property_info;
 
@@ -514,8 +525,8 @@ get_property_val(NMSetting *           setting,
     if ((property_info = nm_meta_property_info_find_by_setting(setting, prop))) {
         if (property_info->property_type->get_fcn) {
             NMMetaAccessorGetOutFlags out_flags = NM_META_ACCESSOR_GET_OUT_FLAGS_NONE;
-            char *                    to_free   = NULL;
-            const char *              value;
+            char                     *to_free   = NULL;
+            const char               *value;
 
             value = property_info->property_type->get_fcn(
                 property_info,
@@ -560,15 +571,15 @@ nmc_setting_get_property_parsable(NMSetting *setting, const char *prop, GError *
 }
 
 gboolean
-nmc_setting_set_property(NMClient *             client,
-                         NMSetting *            setting,
-                         const char *           prop,
+nmc_setting_set_property(NMClient              *client,
+                         NMSetting             *setting,
+                         const char            *prop,
                          NMMetaAccessorModifier modifier,
-                         const char *           value,
-                         GError **              error)
+                         const char            *value,
+                         GError               **error)
 {
     const NMMetaPropertyInfo *property_info;
-    gs_free char *            value_to_free = NULL;
+    gs_free char             *value_to_free = NULL;
     gboolean                  success;
 
     g_return_val_if_fail(NM_IS_SETTING(setting), FALSE);
@@ -639,7 +650,7 @@ char **
 nmc_setting_get_valid_properties(NMSetting *setting)
 {
     const NMMetaSettingInfoEditor *setting_info;
-    char **                        valid_props;
+    char                         **valid_props;
     guint                          i, num;
 
     setting_info = nm_meta_setting_info_editor_find_by_setting(setting);
@@ -686,14 +697,14 @@ nmc_setting_get_property_allowed_values(NMSetting *setting, const char *prop, ch
 char *
 nmc_setting_get_property_desc(NMSetting *setting, const char *prop)
 {
-    gs_free char *            desc_to_free       = NULL;
-    const char *              setting_desc       = NULL;
-    const char *              setting_desc_title = "";
-    const char *              nmcli_desc         = NULL;
-    const char *              nmcli_desc_title   = "";
-    const char *              nmcli_nl           = "";
+    gs_free char             *desc_to_free       = NULL;
+    const char               *setting_desc       = NULL;
+    const char               *setting_desc_title = "";
+    const char               *nmcli_desc         = NULL;
+    const char               *nmcli_desc_title   = "";
+    const char               *nmcli_nl           = "";
     const NMMetaPropertyInfo *property_info;
-    const char *              desc = NULL;
+    const char               *desc = NULL;
 
     g_return_val_if_fail(NM_IS_SETTING(setting), FALSE);
 
@@ -732,8 +743,8 @@ gboolean
 setting_details(const NmcConfig *nmc_config, NMSetting *setting, const char *one_prop)
 {
     const NMMetaSettingInfoEditor *setting_info;
-    gs_free_error GError *error      = NULL;
-    gs_free char *        fields_str = NULL;
+    gs_free_error GError          *error      = NULL;
+    gs_free char                  *fields_str = NULL;
 
     g_return_val_if_fail(NM_IS_SETTING(setting), FALSE);
 
@@ -748,7 +759,7 @@ setting_details(const NmcConfig *nmc_config, NMSetting *setting, const char *one
         fields_str = g_strdup_printf("%s.%s", nm_setting_get_name(setting), one_prop);
     }
 
-    if (!nmc_print(
+    if (!nmc_print_table(
             nmc_config,
             (gpointer[]){setting, NULL},
             NULL,

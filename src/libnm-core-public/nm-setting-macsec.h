@@ -7,7 +7,7 @@
 #define __NM_SETTING_MACSEC_H__
 
 #if !defined(__NETWORKMANAGER_H_INSIDE__) && !defined(NETWORKMANAGER_COMPILATION)
-    #error "Only <NetworkManager.h> can be included directly."
+#error "Only <NetworkManager.h> can be included directly."
 #endif
 
 #include "nm-setting.h"
@@ -73,6 +73,8 @@ typedef enum {
 } NMSettingMacsecValidation;
 
 #define NM_SETTING_MACSEC_MKA_CAK_LENGTH 32
+
+/* Deprecated. The CKN can be between 2 and 64 characters. */
 #define NM_SETTING_MACSEC_MKA_CKN_LENGTH 64
 
 NM_AVAILABLE_IN_1_6

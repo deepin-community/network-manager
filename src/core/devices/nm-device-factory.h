@@ -17,7 +17,7 @@
 
 #define NM_TYPE_DEVICE_FACTORY (nm_device_factory_get_type())
 #define NM_DEVICE_FACTORY(obj) \
-    (G_TYPE_CHECK_INSTANCE_CAST((obj), NM_TYPE_DEVICE_FACTORY, NMDeviceFactory))
+    (_NM_G_TYPE_CHECK_INSTANCE_CAST((obj), NM_TYPE_DEVICE_FACTORY, NMDeviceFactory))
 #define NM_DEVICE_FACTORY_CLASS(klass) \
     (G_TYPE_CHECK_CLASS_CAST((klass), NM_TYPE_DEVICE_FACTORY, NMDeviceFactoryClass))
 #define NM_IS_DEVICE_FACTORY(obj)         (G_TYPE_CHECK_INSTANCE_TYPE((obj), NM_TYPE_DEVICE_FACTORY))
@@ -45,8 +45,8 @@ typedef struct {
      * Returns the #NMLinkType and #NMSetting names that this plugin
      * supports.  This function MUST be implemented.
      */
-    void (*get_supported_types)(NMDeviceFactory *   factory,
-                                const NMLinkType ** out_link_types,
+    void (*get_supported_types)(NMDeviceFactory    *factory,
+                                const NMLinkType  **out_link_types,
                                 const char *const **out_setting_types);
 
     /**
@@ -91,8 +91,8 @@ typedef struct {
      * Returns: the interface name, or %NULL
      */
     char *(*get_connection_iface)(NMDeviceFactory *factory,
-                                  NMConnection *   connection,
-                                  const char *     parent_iface);
+                                  NMConnection    *connection,
+                                  const char      *parent_iface);
 
     /**
      * create_device:
@@ -112,11 +112,11 @@ typedef struct {
      *
      * Returns: the new unrealized #NMDevice, or %NULL
      */
-    NMDevice *(*create_device)(NMDeviceFactory *     factory,
-                               const char *          iface,
+    NMDevice *(*create_device)(NMDeviceFactory      *factory,
+                               const char           *iface,
                                const NMPlatformLink *plink,
-                               NMConnection *        connection,
-                               gboolean *            out_ignore);
+                               NMConnection         *connection,
+                               gboolean             *out_ignore);
 
 } NMDeviceFactoryClass;
 
@@ -143,21 +143,21 @@ typedef NMDeviceFactory *(*NMDeviceFactoryCreateFunc)(GError **error);
 /*****************************************************************************/
 
 const char *nm_device_factory_get_connection_parent(NMDeviceFactory *factory,
-                                                    NMConnection *   connection);
+                                                    NMConnection    *connection);
 
 char *nm_device_factory_get_connection_iface(NMDeviceFactory *factory,
-                                             NMConnection *   connection,
-                                             const char *     parent_iface,
-                                             GError **        error);
+                                             NMConnection    *connection,
+                                             const char      *parent_iface,
+                                             GError         **error);
 
 void nm_device_factory_start(NMDeviceFactory *factory);
 
-NMDevice *nm_device_factory_create_device(NMDeviceFactory *     factory,
-                                          const char *          iface,
+NMDevice *nm_device_factory_create_device(NMDeviceFactory      *factory,
+                                          const char           *iface,
                                           const NMPlatformLink *plink,
-                                          NMConnection *        connection,
-                                          gboolean *            out_ignore,
-                                          GError **             error);
+                                          NMConnection         *connection,
+                                          gboolean             *out_ignore,
+                                          GError              **error);
 
 #define NM_DEVICE_FACTORY_DECLARE_LINK_TYPES(...)                                          \
     {                                                                                      \
@@ -171,14 +171,14 @@ NMDevice *nm_device_factory_create_device(NMDeviceFactory *     factory,
     }
 
 #define NM_DEVICE_FACTORY_DECLARE_TYPES(...)                                   \
-    static void get_supported_types(NMDeviceFactory *   factory,               \
-                                    const NMLinkType ** out_link_types,        \
+    static void get_supported_types(NMDeviceFactory    *factory,               \
+                                    const NMLinkType  **out_link_types,        \
                                     const char *const **out_setting_types)     \
     {                                                                          \
         static NMLinkType const  _link_types_null[1]    = {NM_LINK_TYPE_NONE}; \
         static const char *const _setting_types_null[1] = {NULL};              \
                                                                                \
-        const NMLinkType * _link_types    = _link_types_null;                  \
+        const NMLinkType  *_link_types    = _link_types_null;                  \
         const char *const *_setting_types = _setting_types_null;               \
                                                                                \
         {                                                                      \
@@ -208,7 +208,8 @@ NMDevice *nm_device_factory_create_device(NMDeviceFactory *     factory,
                                                                                                  \
     NM_DEVICE_FACTORY_DECLARE_TYPES(st_code)                                                     \
                                                                                                  \
-    static void nm_##lower##_device_factory_init(NM##mixed##DeviceFactory *self) {}              \
+    static void nm_##lower##_device_factory_init(NM##mixed##DeviceFactory *self)                 \
+    {}                                                                                           \
                                                                                                  \
     static void nm_##lower##_device_factory_class_init(NM##mixed##DeviceFactoryClass *klass)     \
     {                                                                                            \

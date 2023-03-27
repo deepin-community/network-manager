@@ -28,6 +28,7 @@ static NM_UTILS_LOOKUP_STR_DEFINE(
     NM_UTILS_LOOKUP_STR_ITEM(NME_NL_ATTRSIZE, "NME_NL_ATTRSIZE"),
     NM_UTILS_LOOKUP_STR_ITEM(NME_NL_BAD_SOCK, "NME_NL_BAD_SOCK"),
     NM_UTILS_LOOKUP_STR_ITEM(NME_NL_DUMP_INTR, "NME_NL_DUMP_INTR"),
+    NM_UTILS_LOOKUP_STR_ITEM(NME_NL_MSG_INVAL, "NME_NL_MSG_INVAL"),
     NM_UTILS_LOOKUP_STR_ITEM(NME_NL_MSG_OVERFLOW, "NME_NL_MSG_OVERFLOW"),
     NM_UTILS_LOOKUP_STR_ITEM(NME_NL_MSG_TOOSHORT, "NME_NL_MSG_TOOSHORT"),
     NM_UTILS_LOOKUP_STR_ITEM(NME_NL_MSG_TRUNC, "NME_NL_MSG_TRUNC"),
@@ -156,7 +157,7 @@ const char *
 nm_strerror_native(int errsv)
 {
     static _nm_thread_local char *buf_static = NULL;
-    char *                        buf;
+    char                         *buf;
 
     buf = buf_static;
     if (G_UNLIKELY(!buf)) {

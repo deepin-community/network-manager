@@ -8,14 +8,16 @@
 
 #include "nmcli.h"
 
-void monitor_connections(NmCli *nmc);
+void nmc_monitor_connections(NmCli *nmc);
 
-gboolean nmc_process_connection_properties(NmCli *             nmc,
-                                           NMConnection *      connection,
-                                           int *               argc,
+const char *nmc_connection_check_deprecated(NMConnection *c);
+
+gboolean nmc_process_connection_properties(NmCli              *nmc,
+                                           NMConnection       *connection,
+                                           int                *argc,
                                            const char *const **argv,
                                            gboolean            allow_remove_setting,
-                                           GError **           error);
+                                           GError            **error);
 
 NMMetaColor nmc_active_connection_state_to_color(NMActiveConnection *ac);
 

@@ -29,6 +29,8 @@ typedef struct {
  * NMSetting6Lowpan:
  *
  * 6LoWPAN Settings
+ *
+ * Since: 1.14
  */
 struct _NMSetting6Lowpan {
     NMSetting parent;
@@ -51,7 +53,7 @@ G_DEFINE_TYPE(NMSetting6Lowpan, nm_setting_6lowpan, NM_TYPE_SETTING)
  *
  * Returns: the #NMSetting6Lowpan:parent property of the setting
  *
- * Since: 1.14
+ * Since: 1.42
  **/
 const char *
 nm_setting_6lowpan_get_parent(NMSetting6Lowpan *setting)
@@ -66,7 +68,7 @@ static gboolean
 verify(NMSetting *setting, NMConnection *connection, GError **error)
 {
     NMSetting6LowpanPrivate *priv  = NM_SETTING_6LOWPAN_GET_PRIVATE(setting);
-    NMSettingConnection *    s_con = NULL;
+    NMSettingConnection     *s_con = NULL;
 
     if (connection)
         s_con = nm_connection_get_setting_connection(connection);
@@ -129,41 +131,6 @@ verify(NMSetting *setting, NMConnection *connection, GError **error)
 /*****************************************************************************/
 
 static void
-get_property(GObject *object, guint prop_id, GValue *value, GParamSpec *pspec)
-{
-    NMSetting6Lowpan *       setting = NM_SETTING_6LOWPAN(object);
-    NMSetting6LowpanPrivate *priv    = NM_SETTING_6LOWPAN_GET_PRIVATE(setting);
-
-    switch (prop_id) {
-    case PROP_PARENT:
-        g_value_set_string(value, priv->parent);
-        break;
-    default:
-        G_OBJECT_WARN_INVALID_PROPERTY_ID(object, prop_id, pspec);
-        break;
-    }
-}
-
-static void
-set_property(GObject *object, guint prop_id, const GValue *value, GParamSpec *pspec)
-{
-    NMSetting6Lowpan *       setting = NM_SETTING_6LOWPAN(object);
-    NMSetting6LowpanPrivate *priv    = NM_SETTING_6LOWPAN_GET_PRIVATE(setting);
-
-    switch (prop_id) {
-    case PROP_PARENT:
-        g_free(priv->parent);
-        priv->parent = g_value_dup_string(value);
-        break;
-    default:
-        G_OBJECT_WARN_INVALID_PROPERTY_ID(object, prop_id, pspec);
-        break;
-    }
-}
-
-/*****************************************************************************/
-
-static void
 nm_setting_6lowpan_init(NMSetting6Lowpan *setting)
 {}
 
@@ -174,7 +141,7 @@ nm_setting_6lowpan_init(NMSetting6Lowpan *setting)
  *
  * Returns: (transfer full): the new empty #NMSetting6Lowpan object
  *
- * Since: 1.14
+ * Since: 1.42
  **/
 NMSetting *
 nm_setting_6lowpan_new(void)
@@ -183,28 +150,16 @@ nm_setting_6lowpan_new(void)
 }
 
 static void
-finalize(GObject *object)
-{
-    NMSetting6Lowpan *       setting = NM_SETTING_6LOWPAN(object);
-    NMSetting6LowpanPrivate *priv    = NM_SETTING_6LOWPAN_GET_PRIVATE(setting);
-
-    g_free(priv->parent);
-
-    G_OBJECT_CLASS(nm_setting_6lowpan_parent_class)->finalize(object);
-}
-
-static void
 nm_setting_6lowpan_class_init(NMSetting6LowpanClass *klass)
 {
-    GObjectClass *  object_class        = G_OBJECT_CLASS(klass);
+    GObjectClass   *object_class        = G_OBJECT_CLASS(klass);
     NMSettingClass *setting_class       = NM_SETTING_CLASS(klass);
-    GArray *        properties_override = _nm_sett_info_property_override_create_array();
+    GArray         *properties_override = _nm_sett_info_property_override_create_array();
 
     g_type_class_add_private(klass, sizeof(NMSetting6LowpanPrivate));
 
-    object_class->get_property = get_property;
-    object_class->set_property = set_property;
-    object_class->finalize     = finalize;
+    object_class->get_property = _nm_setting_property_get_property_direct;
+    object_class->set_property = _nm_setting_property_set_property_direct;
 
     setting_class->verify = verify;
 
@@ -216,17 +171,19 @@ nm_setting_6lowpan_class_init(NMSetting6LowpanClass *klass)
      *
      * Since: 1.14
      **/
-    _nm_setting_property_define_string(properties_override,
-                                       obj_properties,
-                                       NM_SETTING_6LOWPAN_PARENT,
-                                       PROP_PARENT,
-                                       NM_SETTING_PARAM_INFERRABLE,
-                                       nm_setting_6lowpan_get_parent);
+    _nm_setting_property_define_direct_string(properties_override,
+                                              obj_properties,
+                                              NM_SETTING_6LOWPAN_PARENT,
+                                              PROP_PARENT,
+                                              NM_SETTING_PARAM_INFERRABLE,
+                                              NMSetting6LowpanPrivate,
+                                              parent);
 
     g_object_class_install_properties(object_class, _PROPERTY_ENUMS_LAST, obj_properties);
 
-    _nm_setting_class_commit_full(setting_class,
-                                  NM_META_SETTING_TYPE_6LOWPAN,
-                                  NULL,
-                                  properties_override);
+    _nm_setting_class_commit(setting_class,
+                             NM_META_SETTING_TYPE_6LOWPAN,
+                             NULL,
+                             properties_override,
+                             NM_SETT_INFO_PRIVATE_OFFSET_FROM_CLASS);
 }

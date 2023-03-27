@@ -10,7 +10,8 @@
 #include "devices/nm-device.h"
 
 #define NM_TYPE_DEVICE_WIFI (nm_device_wifi_get_type())
-#define NM_DEVICE_WIFI(obj) (G_TYPE_CHECK_INSTANCE_CAST((obj), NM_TYPE_DEVICE_WIFI, NMDeviceWifi))
+#define NM_DEVICE_WIFI(obj) \
+    (_NM_G_TYPE_CHECK_INSTANCE_CAST((obj), NM_TYPE_DEVICE_WIFI, NMDeviceWifi))
 #define NM_DEVICE_WIFI_CLASS(klass) \
     (G_TYPE_CHECK_CLASS_CAST((klass), NM_TYPE_DEVICE_WIFI, NMDeviceWifiClass))
 #define NM_IS_DEVICE_WIFI(obj)         (G_TYPE_CHECK_INSTANCE_TYPE((obj), NM_TYPE_DEVICE_WIFI))
@@ -37,8 +38,8 @@ NMDevice *nm_device_wifi_new(const char *iface, _NMDeviceWifiCapabilities capabi
 
 const CList *_nm_device_wifi_get_aps(NMDeviceWifi *self);
 
-void _nm_device_wifi_request_scan(NMDeviceWifi *         self,
-                                  GVariant *             options,
+void _nm_device_wifi_request_scan(NMDeviceWifi          *self,
+                                  GVariant              *options,
                                   GDBusMethodInvocation *invocation);
 
 GPtrArray *nmtst_ssids_options_to_ptrarray(GVariant *value, GError **error);

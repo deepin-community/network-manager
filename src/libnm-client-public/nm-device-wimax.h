@@ -8,7 +8,7 @@
 #define __NM_DEVICE_WIMAX_H__
 
 #if !defined(__NETWORKMANAGER_H_INSIDE__) && !defined(NETWORKMANAGER_COMPILATION)
-    #error "Only <NetworkManager.h> can be included directly."
+#error "Only <NetworkManager.h> can be included directly."
 #endif
 
 #include "nm-device.h"
@@ -39,6 +39,7 @@ G_BEGIN_DECLS
  *
  * Deprecated: 1.22: WiMAX is no longer supported by NetworkManager since 1.2.0.
  */
+typedef struct _NMDeviceWimax      NMDeviceWimax;
 typedef struct _NMDeviceWimaxClass NMDeviceWimaxClass;
 
 NM_DEPRECATED_IN_1_2

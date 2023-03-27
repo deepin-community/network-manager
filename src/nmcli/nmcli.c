@@ -11,12 +11,14 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <signal.h>
-#include <termios.h>
 #include <unistd.h>
 #include <locale.h>
-#include <glib-unix.h>
+#if HAVE_EDITLINE_READLINE
+#include <editline/readline.h>
+#else
 #include <readline/readline.h>
 #include <readline/history.h>
+#endif
 
 #include "libnmc-base/nm-client-utils.h"
 
@@ -28,9 +30,9 @@
 #include "settings.h"
 
 #if defined(NM_DIST_VERSION)
-    #define NMCLI_VERSION NM_DIST_VERSION
+#define NMCLI_VERSION NM_DIST_VERSION
 #else
-    #define NMCLI_VERSION VERSION
+#define NMCLI_VERSION VERSION
 #endif
 
 #define _NMC_COLOR_PALETTE_INIT()                              \
@@ -41,6 +43,7 @@
             [NM_META_COLOR_CONNECTION_DISCONNECTING] = "31",   \
             [NM_META_COLOR_CONNECTION_INVISIBLE]     = "2",    \
             [NM_META_COLOR_CONNECTION_EXTERNAL]      = "32;2", \
+            [NM_META_COLOR_CONNECTION_DEPRECATED]    = "2",    \
             [NM_META_COLOR_CONNECTIVITY_FULL]        = "32",   \
             [NM_META_COLOR_CONNECTIVITY_LIMITED]     = "33",   \
             [NM_META_COLOR_CONNECTIVITY_NONE]        = "31",   \
@@ -71,6 +74,7 @@
             [NM_META_COLOR_WIFI_SIGNAL_GOOD]         = "33",   \
             [NM_META_COLOR_WIFI_SIGNAL_POOR]         = "36",   \
             [NM_META_COLOR_WIFI_SIGNAL_UNKNOWN]      = "2",    \
+            [NM_META_COLOR_WIFI_DEPRECATED]          = "2",    \
             [NM_META_COLOR_ENABLED]                  = "32",   \
             [NM_META_COLOR_DISABLED]                 = "31",   \
         },                                                     \
@@ -115,8 +119,7 @@ typedef struct {
 } ArgsInfo;
 
 /* --- Global variables --- */
-GMainLoop *    loop = NULL;
-struct termios termios_orig;
+GMainLoop *loop = NULL;
 
 NM_CACHED_QUARK_FCN("nmcli-error-quark", nmcli_error_quark);
 
@@ -147,10 +150,10 @@ static void
 complete_one(gpointer key, gpointer value, gpointer user_data)
 {
     const char **option_with_value = user_data;
-    const char * option            = option_with_value[0];
-    const char * prefix            = option_with_value[1];
-    const char * name              = key;
-    const char * last;
+    const char  *option            = option_with_value[0];
+    const char  *prefix            = option_with_value[1];
+    const char  *name              = key;
+    const char  *last;
 
     last = strrchr(prefix, ',');
     if (last)
@@ -163,13 +166,13 @@ complete_one(gpointer key, gpointer value, gpointer user_data)
             /* value prefix was not a standalone argument,
              * it was part of --option=<value> argument.
              * Repeat the part leading to "=". */
-            g_print("%s=", option);
+            nmc_print("%s=", option);
         }
-        g_print("%.*s%s%s\n",
-                (int) (last - prefix),
-                prefix,
-                name,
-                strcmp(last, name) == 0 ? "," : "");
+        nmc_print("%.*s%s%s\n",
+                  (int) (last - prefix),
+                  prefix,
+                  name,
+                  strcmp(last, name) == 0 ? "," : "");
     }
 }
 
@@ -225,9 +228,9 @@ complete_option_with_value(const char *option, const char *prefix, ...)
                 /* value prefix was not a standalone argument,
                  * it was part of --option=<value> argument.
                  * Repeat the part leading to "=". */
-                g_print("%s=", option);
+                nmc_print("%s=", option);
             }
-            g_print("%s\n", candidate);
+            nmc_print("%s\n", candidate);
         }
     }
     va_end(args);
@@ -236,7 +239,7 @@ complete_option_with_value(const char *option, const char *prefix, ...)
 static void
 usage(void)
 {
-    g_printerr(_(
+    nmc_printerr(_(
         "Usage: nmcli [OPTIONS] OBJECT { COMMAND | help }\n"
         "\n"
         "OPTIONS\n"
@@ -269,9 +272,9 @@ static gboolean
 matches_arg(NmCli *nmc, int *argc, const char *const **argv, const char *pattern, char **arg)
 {
     gs_free char *opt_free = NULL;
-    const char *  opt      = (*argv)[0];
+    const char   *opt      = (*argv)[0];
     gs_free char *arg_tmp  = NULL;
-    const char *  s;
+    const char   *s;
 
     nm_assert(opt);
     nm_assert(opt[0] == '-');
@@ -374,7 +377,7 @@ check_colors_check_palette_one_file(const char *base_dir, const char *name, cons
 
     for (i = 0; i < G_N_ELEMENTS(extensions); i++) {
         gs_free char *filename = NULL;
-        char *        contents;
+        char         *contents;
 
         filename = check_colors_construct_filename(base_dir, name, term, extensions[i]);
         if (g_file_get_contents(filename, &contents, NULL, NULL))
@@ -467,9 +470,9 @@ check_colors_check_palette(const char *base_dir_1,
 static gboolean
 check_colors(NmcColorOption color_option, char **out_palette_str)
 {
-    const char *      base_dir_1, *base_dir_2;
+    const char       *base_dir_1, *base_dir_2;
     const char *const NAME = "nmcli";
-    const char *      term;
+    const char       *term;
 
     *out_palette_str = NULL;
 
@@ -548,6 +551,7 @@ static NM_UTILS_STRING_TABLE_LOOKUP_DEFINE(
     {"connection-external", NM_META_COLOR_CONNECTION_EXTERNAL},
     {"connection-invisible", NM_META_COLOR_CONNECTION_INVISIBLE},
     {"connection-unknown", NM_META_COLOR_CONNECTION_UNKNOWN},
+    {"connection-deprecated", NM_META_COLOR_CONNECTION_DEPRECATED},
     {"connectivity-full", NM_META_COLOR_CONNECTIVITY_FULL},
     {"connectivity-limited", NM_META_COLOR_CONNECTIVITY_LIMITED},
     {"connectivity-none", NM_META_COLOR_CONNECTIVITY_NONE},
@@ -584,7 +588,8 @@ static NM_UTILS_STRING_TABLE_LOOKUP_DEFINE(
     {"wifi-signal-fair", NM_META_COLOR_WIFI_SIGNAL_FAIR},
     {"wifi-signal-good", NM_META_COLOR_WIFI_SIGNAL_GOOD},
     {"wifi-signal-poor", NM_META_COLOR_WIFI_SIGNAL_POOR},
-    {"wifi-signal-unknown", NM_META_COLOR_WIFI_SIGNAL_UNKNOWN}, );
+    {"wifi-signal-unknown", NM_META_COLOR_WIFI_SIGNAL_UNKNOWN},
+    {"wifi-deprecated", NM_META_COLOR_WIFI_DEPRECATED}, );
 
 static gboolean
 parse_color_scheme(char *palette_buffer, NmcColorPalette *out_palette, GError **error)
@@ -678,8 +683,8 @@ parse_color_scheme(char *palette_buffer, NmcColorPalette *out_palette, GError **
 
 static void
 set_colors(NmcColorOption   color_option,
-           bool *           out_use_colors,
-           char **          out_palette_buffer,
+           bool            *out_use_colors,
+           char           **out_palette_buffer,
            NmcColorPalette *out_palette)
 {
     gs_free char *palette_str = NULL;
@@ -721,13 +726,13 @@ process_command_line(NmCli *nmc, int argc, char **argv_orig)
         {"monitor", nmc_command_func_monitor, NULL, TRUE, FALSE},
         {"networking", nmc_command_func_networking, NULL, FALSE, FALSE},
         {"radio", nmc_command_func_radio, NULL, FALSE, FALSE},
-        {"connection", nmc_command_func_connection, NULL, FALSE, FALSE},
+        {"connection", nmc_command_func_connection, NULL, FALSE, FALSE, TRUE},
         {"device", nmc_command_func_device, NULL, FALSE, FALSE},
         {"agent", nmc_command_func_agent, NULL, FALSE, FALSE},
         {NULL, nmc_command_func_overview, usage, TRUE, TRUE},
     };
     NmcColorOption     colors = NMC_USE_COLOR_AUTO;
-    const char *       base;
+    const char        *base;
     const char *const *argv;
 
     base = strrchr(argv_orig[0], '/');
@@ -756,15 +761,16 @@ process_command_line(NmCli *nmc, int argc, char **argv_orig)
 
         if (argc == 1 && nmc->complete) {
             nmc_complete_strings(argv[0],
+                                 "--overview",
+                                 "--offline",
                                  "--terse",
                                  "--pretty",
                                  "--mode",
-                                 "--overview",
                                  "--colors",
                                  "--escape",
                                  "--fields",
-                                 "--nocheck",
                                  "--get-values",
+                                 "--nocheck",
                                  "--wait",
                                  "--version",
                                  "--help");
@@ -778,6 +784,8 @@ process_command_line(NmCli *nmc, int argc, char **argv_orig)
 
         if (matches_arg(nmc, &argc, &argv, "-overview", NULL)) {
             nmc->nmc_config_mutable.overview = TRUE;
+        } else if (matches_arg(nmc, &argc, &argv, "-offline", NULL)) {
+            nmc->offline = TRUE;
         } else if (matches_arg(nmc, &argc, &argv, "-terse", NULL)) {
             if (nmc->nmc_config.print_output == NMC_PRINT_TERSE) {
                 g_string_printf(nmc->return_text,
@@ -881,7 +889,7 @@ process_command_line(NmCli *nmc, int argc, char **argv_orig)
             nmc->timeout = (int) timeout;
         } else if (matches_arg(nmc, &argc, &argv, "-version", NULL)) {
             if (!nmc->complete)
-                g_print(_("nmcli tool, version %s\n"), NMCLI_VERSION);
+                nmc_print(_("nmcli tool, version %s\n"), NMCLI_VERSION);
             return NMC_RESULT_SUCCESS;
         } else if (matches_arg(nmc, &argc, &argv, "-help", NULL)) {
             if (!nmc->complete)
@@ -932,7 +940,6 @@ nmc_clear_sigint(void)
 void
 nmc_exit(void)
 {
-    tcsetattr(STDIN_FILENO, TCSADRAIN, &termios_orig);
     nmc_cleanup_readline();
     exit(1);
 }
@@ -1007,6 +1014,8 @@ nmc_cleanup(NmCli *nmc)
 
     nm_clear_g_free(&nmc->palette_buffer);
 
+    nm_clear_pointer(&nmc->offline_connections, g_ptr_array_unref);
+
     nmc_polkit_agent_fini(nmc);
 }
 
@@ -1023,9 +1032,6 @@ main(int argc, char *argv[])
     textdomain(GETTEXT_PACKAGE);
 #endif
 
-    /* Save terminal settings */
-    tcgetattr(STDIN_FILENO, &termios_orig);
-
     nm_cli.return_text = g_string_new(_("Success"));
     loop               = g_main_loop_new(NULL, FALSE);
 
@@ -1041,7 +1047,7 @@ main(int argc, char *argv[])
             nm_cli.return_value = NMC_RESULT_SUCCESS;
     } else if (nm_cli.return_value != NMC_RESULT_SUCCESS) {
         /* Print result descripting text */
-        g_printerr("%s\n", nm_cli.return_text->str);
+        nmc_printerr("%s\n", nm_cli.return_text->str);
     }
 
     nmc_cleanup(&nm_cli);

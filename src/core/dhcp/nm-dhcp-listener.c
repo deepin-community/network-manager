@@ -26,8 +26,9 @@
 /*****************************************************************************/
 
 const NMDhcpClientFactory *const _nm_dhcp_manager_factories[6] = {
+
 /* the order here matters, as we will try the plugins in this order to find
-     * the first available plugin. */
+ * the first available plugin. */
 
 #if WITH_DHCPCANON
     &_nm_dhcp_client_factory_dhcpcanon,
@@ -49,7 +50,7 @@ typedef struct {
     NMDBusManager *dbus_mgr;
     gulong         new_conn_id;
     gulong         dis_conn_id;
-    GHashTable *   connections;
+    GHashTable    *connections;
 } NMDhcpListenerPrivate;
 
 struct _NMDhcpListener {
@@ -97,10 +98,10 @@ NM_DEFINE_SINGLETON_GETTER(NMDhcpListener, nm_dhcp_listener_get, NM_TYPE_DHCP_LI
 static char *
 get_option(GVariant *options, const char *key)
 {
-    GVariant *    value;
+    GVariant     *value;
     const guchar *bytes, *s;
     gsize         len;
-    char *        converted, *d;
+    char         *converted, *d;
 
     if (!g_variant_lookup(options, key, "@ay", &value))
         return NULL;
@@ -127,11 +128,11 @@ get_option(GVariant *options, const char *key)
 }
 
 static void
-_method_call_handle(NMDhcpListener *self, GVariant *parameters)
+_method_call_handle(NMDhcpListener *self, GDBusMethodInvocation *invocation, GVariant *parameters)
 {
-    gs_free char *   iface             = NULL;
-    gs_free char *   pid_str           = NULL;
-    gs_free char *   reason            = NULL;
+    gs_free char              *iface   = NULL;
+    gs_free char              *pid_str = NULL;
+    gs_free char              *reason  = NULL;
     gs_unref_variant GVariant *options = NULL;
     int                        pid;
     gboolean                   handled = FALSE;
@@ -141,23 +142,23 @@ _method_call_handle(NMDhcpListener *self, GVariant *parameters)
     iface = get_option(options, "interface");
     if (iface == NULL) {
         _LOGW("dhcp-event: didn't have associated interface.");
-        return;
+        goto out;
     }
 
     pid_str = get_option(options, "pid");
     pid     = _nm_utils_ascii_str_to_int64(pid_str, 10, 0, G_MAXINT32, -1);
     if (pid == -1) {
         _LOGW("dhcp-event: couldn't convert PID '%s' to an integer", pid_str ?: "(null)");
-        return;
+        goto out;
     }
 
     reason = get_option(options, "reason");
     if (reason == NULL) {
         _LOGW("dhcp-event: (pid %d) DHCP event didn't have a reason", pid);
-        return;
+        goto out;
     }
 
-    g_signal_emit(self, signals[EVENT], 0, iface, pid, options, reason, &handled);
+    g_signal_emit(self, signals[EVENT], 0, iface, pid, options, reason, invocation, &handled);
     if (!handled) {
         if (g_ascii_strcasecmp(reason, "RELEASE") == 0) {
             /* Ignore event when the dhcp client gets killed and we receive its last message */
@@ -165,15 +166,19 @@ _method_call_handle(NMDhcpListener *self, GVariant *parameters)
         } else
             _LOGW("dhcp-event: (pid %d) unhandled DHCP event for interface %s", pid, iface);
     }
+
+out:
+    if (!handled)
+        g_dbus_method_invocation_return_value(invocation, NULL);
 }
 
 static void
-_method_call(GDBusConnection *      connection,
-             const char *           sender,
-             const char *           object_path,
-             const char *           interface_name,
-             const char *           method_name,
-             GVariant *             parameters,
+_method_call(GDBusConnection       *connection,
+             const char            *sender,
+             const char            *object_path,
+             const char            *interface_name,
+             const char            *method_name,
+             GVariant              *parameters,
              GDBusMethodInvocation *invocation,
              gpointer               user_data)
 {
@@ -189,8 +194,7 @@ _method_call(GDBusConnection *      connection,
         return;
     }
 
-    _method_call_handle(self, parameters);
-    g_dbus_method_invocation_return_value(invocation, NULL);
+    _method_call_handle(self, invocation, parameters);
 }
 
 static GDBusInterfaceInfo *const interface_info = NM_DEFINE_GDBUS_INTERFACE_INFO(
@@ -218,14 +222,14 @@ _dbus_connection_register_object(NMDhcpListener *self, GDBusConnection *connecti
 }
 
 static void
-new_connection_cb(NMDBusManager *     mgr,
-                  GDBusConnection *   connection,
+new_connection_cb(NMDBusManager      *mgr,
+                  GDBusConnection    *connection,
                   GDBusObjectManager *manager,
-                  NMDhcpListener *    self)
+                  NMDhcpListener     *self)
 {
     NMDhcpListenerPrivate *priv = NM_DHCP_LISTENER_GET_PRIVATE(self);
     guint                  registration_id;
-    GError *               error = NULL;
+    GError                *error = NULL;
 
     /* it is important to register the object during the new-connection signal,
      * as this avoids races with the connecting object. */
@@ -310,9 +314,10 @@ nm_dhcp_listener_class_init(NMDhcpListenerClass *listener_class)
                                   NULL,
                                   NULL,
                                   G_TYPE_BOOLEAN, /* listeners return TRUE if handled */
-                                  4,
+                                  5,
                                   G_TYPE_STRING,  /* iface */
                                   G_TYPE_INT,     /* pid */
                                   G_TYPE_VARIANT, /* options */
-                                  G_TYPE_STRING); /* reason */
+                                  G_TYPE_STRING,  /* reason */
+                                  G_TYPE_DBUS_METHOD_INVOCATION /* invocation*/);
 }

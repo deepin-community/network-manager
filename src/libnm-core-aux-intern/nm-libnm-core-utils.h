@@ -58,6 +58,102 @@ void _nm_setting_bond_remove_options_miimon(NMSettingBond *s_bond);
 void _nm_setting_bond_remove_options_arp_interval(NMSettingBond *s_bond);
 
 typedef enum {
+    NM_BOND_AD_SELECT_UNKNOWN = -1,
+
+    /* The numeric values correspond to kernel's numbering. */
+    NM_BOND_AD_SELECT_STABLE    = 0,
+    NM_BOND_AD_SELECT_BANDWIDTH = 1,
+    NM_BOND_AD_SELECT_COUNT     = 2,
+
+    _NM_BOND_AD_SELECT_NUM,
+} NMBondAdSelect;
+
+NMBondAdSelect _nm_setting_bond_ad_select_from_string(const char *str);
+
+typedef enum {
+    NM_BOND_ARP_ALL_TARGETS_UNKNOWN = -1,
+
+    /* The numeric values correspond to kernel's numbering. */
+    NM_BOND_ARP_ALL_TARGETS_ANY = 0,
+    NM_BOND_ARP_ALL_TARGETS_ALL = 1,
+
+    _NM_BOND_ARP_ALL_TARGETS_NUM,
+} NMBondArpAllTargets;
+
+NMBondArpAllTargets _nm_setting_bond_arp_all_targets_from_string(const char *str);
+
+typedef enum {
+    NM_BOND_FAIL_OVER_MAC_UNKNOWN = -1,
+
+    /* The numeric values correspond to kernel's numbering. */
+    NM_BOND_FAIL_OVER_MAC_NONE   = 0,
+    NM_BOND_FAIL_OVER_MAC_ACTIVE = 1,
+    NM_BOND_FAIL_OVER_MAC_FOLLOW = 2,
+
+    _NM_BOND_FAIL_OVER_MAC_NUM,
+} NMBondFailOverMac;
+
+NMBondFailOverMac _nm_setting_bond_fail_over_mac_from_string(const char *str);
+
+typedef enum {
+    NM_BOND_LACP_RATE_UNKNOWN = -1,
+
+    /* The numeric values correspond to kernel's numbering. */
+    NM_BOND_LACP_RATE_SLOW = 0,
+    NM_BOND_LACP_RATE_FAST = 1,
+
+    _NM_BOND_LACP_RATE_NUM,
+} NMBondLacpRate;
+
+NMBondLacpRate _nm_setting_bond_lacp_rate_from_string(const char *str);
+
+typedef enum {
+    NM_BOND_ARP_VALIDATE_UNKNOWN = -1,
+
+    /* The numeric values correspond to kernel's numbering. */
+    NM_BOND_ARP_VALIDATE_NONE          = 0,
+    NM_BOND_ARP_VALIDATE_ACTIVE        = 1,
+    NM_BOND_ARP_VALIDATE_BACKUP        = 2,
+    NM_BOND_ARP_VALIDATE_ALL           = 3,
+    NM_BOND_ARP_VALIDATE_FILTER        = 4,
+    NM_BOND_ARP_VALIDATE_FILTER_ACTIVE = 5,
+    NM_BOND_ARP_VALIDATE_FILTER_BACKUP = 6,
+
+    _NM_BOND_ARP_VALIDATE_NUM,
+} NMBondArpValidate;
+
+NMBondArpValidate _nm_setting_bond_arp_validate_from_string(const char *str);
+
+typedef enum {
+    NM_BOND_PRIMARY_RESELECT_UNKNOWN = -1,
+
+    /* The numeric values correspond to kernel's numbering. */
+    NM_BOND_PRIMARY_RESELECT_ALWAYS  = 0,
+    NM_BOND_PRIMARY_RESELECT_BETTER  = 1,
+    NM_BOND_PRIMARY_RESELECT_FAILURE = 2,
+
+    _NM_BOND_PRIMARY_RESELECT_NUM,
+} NMBondPrimaryReselect;
+
+NMBondPrimaryReselect _nm_setting_bond_primary_reselect_from_string(const char *str);
+
+typedef enum {
+    NM_BOND_XMIT_HASH_POLICY_UNKNOWN = -1,
+
+    /* The numeric values correspond to kernel's numbering. */
+    NM_BOND_XMIT_HASH_POLICY_LAYER2      = 0,
+    NM_BOND_XMIT_HASH_POLICY_LAYER3_4    = 1,
+    NM_BOND_XMIT_HASH_POLICY_LAYER2_3    = 2,
+    NM_BOND_XMIT_HASH_POLICY_ENCAP2_3    = 3,
+    NM_BOND_XMIT_HASH_POLICY_ENCAP3_4    = 4,
+    NM_BOND_XMIT_HASH_POLICY_VLAN_SRCMAC = 5,
+
+    _NM_BOND_XMIT_HASH_POLICY_NUM,
+} NMBondXmitHashPolicy;
+
+NMBondXmitHashPolicy _nm_setting_bond_xmit_hash_policy_from_string(const char *str);
+
+typedef enum {
     NM_BOND_MODE_UNKNOWN = -1,
 
     /* The numeric values correspond to kernel's numbering of the modes. */
@@ -93,11 +189,11 @@ nm_utils_vlan_priority_map_get_max_prio(NMVlanPriorityMap map, gboolean from)
 }
 
 gboolean nm_utils_vlan_priority_map_parse_str(NMVlanPriorityMap map_type,
-                                              const char *      str,
+                                              const char       *str,
                                               gboolean          allow_wildcard_to,
-                                              guint32 *         out_from,
-                                              guint32 *         out_to,
-                                              gboolean *        out_has_wildcard_to);
+                                              guint32          *out_from,
+                                              guint32          *out_to,
+                                              gboolean         *out_has_wildcard_to);
 
 /*****************************************************************************/
 
@@ -149,13 +245,13 @@ nm_setting_ip_config_get_addr_family(NMSettingIPConfig *s_ip)
 extern const char *const        nm_auth_permission_names_by_idx[NM_CLIENT_PERMISSION_LAST];
 extern const NMClientPermission nm_auth_permission_sorted[NM_CLIENT_PERMISSION_LAST];
 
-const char *       nm_auth_permission_to_string(NMClientPermission permission);
+const char        *nm_auth_permission_to_string(NMClientPermission permission);
 NMClientPermission nm_auth_permission_from_string(const char *str);
 
 /*****************************************************************************/
 
 NMClientPermissionResult nm_client_permission_result_from_string(const char *nm);
-const char *             nm_client_permission_result_to_string(NMClientPermissionResult permission);
+const char              *nm_client_permission_result_to_string(NMClientPermissionResult permission);
 
 gboolean nm_utils_validate_dhcp4_vendor_class_id(const char *vci, GError **error);
 
@@ -165,5 +261,56 @@ gboolean nm_utils_validate_dhcp4_vendor_class_id(const char *vci, GError **error
 #define NM_SETTINGS_CONNECTION_PERMISSION_USER_PREFIX "user:"
 
 gboolean nm_settings_connection_validate_permission_user(const char *item, gssize len);
+
+/*****************************************************************************/
+
+gpointer _nm_connection_ensure_setting(NMConnection *connection, GType gtype);
+gpointer _nm_connection_new_setting(NMConnection *connection, GType gtype);
+
+/*****************************************************************************/
+
+#define _NM_MPTCP_FLAGS_ALL                                                              \
+    ((NMMptcpFlags) (NM_MPTCP_FLAGS_DISABLED | NM_MPTCP_FLAGS_ENABLED                    \
+                     | NM_MPTCP_FLAGS_ALSO_WITHOUT_SYSCTL                                \
+                     | NM_MPTCP_FLAGS_ALSO_WITHOUT_DEFAULT_ROUTE | NM_MPTCP_FLAGS_SIGNAL \
+                     | NM_MPTCP_FLAGS_SUBFLOW | NM_MPTCP_FLAGS_BACKUP | NM_MPTCP_FLAGS_FULLMESH))
+
+#define _NM_MPTCP_FLAGS_DEFAULT ((NMMptcpFlags) (NM_MPTCP_FLAGS_ENABLED | NM_MPTCP_FLAGS_SUBFLOW))
+
+NMMptcpFlags nm_mptcp_flags_normalize(NMMptcpFlags flags);
+
+/*****************************************************************************/
+
+gboolean nm_utils_dnsname_parse(int                          addr_family,
+                                const char                  *dns,
+                                int                         *out_addr_family,
+                                gpointer /* (NMIPAddr **) */ out_addr,
+                                const char                 **out_servername);
+
+#define nm_utils_dnsname_parse_assert(addr_family, dns, out_addr_family, out_addr, out_servername) \
+    ({                                                                                             \
+        gboolean _good;                                                                            \
+                                                                                                   \
+        _good = nm_utils_dnsname_parse((addr_family),                                              \
+                                       (dns),                                                      \
+                                       (out_addr_family),                                          \
+                                       (out_addr),                                                 \
+                                       (out_servername));                                          \
+        nm_assert(_good);                                                                          \
+        _good;                                                                                     \
+    })
+
+const char *nm_utils_dnsname_construct(int                                    addr_family,
+                                       gconstpointer /* (const NMIPAddr *) */ addr,
+                                       const char                            *server_name,
+                                       char                                  *result,
+                                       gsize                                  result_len);
+
+const char *nm_utils_dnsname_normalize(int addr_family, const char *dns, char **out_free);
+
+/*****************************************************************************/
+
+gboolean nm_setting_ovs_other_config_check_key(const char *key, GError **error);
+gboolean nm_setting_ovs_other_config_check_val(const char *val, GError **error);
 
 #endif /* __NM_LIBNM_SHARED_UTILS_H__ */

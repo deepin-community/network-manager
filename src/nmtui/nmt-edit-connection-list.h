@@ -10,7 +10,7 @@
 
 #define NMT_TYPE_EDIT_CONNECTION_LIST (nmt_edit_connection_list_get_type())
 #define NMT_EDIT_CONNECTION_LIST(obj) \
-    (G_TYPE_CHECK_INSTANCE_CAST((obj), NMT_TYPE_EDIT_CONNECTION_LIST, NmtEditConnectionList))
+    (_NM_G_TYPE_CHECK_INSTANCE_CAST((obj), NMT_TYPE_EDIT_CONNECTION_LIST, NmtEditConnectionList))
 #define NMT_EDIT_CONNECTION_LIST_CLASS(klass) \
     (G_TYPE_CHECK_CLASS_CAST((klass), NMT_TYPE_EDIT_CONNECTION_LIST, NmtEditConnectionListClass))
 #define NMT_IS_EDIT_CONNECTION_LIST(obj) \
@@ -37,7 +37,7 @@ typedef struct {
 GType nmt_edit_connection_list_get_type(void);
 
 typedef gboolean (*NmtEditConnectionListFilter)(NmtEditConnectionList *list,
-                                                NMConnection *         connection,
+                                                NMConnection          *connection,
                                                 gpointer               user_data);
 
 void nmt_edit_connection_list_recommit(NmtEditConnectionList *list);

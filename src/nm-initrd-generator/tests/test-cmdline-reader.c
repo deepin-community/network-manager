@@ -13,6 +13,7 @@
 #include <sys/socket.h>
 
 #include "libnm-core-intern/nm-core-internal.h"
+#include "libnm-glib-aux/nm-uuid.h"
 
 #include "nm-initrd-generator/nm-initrd-generator.h"
 
@@ -27,9 +28,10 @@
         const char *const *const _ARGV                    = (ARGV);                    \
         char **const             _out_hostname            = (out_hostname);            \
         gint64 *const            _out_carrier_timeout_sec = (out_carrier_timeout_sec); \
-        GHashTable *             _connections;                                         \
+        GHashTable              *_connections;                                         \
                                                                                        \
-        _connections = nmi_cmdline_reader_parse(TEST_INITRD_DIR "/sysfs",              \
+        _connections = nmi_cmdline_reader_parse(NULL,                                  \
+                                                TEST_INITRD_DIR "/sysfs",              \
                                                 _ARGV,                                 \
                                                 _out_hostname,                         \
                                                 _out_carrier_timeout_sec);             \
@@ -41,7 +43,7 @@
 
 #define _parse_cons(ARGV)                                                                    \
     ({                                                                                       \
-        GHashTable *  _con_connections;                                                      \
+        GHashTable   *_con_connections;                                                      \
         gs_free char *_con_hostname            = NULL;                                       \
         gint64        _con_carrier_timeout_sec = 0;                                          \
                                                                                              \
@@ -57,7 +59,7 @@
 #define _parse_con(ARGV, connection_name)                                        \
     ({                                                                           \
         gs_unref_hashtable GHashTable *_1_connections = NULL;                    \
-        NMConnection *                 _1_connection;                            \
+        NMConnection                  *_1_connection;                            \
         const char *const              _1_connection_name = (connection_name);   \
                                                                                  \
         g_assert(_1_connection_name);                                            \
@@ -89,12 +91,12 @@
 static void
 test_auto(void)
 {
-    const char *const *ARGV                  = NM_MAKE_STRV("ip=auto");
+    const char *const            *ARGV       = NM_MAKE_STRV("ip=auto");
     gs_unref_object NMConnection *connection = NULL;
-    NMSettingConnection *         s_con;
-    NMSettingWired *              s_wired;
-    NMSettingIPConfig *           s_ip4;
-    NMSettingIPConfig *           s_ip6;
+    NMSettingConnection          *s_con;
+    NMSettingWired               *s_wired;
+    NMSettingIPConfig            *s_ip4;
+    NMSettingIPConfig            *s_ip6;
 
     connection = _parse_con(ARGV, "default_connection");
 
@@ -113,6 +115,9 @@ test_auto(void)
     g_assert_cmpint(nm_setting_connection_get_wait_device_timeout(s_con), ==, -1);
 
     g_assert(nm_setting_connection_get_autoconnect(s_con));
+    g_assert_cmpint(nm_setting_connection_get_autoconnect_priority(s_con),
+                    ==,
+                    NMI_AUTOCONNECT_PRIORITY_CMDLINE);
 
     s_wired = nm_connection_get_setting_wired(connection);
     g_assert(s_wired);
@@ -140,13 +145,13 @@ static void
 test_dhcp_with_hostname(void)
 {
     gs_unref_hashtable GHashTable *connections = NULL;
-    const char *const *            ARGV        = NM_MAKE_STRV("ip=::::host1::dhcp");
-    NMConnection *                 connection;
-    NMSettingConnection *          s_con;
-    NMSettingWired *               s_wired;
-    NMSettingIPConfig *            s_ip4;
-    NMSettingIPConfig *            s_ip6;
-    gs_free char *                 hostname            = NULL;
+    const char *const             *ARGV        = NM_MAKE_STRV("ip=::::host1::dhcp,dhcp6");
+    NMConnection                  *connection;
+    NMSettingConnection           *s_con;
+    NMSettingWired                *s_wired;
+    NMSettingIPConfig             *s_ip4;
+    NMSettingIPConfig             *s_ip6;
+    gs_free char                  *hostname            = NULL;
     gint64                         carrier_timeout_sec = 0;
 
     connections = _parse(ARGV, &hostname, &carrier_timeout_sec);
@@ -173,6 +178,9 @@ test_dhcp_with_hostname(void)
     g_assert_cmpint(nm_setting_connection_get_wait_device_timeout(s_con), ==, -1);
 
     g_assert(nm_setting_connection_get_autoconnect(s_con));
+    g_assert_cmpint(nm_setting_connection_get_autoconnect_priority(s_con),
+                    ==,
+                    NMI_AUTOCONNECT_PRIORITY_CMDLINE);
 
     s_wired = nm_connection_get_setting_wired(connection);
     g_assert(s_wired);
@@ -191,17 +199,17 @@ test_dhcp_with_hostname(void)
 static void
 test_dhcp_with_mtu(void)
 {
-    const char *const *ARGV0  = NM_MAKE_STRV("ip=:dhcp:1499");
+    const char *const *ARGV0  = NM_MAKE_STRV("ip=:dhcp6,dhcp:1499");
     const char *const *ARGV1  = NM_MAKE_STRV("ip=::::::dhcp:1499");
     const char *const *ARGV[] = {ARGV0, ARGV1};
     guint              i;
 
     for (i = 0; i < G_N_ELEMENTS(ARGV); i++) {
         gs_unref_object NMConnection *connection = NULL;
-        NMSettingConnection *         s_con;
-        NMSettingWired *              s_wired;
-        NMSettingIPConfig *           s_ip4;
-        NMSettingIPConfig *           s_ip6;
+        NMSettingConnection          *s_con;
+        NMSettingWired               *s_wired;
+        NMSettingIPConfig            *s_ip4;
+        NMSettingIPConfig            *s_ip6;
 
         connection = _parse_con(ARGV[i], "default_connection");
 
@@ -218,6 +226,9 @@ test_dhcp_with_mtu(void)
         g_assert_cmpint(nm_setting_connection_get_wait_device_timeout(s_con), ==, -1);
 
         g_assert(nm_setting_connection_get_autoconnect(s_con));
+        g_assert_cmpint(nm_setting_connection_get_autoconnect_priority(s_con),
+                        ==,
+                        NMI_AUTOCONNECT_PRIORITY_CMDLINE);
 
         s_wired = nm_connection_get_setting_wired(connection);
         g_assert(s_wired);
@@ -259,9 +270,9 @@ test_dhcp_timeout(void)
 
     for (i = 0; i < G_N_ELEMENTS(data); i++) {
         gs_unref_object NMConnection *connection = NULL;
-        NMSettingConnection *         s_con;
-        NMSettingIPConfig *           s_ip4;
-        NMSettingIPConfig *           s_ip6;
+        NMSettingConnection          *s_con;
+        NMSettingIPConfig            *s_ip4;
+        NMSettingIPConfig            *s_ip6;
 
         connection = _parse_con(data[i].cmdline, "default_connection");
 
@@ -278,6 +289,9 @@ test_dhcp_timeout(void)
         g_assert_cmpint(nm_setting_connection_get_wait_device_timeout(s_con), ==, -1);
         g_assert_cmpint(nm_setting_connection_get_autoconnect_retries(s_con), ==, 1);
         g_assert(nm_setting_connection_get_autoconnect(s_con));
+        g_assert_cmpint(nm_setting_connection_get_autoconnect_priority(s_con),
+                        ==,
+                        NMI_AUTOCONNECT_PRIORITY_CMDLINE);
 
         s_ip4 = nm_connection_get_setting_ip4_config(connection);
         g_assert(s_ip4);
@@ -300,12 +314,12 @@ test_dhcp_timeout(void)
 static void
 test_if_auto_with_mtu(void)
 {
-    const char *const *ARGV                  = NM_MAKE_STRV("ip=eth0:auto:1666", "=");
+    const char *const            *ARGV       = NM_MAKE_STRV("ip=eth0:dhcp,dhcp6:1666", "=");
     gs_unref_object NMConnection *connection = NULL;
-    NMSettingConnection *         s_con;
-    NMSettingWired *              s_wired;
-    NMSettingIPConfig *           s_ip4;
-    NMSettingIPConfig *           s_ip6;
+    NMSettingConnection          *s_con;
+    NMSettingWired               *s_wired;
+    NMSettingIPConfig            *s_ip4;
+    NMSettingIPConfig            *s_ip6;
 
     connection = _parse_con(ARGV, "eth0");
 
@@ -324,20 +338,26 @@ test_if_auto_with_mtu(void)
     g_assert_cmpstr(nm_setting_ip_config_get_method(s_ip4), ==, NM_SETTING_IP4_CONFIG_METHOD_AUTO);
     g_assert(!nm_setting_ip_config_get_ignore_auto_dns(s_ip4));
     g_assert_cmpint(nm_setting_ip_config_get_dhcp_timeout(s_ip4), ==, 90);
+    g_assert_cmpint(nm_setting_ip_config_get_required_timeout(s_ip4),
+                    ==,
+                    NMI_IP_REQUIRED_TIMEOUT_MSEC);
 
     s_ip6 = nm_connection_get_setting_ip6_config(connection);
     g_assert(s_ip6);
     g_assert_cmpstr(nm_setting_ip_config_get_method(s_ip6), ==, NM_SETTING_IP6_CONFIG_METHOD_AUTO);
     g_assert(!nm_setting_ip_config_get_ignore_auto_dns(s_ip6));
+    g_assert_cmpint(nm_setting_ip_config_get_required_timeout(s_ip6),
+                    ==,
+                    NMI_IP_REQUIRED_TIMEOUT_MSEC);
 }
 
 static void
 test_if_dhcp6(void)
 {
-    const char *const *ARGV                  = NM_MAKE_STRV("ip=eth1:dhcp6");
+    const char *const            *ARGV       = NM_MAKE_STRV("ip=eth1:dhcp6");
     gs_unref_object NMConnection *connection = NULL;
-    NMSettingIPConfig *           s_ip4;
-    NMSettingIPConfig *           s_ip6;
+    NMSettingIPConfig            *s_ip4;
+    NMSettingIPConfig            *s_ip6;
 
     connection = _parse_con(ARGV, "eth1");
 
@@ -359,11 +379,11 @@ test_if_dhcp6(void)
 static void
 test_if_auto_with_mtu_and_mac(void)
 {
-    const char *const *ARGV                  = NM_MAKE_STRV("ip=eth2:auto6:2048:00:53:ef:12:34:56");
+    const char *const            *ARGV       = NM_MAKE_STRV("ip=eth2:auto6:2048:00:53:ef:12:34:56");
     gs_unref_object NMConnection *connection = NULL;
-    NMSettingWired *              s_wired;
-    NMSettingIPConfig *           s_ip4;
-    NMSettingIPConfig *           s_ip6;
+    NMSettingWired               *s_wired;
+    NMSettingIPConfig            *s_ip4;
+    NMSettingIPConfig            *s_ip6;
 
     connection = _parse_con(ARGV, "eth2");
 
@@ -391,16 +411,16 @@ static void
 test_if_ip4_manual(void)
 {
     gs_unref_hashtable GHashTable *connections = NULL;
-    const char *const *            ARGV = NM_MAKE_STRV("ip=192.0.2.2::192.0.2.1:255.255.255.0:"
-                                           "hostname0.example.com:eth3:none:192.0.2.53",
+    const char *const             *ARGV = NM_MAKE_STRV("ip=192.0.2.2::192.0.2.1:255.255.255.0:"
+                                                       "hostname0.example.com:eth3:none:192.0.2.53",
                                            "ip=203.0.113.2::203.0.113.1:26:"
-                                           "hostname1.example.com:eth4");
-    NMConnection *                 connection;
-    NMSettingConnection *          s_con;
-    NMSettingIPConfig *            s_ip4;
-    NMSettingIPConfig *            s_ip6;
-    NMIPAddress *                  ip_addr;
-    gs_free char *                 hostname            = NULL;
+                                                       "hostname1.example.com:eth4");
+    NMConnection                  *connection;
+    NMSettingConnection           *s_con;
+    NMSettingIPConfig             *s_ip4;
+    NMSettingIPConfig             *s_ip6;
+    NMIPAddress                   *ip_addr;
+    gs_free char                  *hostname            = NULL;
     gint64                         carrier_timeout_sec = 0;
 
     connections = _parse(ARGV, &hostname, &carrier_timeout_sec);
@@ -471,12 +491,12 @@ test_if_ip4_manual(void)
 static void
 test_if_ip4_manual_no_dev(void)
 {
-    const char *const *  ARGV = NM_MAKE_STRV("ip=192.0.2.2::192.0.2.1:24:::", "=foo");
-    NMConnection *       connection;
+    const char *const   *ARGV = NM_MAKE_STRV("ip=192.0.2.2::192.0.2.1:24:::", "=foo");
+    NMConnection        *connection;
     NMSettingConnection *s_con;
-    NMSettingIPConfig *  s_ip4;
-    NMSettingIPConfig *  s_ip6;
-    NMIPAddress *        ip_addr;
+    NMSettingIPConfig   *s_ip4;
+    NMSettingIPConfig   *s_ip6;
+    NMIPAddress         *ip_addr;
 
     connection = _parse_con(ARGV, "default_connection");
     g_assert_cmpstr(nm_connection_get_id(connection), ==, "Wired Connection");
@@ -512,12 +532,12 @@ static void
 test_if_ip6_manual(void)
 {
     gs_unref_hashtable GHashTable *connections = NULL;
-    const char *const *            ARGV = NM_MAKE_STRV("ip=[2001:0db8::02]/64::[2001:0db8::01]::"
-                                           "hostname0.example.com:eth4::[2001:0db8::53]");
-    NMConnection *                 connection;
-    NMSettingIPConfig *            s_ip6;
-    NMIPAddress *                  ip_addr;
-    gs_free char *                 hostname            = NULL;
+    const char *const             *ARGV = NM_MAKE_STRV("ip=[2001:0db8::02]/64::[2001:0db8::01]::"
+                                                       "hostname0.example.com:eth4::[2001:0db8::53]");
+    NMConnection                  *connection;
+    NMSettingIPConfig             *s_ip6;
+    NMIPAddress                   *ip_addr;
+    gs_free char                  *hostname            = NULL;
     gint64                         carrier_timeout_sec = 0;
 
     connections = _parse(ARGV, &hostname, &carrier_timeout_sec);
@@ -551,13 +571,13 @@ static void
 test_if_off(void)
 {
     gs_unref_hashtable GHashTable *connections = NULL;
-    const char *const *            ARGV        = NM_MAKE_STRV("ip=off",
+    const char *const             *ARGV        = NM_MAKE_STRV("ip=off",
                                            "ip=ens3:off",
                                            "ip=10.0.0.8:::::ens4:off",
                                            "ip=[2001:DB8::8]:::::ens5:off");
-    NMConnection *                 connection;
-    NMSettingIPConfig *            s_ip4;
-    NMSettingIPConfig *            s_ip6;
+    NMConnection                  *connection;
+    NMSettingIPConfig             *s_ip4;
+    NMSettingIPConfig             *s_ip6;
     struct {
         const char name[32];
         const char ipv4_method[32];
@@ -593,13 +613,13 @@ static void
 test_if_mac_ifname(void)
 {
     gs_unref_hashtable GHashTable *connections = NULL;
-    const char *const *            ARGV = NM_MAKE_STRV("ip=[2001:0db8::42]/64::[2001:0db8::01]::"
-                                           "hostname0:00-11-22-33-44-55::[2001:0db8::53]");
-    NMConnection *                 connection;
-    NMSettingIPConfig *            s_ip6;
-    NMSettingWired *               s_wired;
-    NMIPAddress *                  ip_addr;
-    gs_free char *                 hostname            = NULL;
+    const char *const             *ARGV = NM_MAKE_STRV("ip=[2001:0db8::42]/64::[2001:0db8::01]::"
+                                                       "hostname0:00-11-22-33-44-55::[2001:0db8::53]");
+    NMConnection                  *connection;
+    NMSettingIPConfig             *s_ip6;
+    NMSettingWired                *s_wired;
+    NMIPAddress                   *ip_addr;
+    gs_free char                  *hostname            = NULL;
     gint64                         carrier_timeout_sec = 0;
 
     connections = _parse(ARGV, &hostname, &carrier_timeout_sec);
@@ -640,11 +660,11 @@ test_multiple_merge(void)
     const char *const *ARGV =
         NM_MAKE_STRV("ip=192.0.2.2/16:::::eth0", "ip=[2001:db8::2]:::56::eth0");
     gs_unref_object NMConnection *connection = NULL;
-    NMSettingConnection *         s_con;
-    NMSettingWired *              s_wired;
-    NMSettingIPConfig *           s_ip4;
-    NMSettingIPConfig *           s_ip6;
-    NMIPAddress *                 ip_addr;
+    NMSettingConnection          *s_con;
+    NMSettingWired               *s_wired;
+    NMSettingIPConfig            *s_ip4;
+    NMSettingIPConfig            *s_ip6;
+    NMIPAddress                  *ip_addr;
 
     connection = _parse_con(ARGV, "eth0");
 
@@ -693,10 +713,10 @@ test_multiple_bootdev(void)
                                            "ip=eth5:link6",
                                            "bootdev=eth4");
 
-    NMConnection *       connection;
+    NMConnection        *connection;
     NMSettingConnection *s_con;
-    NMSettingIPConfig *  s_ip4;
-    NMSettingIPConfig *  s_ip6;
+    NMSettingIPConfig   *s_ip4;
+    NMSettingIPConfig   *s_ip6;
 
     connections = _parse_cons(ARGV);
     g_assert_cmpint(g_hash_table_size(connections), ==, 3);
@@ -739,9 +759,9 @@ static void
 test_bootdev(void)
 {
     gs_unref_hashtable GHashTable *connections = NULL;
-    const char *const *            ARGV        = NM_MAKE_STRV("vlan=vlan2:ens5", "bootdev=ens3");
-    NMConnection *                 connection;
-    NMSettingConnection *          s_con;
+    const char *const             *ARGV        = NM_MAKE_STRV("vlan=vlan2:ens5", "bootdev=ens3");
+    NMConnection                  *connection;
+    NMSettingConnection           *s_con;
 
     connections = _parse_cons(ARGV);
     g_assert_cmpint(g_hash_table_size(connections), ==, 3);
@@ -787,7 +807,7 @@ static void
 test_some_more(void)
 {
     gs_unref_hashtable GHashTable *connections = NULL;
-    const char *const *            ARGV        = NM_MAKE_STRV("bootdev=eth1",
+    const char *const             *ARGV        = NM_MAKE_STRV("bootdev=eth1",
                                            "hail",
                                            "nameserver=[2001:DB8:3::53]",
                                            "satan",
@@ -796,12 +816,12 @@ test_some_more(void)
                                            "doom",
                                            "rd.peerdns=0",
                                            "rd.route=[2001:DB8:3::/48]:[2001:DB8:2::1]:ens10");
-    NMConnection *                 connection;
-    NMSettingConnection *          s_con;
-    NMSettingWired *               s_wired;
-    NMSettingIPConfig *            s_ip4;
-    NMSettingIPConfig *            s_ip6;
-    NMIPRoute *                    ip_route;
+    NMConnection                  *connection;
+    NMSettingConnection           *s_con;
+    NMSettingWired                *s_wired;
+    NMSettingIPConfig             *s_ip4;
+    NMSettingIPConfig             *s_ip6;
+    NMIPRoute                     *ip_route;
 
     connections = _parse_cons(ARGV);
     g_assert_cmpint(g_hash_table_size(connections), ==, 2);
@@ -877,17 +897,17 @@ static void
 test_bond(void)
 {
     gs_unref_hashtable GHashTable *connections = NULL;
-    const char *const *            ARGV        = NM_MAKE_STRV("rd.route=192.0.2.53::bong0",
+    const char *const             *ARGV        = NM_MAKE_STRV("rd.route=192.0.2.53::bong0",
                                            "bond=bong0:eth0,eth1:mode=balance-rr:9000",
                                            "nameserver=203.0.113.53");
-    NMConnection *                 connection;
-    NMSettingConnection *          s_con;
-    NMSettingIPConfig *            s_ip4;
-    NMSettingIPConfig *            s_ip6;
-    NMSettingBond *                s_bond;
-    NMSettingWired *               s_wired;
-    NMIPRoute *                    ip_route;
-    const char *                   master_uuid;
+    NMConnection                  *connection;
+    NMSettingConnection           *s_con;
+    NMSettingIPConfig             *s_ip4;
+    NMSettingIPConfig             *s_ip6;
+    NMSettingBond                 *s_bond;
+    NMSettingWired                *s_wired;
+    NMIPRoute                     *ip_route;
+    const char                    *master_uuid;
 
     connections = _parse_cons(ARGV);
     g_assert_cmpint(g_hash_table_size(connections), ==, 3);
@@ -970,18 +990,18 @@ static void
 test_bond_ip(void)
 {
     gs_unref_hashtable GHashTable *connections = NULL;
-    const char *const *            ARGV =
+    const char *const             *ARGV =
         NM_MAKE_STRV("bond=bond0:eth0,eth1",
                      "ip=192.168.1.1::192.168.1.254:24::bond0:none:1480:01:02:03:04:05:06",
                      "nameserver=4.8.15.16");
-    NMConnection *       connection;
+    NMConnection        *connection;
     NMSettingConnection *s_con;
-    NMSettingIPConfig *  s_ip4;
-    NMSettingIPConfig *  s_ip6;
-    NMSettingWired *     s_wired;
-    NMSettingBond *      s_bond;
-    NMIPAddress *        ip_addr;
-    const char *         master_uuid;
+    NMSettingIPConfig   *s_ip4;
+    NMSettingIPConfig   *s_ip6;
+    NMSettingWired      *s_wired;
+    NMSettingBond       *s_bond;
+    NMIPAddress         *ip_addr;
+    const char          *master_uuid;
 
     connections = _parse_cons(ARGV);
     g_assert_cmpint(g_hash_table_size(connections), ==, 3);
@@ -1067,13 +1087,13 @@ static void
 test_bond_default(void)
 {
     gs_unref_hashtable GHashTable *connections = NULL;
-    const char *const *            ARGV        = NM_MAKE_STRV("bond");
-    NMConnection *                 connection;
-    NMSettingConnection *          s_con;
-    NMSettingIPConfig *            s_ip4;
-    NMSettingIPConfig *            s_ip6;
-    NMSettingBond *                s_bond;
-    const char *                   master_uuid;
+    const char *const             *ARGV        = NM_MAKE_STRV("bond");
+    NMConnection                  *connection;
+    NMSettingConnection           *s_con;
+    NMSettingIPConfig             *s_ip4;
+    NMSettingIPConfig             *s_ip6;
+    NMSettingBond                 *s_bond;
+    const char                    *master_uuid;
 
     connections = _parse_cons(ARGV);
     g_assert_cmpint(g_hash_table_size(connections), ==, 2);
@@ -1130,16 +1150,16 @@ static void
 test_bridge(void)
 {
     gs_unref_hashtable GHashTable *connections = NULL;
-    const char *const *            ARGV        = NM_MAKE_STRV("bridge=bridge0:eth0,eth1",
+    const char *const             *ARGV        = NM_MAKE_STRV("bridge=bridge0:eth0,eth1",
                                            "rd.route=192.0.2.53::bridge0",
                                            "rd.net.timeout.dhcp=10");
-    NMConnection *                 connection;
-    NMSettingConnection *          s_con;
-    NMSettingIPConfig *            s_ip4;
-    NMSettingIPConfig *            s_ip6;
-    NMSettingBridge *              s_bridge;
-    NMIPRoute *                    ip_route;
-    const char *                   master_uuid;
+    NMConnection                  *connection;
+    NMSettingConnection           *s_con;
+    NMSettingIPConfig             *s_ip4;
+    NMSettingIPConfig             *s_ip6;
+    NMSettingBridge               *s_bridge;
+    NMIPRoute                     *ip_route;
+    const char                    *master_uuid;
 
     connections = _parse_cons(ARGV);
     g_assert_cmpint(g_hash_table_size(connections), ==, 3);
@@ -1226,13 +1246,13 @@ static void
 test_bridge_default(void)
 {
     gs_unref_hashtable GHashTable *connections = NULL;
-    const char *const *            ARGV        = NM_MAKE_STRV("bridge");
-    NMConnection *                 connection;
-    NMSettingConnection *          s_con;
-    NMSettingIPConfig *            s_ip4;
-    NMSettingIPConfig *            s_ip6;
-    NMSettingBridge *              s_bridge;
-    const char *                   master_uuid;
+    const char *const             *ARGV        = NM_MAKE_STRV("bridge");
+    NMConnection                  *connection;
+    NMSettingConnection           *s_con;
+    NMSettingIPConfig             *s_ip4;
+    NMSettingIPConfig             *s_ip6;
+    NMSettingBridge               *s_bridge;
+    const char                    *master_uuid;
 
     connections = _parse_cons(ARGV);
     g_assert_cmpint(g_hash_table_size(connections), ==, 2);
@@ -1289,16 +1309,16 @@ static void
 test_bridge_ip(void)
 {
     gs_unref_hashtable GHashTable *connections = NULL;
-    const char *const *            ARGV =
+    const char *const             *ARGV =
         NM_MAKE_STRV("ip=bridge123:auto:1280:00:11:22:33:CA:fe",
                      "bridge=bridge123:eth0,eth1,eth2,eth3,eth4,eth5,eth6,eth7,eth8,eth9");
-    NMConnection *       connection;
+    NMConnection        *connection;
     NMSettingConnection *s_con;
-    NMSettingIPConfig *  s_ip4;
-    NMSettingIPConfig *  s_ip6;
-    NMSettingWired *     s_wired;
-    NMSettingBridge *    s_bridge;
-    const char *         master_uuid;
+    NMSettingIPConfig   *s_ip4;
+    NMSettingIPConfig   *s_ip6;
+    NMSettingWired      *s_wired;
+    NMSettingBridge     *s_bridge;
+    const char          *master_uuid;
     guint                i;
 
     connections = _parse_cons(ARGV);
@@ -1358,13 +1378,13 @@ static void
 test_team(void)
 {
     gs_unref_hashtable GHashTable *connections = NULL;
-    const char *const *            ARGV = NM_MAKE_STRV("team=team0:eth0,eth1", "ip=team0:dhcp6");
-    NMConnection *                 connection;
-    NMSettingConnection *          s_con;
-    NMSettingIPConfig *            s_ip4;
-    NMSettingIPConfig *            s_ip6;
-    NMSettingTeam *                s_team;
-    const char *                   master_uuid;
+    const char *const             *ARGV = NM_MAKE_STRV("team=team0:eth0,eth1", "ip=team0:dhcp6");
+    NMConnection                  *connection;
+    NMSettingConnection           *s_con;
+    NMSettingIPConfig             *s_ip4;
+    NMSettingIPConfig             *s_ip6;
+    NMSettingTeam                 *s_team;
+    const char                    *master_uuid;
 
     connections = _parse_cons(ARGV);
     g_assert_cmpint(g_hash_table_size(connections), ==, 3);
@@ -1442,10 +1462,10 @@ test_vlan(void)
 
     for (i = 0; i < G_N_ELEMENTS(ARGV); i++) {
         gs_unref_hashtable GHashTable *connections = NULL;
-        NMConnection *                 connection;
-        NMSettingIPConfig *            s_ip4;
-        NMSettingIPConfig *            s_ip6;
-        NMSettingVlan *                s_vlan;
+        NMConnection                  *connection;
+        NMSettingIPConfig             *s_ip4;
+        NMSettingIPConfig             *s_ip6;
+        NMSettingVlan                 *s_vlan;
 
         connections = _parse_cons(ARGV[i]);
         g_assert_cmpint(g_hash_table_size(connections), ==, 2);
@@ -1507,10 +1527,10 @@ test_vlan_with_dhcp_on_parent(void)
 
     for (i = 0; i < G_N_ELEMENTS(ARGV); i++) {
         gs_unref_hashtable GHashTable *connections = NULL;
-        NMConnection *                 connection;
-        NMSettingIPConfig *            s_ip4;
-        NMSettingIPConfig *            s_ip6;
-        NMSettingVlan *                s_vlan;
+        NMConnection                  *connection;
+        NMSettingIPConfig             *s_ip4;
+        NMSettingIPConfig             *s_ip6;
+        NMSettingVlan                 *s_vlan;
 
         connections = _parse_cons(ARGV[i]);
         g_assert_cmpint(g_hash_table_size(connections), ==, 2);
@@ -1579,10 +1599,10 @@ test_vlan_over_bond(void)
 
     for (i = 0; i < G_N_ELEMENTS(ARGV); i++) {
         gs_unref_hashtable GHashTable *connections = NULL;
-        NMConnection *                 connection;
-        NMSettingIPConfig *            s_ip4;
-        NMSettingIPConfig *            s_ip6;
-        NMSettingVlan *                s_vlan;
+        NMConnection                  *connection;
+        NMSettingIPConfig             *s_ip4;
+        NMSettingIPConfig             *s_ip6;
+        NMSettingVlan                 *s_vlan;
 
         connections = _parse_cons(ARGV[i]);
         g_assert_cmpint(g_hash_table_size(connections), ==, 4);
@@ -1643,9 +1663,13 @@ test_vlan_over_bond(void)
 static void
 test_ibft_ip_dev(void)
 {
-    const char *const *  ARGV = NM_MAKE_STRV("ip=eth0:ibft");
-    NMSettingConnection *s_con;
-    gs_unref_object NMConnection *connection = NULL;
+    const char *const            *ARGV = NM_MAKE_STRV("ip=eth0:ibft");
+    NMSettingConnection          *s_con;
+    gs_unref_object NMConnection *connection    = NULL;
+    const char                   *s_hwaddr      = "00:53:00:ab:00:01";
+    const char                   *s_vlanid      = "666";
+    const char                   *s_ipaddr      = "2001:0db8:0000:0000:0000:0000:0000:0002";
+    gs_free char                 *expected_uuid = NULL;
 
     connection = _parse_con(ARGV, "eth0");
 
@@ -1655,13 +1679,23 @@ test_ibft_ip_dev(void)
                     ==,
                     NM_SETTING_VLAN_SETTING_NAME);
     g_assert_cmpstr(nm_setting_connection_get_interface_name(s_con), ==, NULL);
+
+    expected_uuid = nm_uuid_generate_from_strings_old("ibft",
+                                                      s_hwaddr,
+                                                      s_vlanid ? "V" : "v",
+                                                      s_vlanid ? s_vlanid : "",
+                                                      s_ipaddr ? "A" : "DHCP",
+                                                      s_ipaddr ? s_ipaddr : "");
+
+    g_assert_cmpstr(expected_uuid, ==, "16d9bd1c-e2ab-31ef-9196-860078e81a23");
+    g_assert_cmpstr(nm_connection_get_uuid(connection), ==, expected_uuid);
 }
 
 static void
 test_ibft_ip_dev_mac(void)
 {
-    const char *const *  ARGV = NM_MAKE_STRV("ip=00-53-06-66-ab-01:ibft");
-    NMSettingConnection *s_con;
+    const char *const            *ARGV = NM_MAKE_STRV("ip=00-53-06-66-ab-01:ibft");
+    NMSettingConnection          *s_con;
     gs_unref_object NMConnection *connection = NULL;
 
     connection = _parse_con(ARGV, "00:53:06:66:AB:01");
@@ -1678,7 +1712,7 @@ static void
 _test_ibft_ip(const char *const *ARGV)
 {
     gs_unref_hashtable GHashTable *connections = NULL;
-    NMConnection *                 connection;
+    NMConnection                  *connection;
 
     connections = _parse_cons(ARGV);
     g_assert_cmpint(g_hash_table_size(connections), ==, 2);
@@ -1715,7 +1749,7 @@ static void
 test_ignore_extra(void)
 {
     gs_unref_hashtable GHashTable *connections = NULL;
-    const char *const *            ARGV        = NM_MAKE_STRV("blabla", "extra", "lalala");
+    const char *const             *ARGV        = NM_MAKE_STRV("blabla", "extra", "lalala");
 
     connections = _parse_cons(ARGV);
     g_assert_cmpint(g_hash_table_size(connections), ==, 0);
@@ -1730,10 +1764,10 @@ test_rd_znet(void)
                      "ip=slc600:dhcp",
                      "rd.znet=qeth,0.0.0800,0.0.0801,0.0.0802,layer2=0,portno=1",
                      "rd.znet=ctc,0.0.0600,0.0.0601,layer2=0,portno=0");
-    NMConnection *          connection;
-    NMSettingConnection *   s_con;
-    NMSettingWired *        s_wired;
-    const char *const *     v_subchannels;
+    NMConnection           *connection;
+    NMSettingConnection    *s_con;
+    NMSettingWired         *s_wired;
+    const char *const      *v_subchannels;
     const NMUtilsNamedValue s390_options[] = {
         {.name = "layer2", .value_str = "0"},
         {.name = "portno", .value_str = "1"},
@@ -1772,9 +1806,9 @@ test_rd_znet(void)
     for (i_s390_options_keys = 0; i_s390_options_keys < G_N_ELEMENTS(s390_options);
          i_s390_options_keys++) {
         const NMUtilsNamedValue *s390_option = &s390_options[i_s390_options_keys];
-        const char *             k;
-        const char *             v;
-        const char *             v2;
+        const char              *k;
+        const char              *v;
+        const char              *v2;
 
         g_assert(s390_option->name);
         g_assert(s390_option->value_str);
@@ -1824,9 +1858,9 @@ test_rd_znet_legacy(void)
                      "rd.znet=ctc,0.0.0600,0.0.0601,layer2=0,portno=0",
                      "ip=ctc0:dhcp",
                      "net.ifnames=0");
-    NMConnection *       connection;
+    NMConnection        *connection;
     NMSettingConnection *s_con;
-    gs_free char *       hostname            = NULL;
+    gs_free char        *hostname            = NULL;
     gint64               carrier_timeout_sec = 0;
 
     connections = _parse(ARGV, &hostname, &carrier_timeout_sec);
@@ -1891,13 +1925,82 @@ test_rd_znet_malformed(void)
 }
 
 static void
+test_rd_znet_ifnames(void)
+{
+    gs_unref_hashtable GHashTable *connections = NULL;
+    const char *const *const       ARGV =
+        NM_MAKE_STRV("rd.znet_ifname=zeth1:0.0.0600,0.0.0601",
+                     "rd.znet=qeth,0.0.0800,0.0.0801,0.0.0802,layer2=0,portno=1,foo",
+                     "rd.znet=ctc,0.0.0600,0.0.0601",
+                     "rd.znet_ifname=zeth0:0.0.0800,0.0.0801,0.0.0802",
+                     "ip=zeth0:dhcp",
+                     "ip=zeth1:dhcp");
+    NMConnection        *connection;
+    NMSettingConnection *s_con;
+    NMSettingWired      *s_wired;
+    gs_free char        *hostname            = NULL;
+    gint64               carrier_timeout_sec = 0;
+    const char *const   *v_subchannels;
+
+    connections = _parse(ARGV, &hostname, &carrier_timeout_sec);
+    g_assert_cmpint(g_hash_table_size(connections), ==, 2);
+
+    connection = g_hash_table_lookup(connections, "zeth0");
+    g_assert(NM_IS_CONNECTION(connection));
+
+    s_con = nm_connection_get_setting_connection(connection);
+    g_assert(NM_IS_SETTING_CONNECTION(s_con));
+    g_assert_cmpstr(nm_setting_connection_get_connection_type(s_con),
+                    ==,
+                    NM_SETTING_WIRED_SETTING_NAME);
+    g_assert_cmpstr(nm_setting_connection_get_id(s_con), ==, "zeth0");
+    g_assert_cmpstr(nm_setting_connection_get_interface_name(s_con), ==, "zeth0");
+
+    s_wired = nm_connection_get_setting_wired(connection);
+    g_assert_cmpstr(nm_setting_wired_get_s390_nettype(s_wired), ==, "qeth");
+    g_assert(s_wired);
+
+    v_subchannels = nm_setting_wired_get_s390_subchannels(s_wired);
+    g_assert(v_subchannels);
+    g_assert_cmpstr(v_subchannels[0], ==, "0.0.0800");
+    g_assert_cmpstr(v_subchannels[1], ==, "0.0.0801");
+    g_assert_cmpstr(v_subchannels[2], ==, "0.0.0802");
+    g_assert_cmpstr(v_subchannels[3], ==, NULL);
+
+    nmtst_assert_connection_verifies_without_normalization(connection);
+
+    connection = g_hash_table_lookup(connections, "zeth1");
+    g_assert(NM_IS_CONNECTION(connection));
+
+    s_con = nm_connection_get_setting_connection(connection);
+    g_assert(NM_IS_SETTING_CONNECTION(s_con));
+    g_assert_cmpstr(nm_setting_connection_get_connection_type(s_con),
+                    ==,
+                    NM_SETTING_WIRED_SETTING_NAME);
+    g_assert_cmpstr(nm_setting_connection_get_id(s_con), ==, "zeth1");
+    g_assert_cmpstr(nm_setting_connection_get_interface_name(s_con), ==, "zeth1");
+
+    s_wired = nm_connection_get_setting_wired(connection);
+    g_assert_cmpstr(nm_setting_wired_get_s390_nettype(s_wired), ==, "ctc");
+    g_assert(s_wired);
+
+    v_subchannels = nm_setting_wired_get_s390_subchannels(s_wired);
+    g_assert(v_subchannels);
+    g_assert_cmpstr(v_subchannels[0], ==, "0.0.0600");
+    g_assert_cmpstr(v_subchannels[1], ==, "0.0.0601");
+    g_assert_cmpstr(v_subchannels[2], ==, NULL);
+
+    nmtst_assert_connection_verifies_without_normalization(connection);
+}
+
+static void
 test_bootif_ip(void)
 {
-    const char *const *ARGV                  = NM_MAKE_STRV("BOOTIF=00:53:AB:cd:02:03", "ip=dhcp");
+    const char *const            *ARGV       = NM_MAKE_STRV("BOOTIF=00:53:AB:cd:02:03", "ip=dhcp");
     gs_unref_object NMConnection *connection = NULL;
-    NMSettingWired *              s_wired;
-    NMSettingIPConfig *           s_ip4;
-    NMSettingIPConfig *           s_ip6;
+    NMSettingWired               *s_wired;
+    NMSettingIPConfig            *s_ip4;
+    NMSettingIPConfig            *s_ip6;
 
     connection = _parse_con(ARGV, "default_connection");
 
@@ -1922,11 +2025,11 @@ test_bootif_ip(void)
 static void
 test_neednet_no_args(void)
 {
-    const char *const *ARGV                  = NM_MAKE_STRV("rd.neednet");
+    const char *const            *ARGV       = NM_MAKE_STRV("rd.neednet");
     gs_unref_object NMConnection *connection = NULL;
-    NMSettingWired *              s_wired;
-    NMSettingIPConfig *           s_ip4;
-    NMSettingIPConfig *           s_ip6;
+    NMSettingWired               *s_wired;
+    NMSettingIPConfig            *s_ip4;
+    NMSettingIPConfig            *s_ip6;
 
     connection = _parse_con(ARGV, "default_connection");
 
@@ -1954,12 +2057,12 @@ static void
 test_neednet_args(void)
 {
     gs_unref_hashtable GHashTable *connections = NULL;
-    const char *const *            ARGV        = NM_MAKE_STRV("rd.neednet",
+    const char *const             *ARGV        = NM_MAKE_STRV("rd.neednet",
                                            "ip=eno1:dhcp",
                                            "ip=172.25.1.100::172.25.1.1:24::eno2",
                                            "bridge=br0:eno3");
-    NMConnection *                 connection;
-    NMSettingConnection *          s_con;
+    NMConnection                  *connection;
+    NMSettingConnection           *s_con;
 
     connections = _parse_cons(ARGV);
     g_assert_cmpint(g_hash_table_size(connections), ==, 4);
@@ -2002,11 +2105,11 @@ test_neednet_args(void)
 static void
 test_bootif_no_ip(void)
 {
-    const char *const *ARGV                  = NM_MAKE_STRV("BOOTIF=00:53:AB:cd:02:03");
+    const char *const            *ARGV       = NM_MAKE_STRV("BOOTIF=00:53:AB:cd:02:03");
     gs_unref_object NMConnection *connection = NULL;
-    NMSettingWired *              s_wired;
-    NMSettingIPConfig *           s_ip4;
-    NMSettingIPConfig *           s_ip6;
+    NMSettingWired               *s_wired;
+    NMSettingIPConfig            *s_ip4;
+    NMSettingIPConfig            *s_ip6;
 
     connection = _parse_con(ARGV, "default_connection");
 
@@ -2037,10 +2140,10 @@ test_bootif_hwtype(void)
 
     for (i = 0; i < G_N_ELEMENTS(ARGV); i++) {
         gs_unref_hashtable GHashTable *connections = NULL;
-        NMConnection *                 connection;
-        NMSettingWired *               s_wired;
-        NMSettingIPConfig *            s_ip4;
-        NMSettingIPConfig *            s_ip6;
+        NMConnection                  *connection;
+        NMSettingWired                *s_wired;
+        NMSettingIPConfig             *s_ip4;
+        NMSettingIPConfig             *s_ip6;
 
         connections = _parse_cons(ARGV[i]);
         g_assert_cmpint(g_hash_table_size(connections), ==, 2);
@@ -2102,16 +2205,16 @@ static void
 test_nameserver(void)
 {
     gs_unref_hashtable GHashTable *connections = NULL;
-    const char *const *            ARGV =
+    const char *const             *ARGV =
         NM_MAKE_STRV("nameserver=1.1.1.1",
                      "ip=eth0:dhcp",
                      "ip=eth1:auto6",
                      "ip=10.11.12.13::10.11.12.1:24:foo.example.com:eth2:none",
                      "nameserver=1.0.0.1",
                      "nameserver=[2606:4700:4700::1111]");
-    NMConnection *     connection;
+    NMConnection      *connection;
     NMSettingIPConfig *s_ip;
-    gs_free char *     hostname            = NULL;
+    gs_free char      *hostname            = NULL;
     gint64             carrier_timeout_sec = 0;
 
     connections = _parse(ARGV, &hostname, &carrier_timeout_sec);
@@ -2159,10 +2262,10 @@ test_bootif_off(void)
 static void
 test_dhcp_vendor_class_id(void)
 {
-    const char *const *ARGV;
+    const char *const            *ARGV;
     gs_unref_object NMConnection *connection = NULL;
-    NMSettingIP4Config *          s_ip4;
-    gs_free char *                vci_long          = NULL;
+    NMSettingIP4Config           *s_ip4;
+    gs_free char                 *vci_long          = NULL;
     char                          vci_arg_long[512] = {0};
 
     ARGV       = NM_MAKE_STRV("rd.net.dhcp.vendor-class=testvci", "ip=eno1:dhcp");
@@ -2190,9 +2293,9 @@ test_dhcp_vendor_class_id(void)
 static void
 test_infiniband_iface(void)
 {
-    const char *const *ARGV                  = NM_MAKE_STRV("ip=ib1:dhcp");
+    const char *const            *ARGV       = NM_MAKE_STRV("ip=ib1:dhcp");
     gs_unref_object NMConnection *connection = NULL;
-    NMSettingInfiniband *         s_ib;
+    NMSettingInfiniband          *s_ib;
 
     connection = _parse_con(ARGV, "ib1");
 
@@ -2209,7 +2312,7 @@ test_infiniband_mac(void)
     const char *const *ARGV =
         NM_MAKE_STRV("ip=00-11-22-33-44-55-66-77-88-99-aa-bb-cc-dd-ee-ff-00-11-22-33:dhcp");
     gs_unref_object NMConnection *connection = NULL;
-    NMSettingInfiniband *         s_ib;
+    NMSettingInfiniband          *s_ib;
 
     connection = _parse_con(ARGV, "00:11:22:33:44:55:66:77:88:99:AA:BB:CC:DD:EE:FF:00:11:22:33");
 
@@ -2227,12 +2330,12 @@ test_infiniband_mac(void)
 static void
 test_infiniband_pkey(void)
 {
-    const char *const *const ARGV = NM_MAKE_STRV("ib.pkey=ib0.8004", "ip=ib0.8004:dhcp");
+    const char *const *const       ARGV = NM_MAKE_STRV("ib.pkey=ib0.8004", "ip=ib0.8004:dhcp");
     gs_unref_hashtable GHashTable *connections = NULL;
-    NMConnection *                 connection;
-    NMSettingInfiniband *          s_ib;
-    NMSettingIPConfig *            s_ip4;
-    NMSettingIPConfig *            s_ip6;
+    NMConnection                  *connection;
+    NMSettingInfiniband           *s_ib;
+    NMSettingIPConfig             *s_ip4;
+    NMSettingIPConfig             *s_ip6;
 
     connections = _parse_cons(ARGV);
     g_assert_cmpint(g_hash_table_size(connections), ==, 1);
@@ -2262,8 +2365,8 @@ static void
 test_carrier_timeout(void)
 {
     gs_unref_hashtable GHashTable *connections         = NULL;
-    const char *const *            ARGV                = NM_MAKE_STRV("rd.net.timeout.carrier=20");
-    gs_free char *                 hostname            = NULL;
+    const char *const             *ARGV                = NM_MAKE_STRV("rd.net.timeout.carrier=20");
+    gs_free char                  *hostname            = NULL;
     gint64                         carrier_timeout_sec = 0;
 
     connections = _parse(ARGV, &hostname, &carrier_timeout_sec);
@@ -2272,203 +2375,145 @@ test_carrier_timeout(void)
     g_assert_cmpint(carrier_timeout_sec, ==, 20);
 }
 
-/* Obs1.: this function is implemented as macro, and not as a function,
- * to show the correct line in g_assert() debug */
-#define _ethtool_connection_check_and_get(connection)                                \
-    ({                                                                               \
-        NMSettingWired *_s_wired    = NULL;                                          \
-        NMConnection *  _connection = connection;                                    \
-                                                                                     \
-        g_assert(nm_connection_get_setting_connection(_connection));                 \
-        g_assert(nm_connection_is_type(_connection, NM_SETTING_WIRED_SETTING_NAME)); \
-        g_assert(nm_connection_get_setting_ip4_config(_connection));                 \
-        g_assert(nm_connection_get_setting_ip6_config(_connection));                 \
-        _s_wired = nm_connection_get_setting_wired(_connection);                     \
-        g_assert(NM_IS_SETTING_WIRED(_s_wired));                                     \
-                                                                                     \
-        _s_wired;                                                                    \
-    })
+#define _ethtool_check_inval(arg)                                 \
+    G_STMT_START                                                  \
+    {                                                             \
+        gs_unref_hashtable GHashTable *_connections2 = NULL;      \
+                                                                  \
+        _connections2 = _parse_cons(NM_MAKE_STRV(arg));           \
+                                                                  \
+        g_test_assert_expected_messages();                        \
+                                                                  \
+        g_assert_cmpint(g_hash_table_size(_connections2), ==, 0); \
+    }                                                             \
+    G_STMT_END
+
+#define _ethtool_check_v(strv, autoneg, speed)                                                     \
+    G_STMT_START                                                                                   \
+    {                                                                                              \
+        gs_unref_object NMConnection *_connection = NULL;                                          \
+        NMSettingWired               *_s_wired;                                                    \
+        typeof(speed)                 _speed = speed;                                              \
+                                                                                                   \
+        _connection = _parse_con(strv, "eth0");                                                    \
+                                                                                                   \
+        g_test_assert_expected_messages();                                                         \
+                                                                                                   \
+        g_assert(nm_connection_get_setting_connection(_connection));                               \
+        g_assert(nm_connection_is_type(_connection, NM_SETTING_WIRED_SETTING_NAME));               \
+        g_assert(nm_connection_get_setting_ip4_config(_connection));                               \
+        g_assert(nm_connection_get_setting_ip6_config(_connection));                               \
+        _s_wired = nm_connection_get_setting_wired(_connection);                                   \
+        g_assert(NM_IS_SETTING_WIRED(_s_wired));                                                   \
+                                                                                                   \
+        g_assert_cmpint(nm_setting_wired_get_auto_negotiate(_s_wired), ==, (autoneg));             \
+        g_assert_cmpint(nm_setting_wired_get_speed(_s_wired), ==, _speed);                         \
+        g_assert_cmpstr(nm_setting_wired_get_duplex(_s_wired), ==, (_speed == 0 ? NULL : "full")); \
+    }                                                                                              \
+    G_STMT_END
+
+#define _ethtool_check(arg, autoneg, speed) \
+    _ethtool_check_v(NM_MAKE_STRV("" arg ""), (autoneg), (speed))
 
 static void
 test_rd_ethtool(void)
 {
-    const char *const *ARGV        = NULL;
-    NMConnection *     connection  = NULL;
-    GHashTable *       connections = NULL;
-    NMSettingWired *   s_wired     = NULL;
+    NMTST_EXPECT_NM_WARN("cmdline-reader: rd.ethtool: interface unspecified. Ignore");
+    _ethtool_check_inval("rd.ethtool=");
 
-    ARGV = NM_MAKE_STRV("rd.ethtool=");
-    NMTST_EXPECT_NM_WARN("cmdline-reader: Impossible to set rd.ethtool options: invalid format");
-    connections = _parse_cons(ARGV);
-    g_assert_cmpint(g_hash_table_size(connections), ==, 0);
-    g_hash_table_unref(connections);
-    g_test_assert_expected_messages();
+    _ethtool_check("rd.ethtool=eth0", FALSE, 0);
 
-    ARGV = NM_MAKE_STRV("rd.ethtool=eth0");
-    NMTST_EXPECT_NM_WARN("cmdline-reader: Could not find rd.ethtool options to set");
-    connections = _parse_cons(ARGV);
-    g_assert_cmpint(g_hash_table_size(connections), ==, 0);
-    g_hash_table_unref(connections);
-    g_test_assert_expected_messages();
+    _ethtool_check("rd.ethtool=eth0:", FALSE, 0);
 
-    ARGV = NM_MAKE_STRV("rd.ethtool=eth0:");
-    NMTST_EXPECT_NM_WARN("cmdline-reader: Could not find rd.ethtool options to set");
-    connections = _parse_cons(ARGV);
-    g_assert_cmpint(g_hash_table_size(connections), ==, 0);
-    g_hash_table_unref(connections);
-    g_test_assert_expected_messages();
+    NMTST_EXPECT_NM_WARN("cmdline-reader: rd.ethtool: interface unspecified. Ignore");
+    _ethtool_check_inval("rd.ethtool=::");
 
-    ARGV = NM_MAKE_STRV("rd.ethtool=::");
-    NMTST_EXPECT_NM_WARN("cmdline-reader: Impossible to set rd.ethtool options: invalid format");
-    connections = _parse_cons(ARGV);
-    g_assert_cmpint(g_hash_table_size(connections), ==, 0);
-    g_test_assert_expected_messages();
-    g_hash_table_unref(connections);
+    _ethtool_check("rd.ethtool=eth0:on", TRUE, 0);
+    _ethtool_check("rd.ethtool=eth0:on:", TRUE, 0);
+    _ethtool_check("rd.ethtool=eth0:on::", TRUE, 0);
+    _ethtool_check("rd.ethtool=eth0:on:0:", TRUE, 0);
 
-    ARGV       = NM_MAKE_STRV("rd.ethtool=eth0:on");
-    connection = _parse_con(ARGV, "eth0");
-    s_wired    = _ethtool_connection_check_and_get(connection);
-    g_assert(nm_setting_wired_get_auto_negotiate(s_wired));
-    g_object_unref(connection);
+    NMTST_EXPECT_NM_WARN("cmdline-reader: rd.ethtool: autoneg ignored. Cannot disable autoneg "
+                         "without setting speed");
+    _ethtool_check("rd.ethtool=eth0:off", FALSE, 0);
 
-    ARGV       = NM_MAKE_STRV("rd.ethtool=eth0:off");
-    connection = _parse_con(ARGV, "eth0");
-    s_wired    = _ethtool_connection_check_and_get(connection);
-    g_assert(!nm_setting_wired_get_auto_negotiate(s_wired));
-    g_object_unref(connection);
+    _ethtool_check("rd.ethtool=eth0:true", TRUE, 0);
 
-    ARGV       = NM_MAKE_STRV("rd.ethtool=eth0:true");
-    connection = _parse_con(ARGV, "eth0");
-    s_wired    = _ethtool_connection_check_and_get(connection);
-    g_assert(nm_setting_wired_get_auto_negotiate(s_wired));
-    g_object_unref(connection);
+    NMTST_EXPECT_NM_WARN("cmdline-reader: rd.ethtool: autoneg ignored. Cannot disable autoneg "
+                         "without setting speed");
+    _ethtool_check("rd.ethtool=eth0:false", FALSE, 0);
 
-    ARGV       = NM_MAKE_STRV("rd.ethtool=eth0:false");
-    connection = _parse_con(ARGV, "eth0");
-    s_wired    = _ethtool_connection_check_and_get(connection);
-    g_assert(!nm_setting_wired_get_auto_negotiate(s_wired));
-    g_object_unref(connection);
+    _ethtool_check("rd.ethtool=eth0:1", TRUE, 0);
 
-    ARGV       = NM_MAKE_STRV("rd.ethtool=eth0:1");
-    connection = _parse_con(ARGV, "eth0");
-    s_wired    = _ethtool_connection_check_and_get(connection);
-    g_assert(nm_setting_wired_get_auto_negotiate(s_wired));
-    g_object_unref(connection);
+    NMTST_EXPECT_NM_WARN("cmdline-reader: rd.ethtool: autoneg ignored. Cannot disable autoneg "
+                         "without setting speed");
+    _ethtool_check("rd.ethtool=eth0:0", FALSE, 0);
 
-    ARGV       = NM_MAKE_STRV("rd.ethtool=eth0:0");
-    connection = _parse_con(ARGV, "eth0");
-    s_wired    = _ethtool_connection_check_and_get(connection);
-    g_assert(!nm_setting_wired_get_auto_negotiate(s_wired));
-    g_object_unref(connection);
+    NMTST_EXPECT_NM_WARN("cmdline-reader: rd.ethtool: autoneg invalid. Must be boolean or empty");
+    _ethtool_check("rd.ethtool=eth0:randomstring", FALSE, 0);
 
-    ARGV = NM_MAKE_STRV("rd.ethtool=eth0:randomstring");
-    NMTST_EXPECT_NM_WARN(
-        "cmdline-reader: Invalid value for rd.ethtool.autoneg, rd.ethtool.autoneg was not set");
-    connections = _parse_cons(ARGV);
-    g_assert_cmpint(g_hash_table_size(connections), ==, 1);
-    g_test_assert_expected_messages();
-    g_hash_table_unref(connections);
+    _ethtool_check("rd.ethtool=eth0::", FALSE, 0);
 
-    ARGV        = NM_MAKE_STRV("rd.ethtool=eth0::");
-    connections = _parse_cons(ARGV);
-    g_assert_cmpint(g_hash_table_size(connections), ==, 1);
-    g_hash_table_unref(connections);
+    NMTST_EXPECT_NM_WARN("cmdline-reader: rd.ethtool: speed invalid. Must be an integer or empty");
+    _ethtool_check("rd.ethtool=eth0::astring", FALSE, 0);
 
-    ARGV = NM_MAKE_STRV("rd.ethtool=eth0::astring");
-    NMTST_EXPECT_NM_WARN(
-        "cmdline-reader: Invalid value for rd.ethtool.speed, rd.ethtool.speed was not set");
-    connections = _parse_cons(ARGV);
-    g_assert_cmpint(g_hash_table_size(connections), ==, 1);
-    g_test_assert_expected_messages();
-    g_hash_table_unref(connections);
+    NMTST_EXPECT_NM_WARN("cmdline-reader: rd.ethtool: speed invalid. Must be an integer or empty");
+    _ethtool_check("rd.ethtool=eth0::1000000000000000000000000000000000000", FALSE, 0);
 
-    ARGV = NM_MAKE_STRV("rd.ethtool=eth0::1000000000000000000000000000000000000");
-    NMTST_EXPECT_NM_WARN(
-        "cmdline-reader: Invalid value for rd.ethtool.speed, rd.ethtool.speed was not set");
-    connections = _parse_cons(ARGV);
-    g_assert_cmpint(g_hash_table_size(connections), ==, 1);
-    g_test_assert_expected_messages();
-    g_hash_table_unref(connections);
+    NMTST_EXPECT_NM_WARN("cmdline-reader: rd.ethtool: speed invalid. Must be an integer or empty");
+    _ethtool_check("rd.ethtool=eth0::0.67", FALSE, 0);
 
-    ARGV = NM_MAKE_STRV("rd.ethtool=eth0::0.67");
-    NMTST_EXPECT_NM_WARN(
-        "cmdline-reader: Invalid value for rd.ethtool.speed, rd.ethtool.speed was not set");
-    connections = _parse_cons(ARGV);
-    g_assert_cmpint(g_hash_table_size(connections), ==, 1);
-    g_test_assert_expected_messages();
-    g_hash_table_unref(connections);
+    NMTST_EXPECT_NM_WARN("cmdline-reader: rd.ethtool: speed invalid. Must be an integer or empty");
+    _ethtool_check("rd.ethtool=eth0::-23", FALSE, 0);
 
-    ARGV = NM_MAKE_STRV("rd.ethtool=eth0::-23");
-    NMTST_EXPECT_NM_WARN(
-        "cmdline-reader: Invalid value for rd.ethtool.speed, rd.ethtool.speed was not set");
-    connections = _parse_cons(ARGV);
-    g_assert_cmpint(g_hash_table_size(connections), ==, 1);
-    g_test_assert_expected_messages();
-    g_hash_table_unref(connections);
+    NMTST_EXPECT_NM_WARN("cmdline-reader: rd.ethtool: speed invalid. Must be an integer or empty");
+    _ethtool_check("rd.ethtool=eth0::-23:", FALSE, 0);
 
-    ARGV       = NM_MAKE_STRV("rd.ethtool=eth0:1:10");
-    connection = _parse_con(ARGV, "eth0");
-    s_wired    = _ethtool_connection_check_and_get(connection);
-    g_assert(nm_setting_wired_get_auto_negotiate(s_wired));
-    g_assert_cmpint(nm_setting_wired_get_speed(s_wired), ==, 10);
-    g_assert_cmpstr(nm_setting_wired_get_duplex(s_wired), ==, "full");
-    g_object_unref(connection);
+    NMTST_EXPECT_NM_WARN("cmdline-reader: rd.ethtool: speed invalid. Must be an integer or empty");
+    NMTST_EXPECT_NM_WARN("cmdline-reader: rd.ethtool: extra argument ignored");
+    _ethtool_check("rd.ethtool=eth0::-23::", FALSE, 0);
 
-    ARGV       = NM_MAKE_STRV("rd.ethtool=eth0::100");
-    connection = _parse_con(ARGV, "eth0");
-    s_wired    = _ethtool_connection_check_and_get(connection);
-    g_assert(!nm_setting_wired_get_auto_negotiate(s_wired));
-    g_assert_cmpint(nm_setting_wired_get_speed(s_wired), ==, 100);
-    g_assert_cmpstr(nm_setting_wired_get_duplex(s_wired), ==, "full");
-    g_object_unref(connection);
+    NMTST_EXPECT_NM_WARN("cmdline-reader: rd.ethtool: speed invalid. Must be an integer or empty");
+    NMTST_EXPECT_NM_WARN("cmdline-reader: rd.ethtool: extra argument ignored");
+    _ethtool_check("rd.ethtool=eth0::-23::foo", FALSE, 0);
 
-    ARGV = NM_MAKE_STRV("rd.ethtool=eth0:::bogus");
-    NMTST_EXPECT_NM_WARN(
-        "cmdline-reader: Invalid extra argument 'bogus' for rd.ethtool, this value was not set");
-    connections = _parse_cons(ARGV);
-    g_assert_cmpint(g_hash_table_size(connections), ==, 1);
-    g_test_assert_expected_messages();
-    g_hash_table_unref(connections);
+    _ethtool_check("rd.ethtool=eth0:1:10", TRUE, 10);
 
-    ARGV = NM_MAKE_STRV("rd.ethtool=eth0::10:bogus");
-    NMTST_EXPECT_NM_WARN(
-        "cmdline-reader: Invalid extra argument 'bogus' for rd.ethtool, this value was not set");
-    connection = _parse_con(ARGV, "eth0");
-    s_wired    = _ethtool_connection_check_and_get(connection);
-    g_assert(!nm_setting_wired_get_auto_negotiate(s_wired));
-    g_assert_cmpint(nm_setting_wired_get_speed(s_wired), ==, 10);
-    g_assert_cmpstr(nm_setting_wired_get_duplex(s_wired), ==, "full");
-    g_test_assert_expected_messages();
-    g_object_unref(connection);
+    _ethtool_check("rd.ethtool=eth0::100", FALSE, 100);
 
-    ARGV = NM_MAKE_STRV("rd.ethtool=eth0:on:100:bogus");
-    NMTST_EXPECT_NM_WARN(
-        "cmdline-reader: Invalid extra argument 'bogus' for rd.ethtool, this value was not set");
-    connection = _parse_con(ARGV, "eth0");
-    s_wired    = _ethtool_connection_check_and_get(connection);
-    g_assert(nm_setting_wired_get_auto_negotiate(s_wired));
-    g_assert_cmpint(nm_setting_wired_get_speed(s_wired), ==, 100);
-    g_assert_cmpstr(nm_setting_wired_get_duplex(s_wired), ==, "full");
-    g_test_assert_expected_messages();
-    g_object_unref(connection);
+    NMTST_EXPECT_NM_WARN("cmdline-reader: rd.ethtool: extra argument ignored");
+    _ethtool_check("rd.ethtool=eth0:::bogus", FALSE, 0);
 
-    ARGV = NM_MAKE_STRV("rd.ethtool=eth0:on:100:bogus");
-    NMTST_EXPECT_NM_WARN(
-        "cmdline-reader: Invalid extra argument 'bogus' for rd.ethtool, this value was not set");
-    connection = _parse_con(ARGV, "eth0");
-    s_wired    = _ethtool_connection_check_and_get(connection);
-    g_assert(nm_setting_wired_get_auto_negotiate(s_wired));
-    g_assert_cmpint(nm_setting_wired_get_speed(s_wired), ==, 100);
-    g_assert_cmpstr(nm_setting_wired_get_duplex(s_wired), ==, "full");
-    g_test_assert_expected_messages();
-    g_object_unref(connection);
+    NMTST_EXPECT_NM_WARN("cmdline-reader: rd.ethtool: extra argument ignored");
+    _ethtool_check("rd.ethtool=eth0::10:bogus", FALSE, 10);
 
-    ARGV = NM_MAKE_STRV("rd.ethtool=:::");
-    NMTST_EXPECT_NM_WARN("cmdline-reader: Impossible to set rd.ethtool options: invalid format");
-    connections = _parse_cons(ARGV);
-    g_assert_cmpint(g_hash_table_size(connections), ==, 0);
-    g_test_assert_expected_messages();
-    g_hash_table_unref(connections);
+    NMTST_EXPECT_NM_WARN("cmdline-reader: rd.ethtool: extra argument ignored");
+    _ethtool_check("rd.ethtool=eth0:on:100:bogus", TRUE, 100);
+
+    NMTST_EXPECT_NM_WARN("cmdline-reader: rd.ethtool: interface unspecified. Ignore");
+    _ethtool_check_inval("rd.ethtool=:::");
+
+    NMTST_EXPECT_NM_WARN("cmdline-reader: rd.ethtool: autoneg ignored. Cannot disable autoneg "
+                         "without setting speed");
+    _ethtool_check_v(NM_MAKE_STRV("rd.ethtool=eth0:off:0", "rd.ethtool=eth0:on"), TRUE, 0);
+    NMTST_EXPECT_NM_WARN("cmdline-reader: rd.ethtool: autoneg ignored. Cannot disable autoneg "
+                         "without setting speed");
+    NMTST_EXPECT_NM_WARN("cmdline-reader: rd.ethtool: autoneg ignored. Cannot disable autoneg "
+                         "without setting speed");
+    _ethtool_check_v(NM_MAKE_STRV("rd.ethtool=eth0:off:0", "rd.ethtool=eth0:off"), FALSE, 0);
+    _ethtool_check_v(NM_MAKE_STRV("rd.ethtool=eth0:on:0", "rd.ethtool=eth0:on"), TRUE, 0);
+    NMTST_EXPECT_NM_WARN("cmdline-reader: rd.ethtool: autoneg ignored. Cannot disable autoneg "
+                         "without setting speed");
+    _ethtool_check_v(NM_MAKE_STRV("rd.ethtool=eth0:on:0", "rd.ethtool=eth0:off"), FALSE, 0);
+    _ethtool_check_v(NM_MAKE_STRV("rd.ethtool=eth0:off:100", "rd.ethtool=eth0:on"), TRUE, 0);
+    NMTST_EXPECT_NM_WARN("cmdline-reader: rd.ethtool: autoneg ignored. Cannot disable autoneg "
+                         "without setting speed");
+    _ethtool_check_v(NM_MAKE_STRV("rd.ethtool=eth0:off:100", "rd.ethtool=eth0:off"), FALSE, 0);
+    _ethtool_check_v(NM_MAKE_STRV("rd.ethtool=eth0:on:100", "rd.ethtool=eth0:on"), TRUE, 0);
+    NMTST_EXPECT_NM_WARN("cmdline-reader: rd.ethtool: autoneg ignored. Cannot disable autoneg "
+                         "without setting speed");
+    _ethtool_check_v(NM_MAKE_STRV("rd.ethtool=eth0:on:100", "rd.ethtool=eth0:off"), FALSE, 0);
+    _ethtool_check_v(NM_MAKE_STRV("rd.ethtool=eth0:off:100", "rd.ethtool=eth0:"), FALSE, 100);
 }
 
 /*****************************************************************************/
@@ -2534,6 +2579,7 @@ main(int argc, char **argv)
     g_test_add_func("/initrd/cmdline/rd_znet/legacy", test_rd_znet_legacy);
     g_test_add_func("/initrd/cmdline/rd_znet/no_ip", test_rd_znet_no_ip);
     g_test_add_func("/initrd/cmdline/rd_znet/empty", test_rd_znet_malformed);
+    g_test_add_func("/initrd/cmdline/rd_znet/ifnames", test_rd_znet_ifnames);
     g_test_add_func("/initrd/cmdline/bootif/ip", test_bootif_ip);
     g_test_add_func("/initrd/cmdline/bootif/no_ip", test_bootif_no_ip);
     g_test_add_func("/initrd/cmdline/bootif/hwtype", test_bootif_hwtype);

@@ -7,8 +7,8 @@ dnl  - add corresponding NM_VERSION_x_y_z macros in
 dnl    "shared/nm-version-macros.h.in"
 dnl  - update number in meson.build
 m4_define([nm_major_version], [1])
-m4_define([nm_minor_version], [32])
-m4_define([nm_micro_version], [12])
+m4_define([nm_minor_version], [42])
+m4_define([nm_micro_version], [4])
 m4_define([nm_version],
           [nm_major_version.nm_minor_version.nm_micro_version])
 
@@ -21,7 +21,7 @@ AC_CONFIG_MACRO_DIR([m4])
 AC_CONFIG_AUX_DIR([build-aux])
 AC_REQUIRE_AUX_FILE([tap-driver.sh])
 
-AM_INIT_AUTOMAKE(1.12 tar-ustar no-dist-gzip dist-xz -Wno-portability)  dnl NB: Do not [quote] this parameter.
+AM_INIT_AUTOMAKE(1.12 foreign tar-ustar no-dist-gzip dist-xz -Wno-portability)  dnl NB: Do not [quote] this parameter.
 AM_MAINTAINER_MODE([enable])
 AM_SILENT_RULES([yes])
 
@@ -138,10 +138,10 @@ AC_CHECK_DECLS([getrandom],
 dnl
 dnl translation support
 dnl
-IT_PROG_INTLTOOL([0.40.0])
-
 AM_GNU_GETTEXT([external])
-AM_GNU_GETTEXT_VERSION([0.17])
+# Remove AM_GNU_GETTEXT_VERSION once autoreconf supports REQUIRE_VERSION
+AM_GNU_GETTEXT_VERSION([0.19.8])
+AM_GNU_GETTEXT_REQUIRE_VERSION([0.19.8])
 
 GETTEXT_PACKAGE=NetworkManager
 AC_SUBST(GETTEXT_PACKAGE)
@@ -166,7 +166,6 @@ AC_SUBST(nmdatadir, '${datadir}'/$PACKAGE, [NetworkManager shared data directory
 AC_SUBST(nmstatedir, '${localstatedir}'/lib/$PACKAGE, [NetworkManager persistent state directory])
 AC_SUBST(nmrundir, '${runstatedir}'/$PACKAGE, [NetworkManager runtime state directory])
 
-AC_GNU_SOURCE
 AC_CHECK_FUNCS([__secure_getenv secure_getenv])
 
 # Alternative configuration plugins
@@ -186,16 +185,6 @@ AC_ARG_WITH(config-plugins-default,
             AS_HELP_STRING([--with-config-plugins-default=PLUGINS],
                            [Default configuration option for main.plugins setting, used as fallback if the configuration option is unset]),
             [config_plugins_default="$withval"], [config_plugins_default=""])
-if test -z "$config_plugins_default" -o "$config_plugins_default" = no; then
-	config_plugins_default=''
-	test "$enable_ifcfg_rh" = "yes"           && config_plugins_default="$config_plugins_default,ifcfg-rh"
-	test "$enable_ifupdown" = "yes"           && config_plugins_default="$config_plugins_default,ifupdown"
-	config_plugins_default="${config_plugins_default#,}"
-fi
-
-test "$enable_ifcfg_rh" = "yes"           && distro_plugins="$distro_plugins,ifcfg-rh"
-test "$enable_ifupdown" = "yes"           && distro_plugins="$distro_plugins,ifupdown"
-distro_plugins="${distro_plugins#,}"
 
 AC_DEFINE_UNQUOTED(NM_CONFIG_DEFAULT_MAIN_PLUGINS, "$config_plugins_default", [Default configuration option for main.plugins setting])
 
@@ -203,6 +192,18 @@ if test "$enable_ifcfg_rh" = "yes"; then
 	DISTRO_NETWORK_SERVICE=network.service
 fi
 AC_SUBST(DISTRO_NETWORK_SERVICE)
+
+if test "$enable_ifcfg_rh" = yes; then
+	AC_DEFINE(WITH_CONFIG_PLUGIN_IFCFG_RH, 1, [Build with ifcfg-rh settings plugin])
+else
+	AC_DEFINE(WITH_CONFIG_PLUGIN_IFCFG_RH, 0, [Build with ifcfg-rh settings plugin])
+fi
+
+if test "$enable_ifupdown" = yes; then
+	AC_DEFINE(WITH_CONFIG_PLUGIN_IFUPDOWN, 1, [Build with ifupdown settings plugin])
+else
+	AC_DEFINE(WITH_CONFIG_PLUGIN_IFUPDOWN, 0, [Build with ifupdown settings plugin])
+fi
 
 # Code coverage
 GNOME_CODE_COVERAGE
@@ -305,11 +306,12 @@ AC_ARG_WITH(udev-dir,
                            [Absolute path of the udev base directory. Set to 'no' not to install the udev rules]),
             [], [with_udev_dir="yes"])
 if test "$with_udev_dir" != 'no'; then
-	if test "$with_udev_dir" != 'yes' && printf '%s' "$with_udev_dir" | grep -v -q '^/'; then
-		AC_MSG_ERROR([--with-udev-dir must be an absolute path or 'yes' or 'no'. Instead it is '$with_udev_dir'])
-	fi
-	if test "$with_udev_dir" = 'yes'; then
-		with_udev_dir="\$(prefix)/lib/udev"
+	if test "$with_udev_dir" = 'yes' -o "$with_udev_dir" = "" ; then
+		with_udev_dir="\${prefix}/lib/udev"
+	else
+		if printf '%s' "$with_udev_dir" | grep -v -q '^/'; then
+			AC_MSG_ERROR([--with-udev-dir must be an absolute path or 'yes' or 'no'. Instead it is '$with_udev_dir'])
+		fi
 	fi
 	UDEV_DIR="$with_udev_dir"
 	AC_SUBST(UDEV_DIR)
@@ -322,7 +324,7 @@ AC_ARG_WITH([systemdsystemunitdir],
                            [Directory for systemd service files]))
 # default location
 AS_IF([test -z "$with_systemdsystemunitdir" && $PKG_CONFIG systemd],
-      with_systemdsystemunitdir="\$(prefix)/lib/systemd/system")
+      with_systemdsystemunitdir=`$PKG_CONFIG systemd '--define-variable=prefix=${prefix}' '--define-variable=root_prefix=${prefix}' --variable systemdsystemunitdir`)
 AS_IF([test -z "$with_systemdsystemunitdir"], with_systemdsystemunitdir=no)
 # add conditional and subst
 AM_CONDITIONAL(HAVE_SYSTEMD, [test "$with_systemdsystemunitdir" != no])
@@ -404,6 +406,25 @@ fi
 AC_DEFINE_UNQUOTED(NM_CONFIG_DEFAULT_LOGGING_BACKEND, "$nm_config_logging_backend_default", [Default configuration option for logging.backend])
 NM_CONFIG_DEFAULT_LOGGING_BACKEND_TEXT="$nm_config_logging_backend_default"
 AC_SUBST(NM_CONFIG_DEFAULT_LOGGING_BACKEND_TEXT)
+
+AC_ARG_WITH(config-wifi-backend-default,
+            AS_HELP_STRING([--with-config-wifi-backend-default=backend],
+                           [Default value for wifi.backend]),
+            nm_config_wifi_backend_default="$withval",
+            nm_config_wifi_backend_default="wpa_supplicant")
+
+if test "$nm_config_wifi_backend_default" != 'iwd' \
+     -a "$nm_config_wifi_backend_default" != 'wpa_supplicant'; then
+	AC_MSG_ERROR([The default Wi-Fi backend must be either wpa_supplicant or iwd.])
+fi
+if test "$nm_config_wifi_backend_default" = "iwd"; then
+	if test "$ac_with_iwd" != "yes"; then
+		AC_MSG_ERROR([Setting the default Wi-Fi backend to iwd requires iwd support.])
+	fi
+fi
+AC_DEFINE_UNQUOTED(NM_CONFIG_DEFAULT_WIFI_BACKEND, "$nm_config_wifi_backend_default", [Default configuration option for wifi.backend])
+NM_CONFIG_DEFAULT_WIFI_BACKEND_TEXT="$nm_config_wifi_backend_default"
+AC_SUBST(NM_CONFIG_DEFAULT_WIFI_BACKEND_TEXT)
 
 # Session tracking support
 AC_ARG_WITH(systemd-logind,
@@ -698,7 +719,7 @@ AM_CONDITIONAL(HAVE_CRYPTO_GNUTLS, test "${have_crypto_gnutls}" = 'yes')
 AM_CONDITIONAL(HAVE_CRYPTO_NSS, test "${have_crypto_nss}" = 'yes')
 
 AC_ARG_WITH(crypto,
-            AS_HELP_STRING([--with-crypto=nss|gnutls],
+            AS_HELP_STRING([--with-crypto=nss|gnutls|null],
                            [Cryptography library to use for certificate and key operations]),
             with_crypto=$withval,
             with_crypto=nss)
@@ -710,8 +731,10 @@ elif test "$with_crypto" = 'gnutls'; then
 	if test "${have_crypto_gnutls}" != "yes"; then
 		AC_MSG_ERROR([No usable gnutls found for --with-crypto=gnutls])
 	fi
+elif test "$with_crypto" = 'null'; then
+	:
 else
-	AC_MSG_ERROR([Please choose either 'nss' or 'gnutls' for certificate and crypto operations])
+	AC_MSG_ERROR([Please choose either 'nss', 'gnutls' or 'null' for certificate and crypto operations])
 fi
 AM_CONDITIONAL(WITH_NSS, test "$with_crypto" = 'nss')
 AM_CONDITIONAL(WITH_GNUTLS, test "$with_crypto" = 'gnutls')
@@ -723,7 +746,6 @@ AC_SUBST(GLIB_MKENUMS)
 
 AC_ARG_WITH(dbus-sys-dir,
             AS_HELP_STRING([--with-dbus-sys-dir=DIR], [where D-BUS system.d directory is]))
-
 if test -n "$with_dbus_sys_dir" ; then
 	DBUS_SYS_DIR="$with_dbus_sys_dir"
 else
@@ -852,6 +874,11 @@ if test "${enable_ovs}" != "no"; then
 	fi
 fi
 AM_CONDITIONAL(WITH_OPENVSWITCH, test "${enable_ovs}" = "yes")
+if test "${enable_ovs}" = "yes" ; then
+    AC_DEFINE(WITH_OPENVSWITCH, 1, [Whether we build with OVS plugin])
+else
+    AC_DEFINE(WITH_OPENVSWITCH, 0, [Whether we build with OVS plugin])
+fi
 
 # DHCP client support
 AC_ARG_WITH([dhclient],
@@ -979,18 +1006,6 @@ fi
 AC_DEFINE_UNQUOTED(DNSMASQ_PATH, "$DNSMASQ_PATH", [Define to path of dnsmasq binary])
 AC_SUBST(DNSMASQ_PATH)
 
-# dnssec-trigger-script path
-AC_ARG_WITH(dnssec_trigger,
-            AS_HELP_STRING([--with-dnssec-trigger=/path/to/dnssec-trigger-script], [path to unbound dnssec-trigger-script]))
-if test "x${with_dnssec_trigger}" = x; then
-	AC_PATH_PROG(DNSSEC_TRIGGER_PATH, dnssec-trigger-script, /usr/libexec/dnssec-trigger-script,
-	             /usr/local/libexec:/usr/local/lib:/usr/local/lib/dnssec-trigger:/usr/libexec:/usr/lib:/usr/lib/dnssec-trigger)
-else
-	DNSSEC_TRIGGER_PATH="$with_dnssec_trigger"
-fi
-AC_DEFINE_UNQUOTED(DNSSEC_TRIGGER_PATH, "$DNSSEC_TRIGGER_PATH", [Define to path of unbound dnssec-trigger-script])
-AC_SUBST(DNSSEC_TRIGGER_PATH)
-
 # system CA certificates path
 AC_ARG_WITH(system-ca-path,
             AS_HELP_STRING([--with-system-ca-path=/path/to/ssl/certs], [path to system CA certificates]))
@@ -1044,13 +1059,21 @@ fi
 
 PKG_CHECK_MODULES(LIBNDP, [libndp])
 
+AX_LIB_READLINE
+
 AC_ARG_WITH(nmcli,
-            AS_HELP_STRING([--with-nmcli=yes|no], [Build nmcli]))
-if test "$with_nmcli" != no; then
-	AX_LIB_READLINE
-	build_nmcli=yes
+            AS_HELP_STRING([--with-nmcli=yes|no], [Build nmcli]),
+            [],
+            [with_nmcli=yes])
+if test "$with_nmcli" == yes; then
+    if test "$with_readline" = none; then
+        AC_MSG_FAILURE([nmcli requires readline library. Use --with-readline or --with-nmcli=no])
+    fi
+    build_nmcli=yes
+elif test "$with_nmcli" == no; then
+    build_nmcli=no
 else
-	build_nmcli=no
+    AC_MSG_ERROR([invalid --with-nmcli option. Valid options are --with-nmcli=yes|no])
 fi
 AM_CONDITIONAL(BUILD_NMCLI, test "$build_nmcli" = yes)
 
@@ -1091,7 +1114,7 @@ fi
 
 NM_COMPILER_WARNINGS(AM_CFLAGS, ${more_warnings_default})
 
-NM_COMPILER_FLAG(LIBSYSTEMD_NM_CFLAGS, "-Wno-gnu-variable-sized-type-not-at-end")
+NM_COMPILER_WARNING_FLAG(LIBSYSTEMD_NM_CFLAGS, "-Wno-gnu-variable-sized-type-not-at-end")
 AC_SUBST(LIBSYSTEMD_NM_CFLAGS)
 
 CC_CHECK_FLAGS_APPEND([with_cflags], [CFLAGS], [\
@@ -1240,7 +1263,7 @@ else
 fi
 AC_SUBST(NM_LOG_COMPILER, 'LOG_COMPILER = "$(top_srcdir)/tools/run-nm-test.sh" --called-from-make "$(abs_top_builddir)" "$(LIBTOOL)" "$(with_valgrind)" "'"$with_valgrind_suppressions"'" --launch-dbus=auto')
 
-AX_PTHREAD([,AC_MSG_ERROR([Threads are required for the NetworkManager tests])])
+AX_PTHREAD([], [AC_MSG_ERROR([Threads are required for the NetworkManager tests])])
 
 if test -n "$PYTHON" ; then
     AM_PATH_PYTHON([], [], [])
@@ -1285,15 +1308,12 @@ else
 	have_introspection=no
 fi
 
-# check for python black. And check if all files are formatted with python black
-AC_PATH_PROG(BLACK, black)
-AM_CONDITIONAL(WITH_PYTHON_BLACK, test "${BLACK}" != "")
-
 # check for pregenerated manpages and documentation to be installed
 use_pregen_docs=no
 if test "$build_docs" != "yes" -a \
-        -f "$srcdir"/man/NetworkManager.8 -a \
         -f "$srcdir"/man/NetworkManager-dispatcher.8 -a \
+        -f "$srcdir"/man/NetworkManager-wait-online.service.8 -a \
+        -f "$srcdir"/man/NetworkManager.8 -a \
         -f "$srcdir"/man/NetworkManager.conf.5 -a \
         -f "$srcdir"/man/nm-online.1 -a \
         -f "$srcdir"/man/nmcli-examples.7 -a \
@@ -1329,7 +1349,6 @@ docs/api/Makefile
 docs/api/version.xml
 docs/libnm/Makefile
 docs/libnm/version.xml
-NetworkManager.pc
 src/libnm-client-impl/libnm.pc
 src/libnm-core-public/nm-version-macros.h
 ])
@@ -1343,8 +1362,10 @@ echo "  exec_prefix: $exec_prefix"
 echo "  sysconfdir: $sysconfdir"
 echo "  localstatedir: $localstatedir"
 echo "  runstatedir: $runstatedir"
+echo "  datarootdir: $datarootdir"
 echo "  datadir: $datadir"
 echo "  systemdunitdir: $with_systemdsystemunitdir"
+echo "  udev-dir: $with_udev_dir"
 echo "  nmbinary: $nmbinary"
 echo "  nmconfdir: $nmconfdir"
 echo "  nmlibdir: $nmlibdir"
@@ -1352,6 +1373,7 @@ echo "  nmdatadir: $nmdatadir"
 echo "  nmstatedir: $nmstatedir"
 echo "  nmrundir: $nmrundir"
 echo "  system-ca-path: $with_system_ca_path"
+echo "  dbus-sys-dir: $DBUS_SYS_DIR"
 echo
 
 echo "Platform:"
@@ -1421,4 +1443,6 @@ echo "  crypto: $with_crypto (have-gnutls: $have_crypto_gnutls, have-nss: $have_
 echo "  sanitizers: $sanitizers"
 echo "  Mozilla Public Suffix List: $with_libpsl"
 echo "  eBPF: $have_ebpf"
+echo "  readline: $with_readline"
+echo "  python: $PYTHON"
 echo

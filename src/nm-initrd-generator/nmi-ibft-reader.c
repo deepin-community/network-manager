@@ -36,12 +36,12 @@
 static GHashTable *
 load_one_nic(const char *sysfs_dir, const char *dir_name)
 {
-    gs_free char *nic_path = g_build_filename(sysfs_dir, dir_name, NULL);
-    GDir *        nic_dir;
-    const char *  entry_name;
-    char *        content;
+    gs_free char         *nic_path = g_build_filename(sysfs_dir, dir_name, NULL);
+    GDir                 *nic_dir;
+    const char           *entry_name;
+    char                 *content;
     gs_free_error GError *error = NULL;
-    GHashTable *          nic;
+    GHashTable           *nic;
 
     g_return_val_if_fail(sysfs_dir != NULL, FALSE);
 
@@ -77,11 +77,11 @@ load_one_nic(const char *sysfs_dir, const char *dir_name)
 GHashTable *
 nmi_ibft_read(const char *sysfs_dir)
 {
-    gs_free char *ibft_path = NULL;
-    GDir *        ibft_dir;
-    const char *  dir_name;
-    GHashTable *  ibft, *nic;
-    char *        mac;
+    gs_free char         *ibft_path = NULL;
+    GDir                 *ibft_dir;
+    const char           *dir_name;
+    GHashTable           *ibft;
+    char                 *mac;
     gs_free_error GError *error = NULL;
 
     g_return_val_if_fail(sysfs_dir != NULL, FALSE);
@@ -93,10 +93,11 @@ nmi_ibft_read(const char *sysfs_dir)
                                  g_free,
                                  (GDestroyNotify) g_hash_table_unref);
 
-    if (!g_file_test(ibft_path, G_FILE_TEST_IS_DIR))
+    if (!g_file_test(ibft_path, G_FILE_TEST_IS_DIR)) {
         nmp_utils_modprobe(NULL, FALSE, "iscsi_ibft", NULL);
-    if (!g_file_test(ibft_path, G_FILE_TEST_IS_DIR))
-        return ibft;
+        if (!g_file_test(ibft_path, G_FILE_TEST_IS_DIR))
+            return ibft;
+    }
 
     ibft_dir = g_dir_open(ibft_path, 0, &error);
     if (!ibft_dir) {
@@ -105,20 +106,21 @@ nmi_ibft_read(const char *sysfs_dir)
     }
 
     while ((dir_name = g_dir_read_name(ibft_dir))) {
+        gs_unref_hashtable GHashTable *nic = NULL;
+
         if (!g_str_has_prefix(dir_name, "ethernet"))
             continue;
 
         nic = load_one_nic(ibft_path, dir_name);
-        mac = g_hash_table_lookup(nic, "mac");
+        mac = nm_g_hash_table_lookup(nic, "mac");
 
         if (!mac) {
             _LOGW(LOGD_CORE, "Ignoring an iBFT record without a MAC address");
-            g_hash_table_unref(nic);
             continue;
         }
 
         mac = g_ascii_strup(mac, -1);
-        if (!g_hash_table_insert(ibft, mac, nic))
+        if (!g_hash_table_insert(ibft, mac, g_steal_pointer(&nic)))
             _LOGW(LOGD_CORE, "Duplicate iBFT record for %s", mac);
     }
 
@@ -133,14 +135,14 @@ ip_setting_add_from_block(GHashTable *nic, NMConnection *connection, GError **er
     NMSettingIPConfig *s_ip  = NULL;
     NMSettingIPConfig *s_ip4 = NULL;
     NMSettingIPConfig *s_ip6 = NULL;
-    NMIPAddress *      addr;
-    const char *       s_ipaddr  = NULL;
-    const char *       s_prefix  = NULL;
-    const char *       s_gateway = NULL;
-    const char *       s_dns1    = NULL;
-    const char *       s_dns2    = NULL;
-    const char *       s_origin  = NULL;
-    const char *       method    = NULL;
+    NMIPAddress       *addr;
+    const char        *s_ipaddr  = NULL;
+    const char        *s_prefix  = NULL;
+    const char        *s_gateway = NULL;
+    const char        *s_dns1    = NULL;
+    const char        *s_dns2    = NULL;
+    const char        *s_origin  = NULL;
+    const char        *method    = NULL;
     int                family;
     gint64             prefix;
 
@@ -164,7 +166,7 @@ ip_setting_add_from_block(GHashTable *nic, NMConnection *connection, GError **er
 
         g_object_set(s_ip6,
                      NM_SETTING_IP6_CONFIG_ADDR_GEN_MODE,
-                     (int) NM_SETTING_IP6_CONFIG_ADDR_GEN_MODE_EUI64,
+                     (int) NM_SETTING_IP6_CONFIG_ADDR_GEN_MODE_DEFAULT_OR_EUI64,
                      NULL);
     }
 
@@ -217,7 +219,7 @@ ip_setting_add_from_block(GHashTable *nic, NMConnection *connection, GError **er
                  FALSE,
                  NULL);
 
-    if (s_gateway && !nm_utils_ipaddr_is_valid(family, s_gateway)) {
+    if (s_gateway && !nm_inet_is_valid(family, s_gateway)) {
         g_set_error(error,
                     NM_SETTINGS_ERROR,
                     NM_SETTINGS_ERROR_INVALID_CONNECTION,
@@ -226,7 +228,7 @@ ip_setting_add_from_block(GHashTable *nic, NMConnection *connection, GError **er
         return FALSE;
     }
 
-    if (s_dns1 && !nm_utils_ipaddr_is_valid(family, s_dns1)) {
+    if (s_dns1 && !nm_inet_is_valid(family, s_dns1)) {
         g_set_error(error,
                     NM_SETTINGS_ERROR,
                     NM_SETTINGS_ERROR_INVALID_CONNECTION,
@@ -235,7 +237,7 @@ ip_setting_add_from_block(GHashTable *nic, NMConnection *connection, GError **er
         return FALSE;
     }
 
-    if (s_dns2 && !nm_utils_ipaddr_is_valid(family, s_dns2)) {
+    if (s_dns2 && !nm_inet_is_valid(family, s_dns2)) {
         g_set_error(error,
                     NM_SETTINGS_ERROR,
                     NM_SETTINGS_ERROR_INVALID_CONNECTION,
@@ -276,14 +278,14 @@ ip_setting_add_from_block(GHashTable *nic, NMConnection *connection, GError **er
 }
 
 static gboolean
-connection_setting_add(GHashTable *  nic,
+connection_setting_add(GHashTable   *nic,
                        NMConnection *connection,
-                       const char *  type,
-                       const char *  prefix,
-                       GError **     error)
+                       const char   *type,
+                       const char   *prefix,
+                       GError      **error)
 {
-    NMSetting * s_con;
-    char *      id, *uuid;
+    NMSetting  *s_con;
+    char       *id, *uuid;
     const char *s_index, *s_hwaddr, *s_ipaddr, *s_vlanid;
 
     s_index  = (const char *) g_hash_table_lookup(nic, "index");
@@ -305,13 +307,12 @@ connection_setting_add(GHashTable *  nic,
                          s_index ? " " : "",
                          s_index ? s_index : "");
 
-    uuid = nm_uuid_generate_from_strings("ibft",
-                                         s_hwaddr,
-                                         s_vlanid ? "V" : "v",
-                                         s_vlanid ? s_vlanid : "",
-                                         s_ipaddr ? "A" : "DHCP",
-                                         s_ipaddr ? s_ipaddr : "",
-                                         NULL);
+    uuid = nm_uuid_generate_from_strings_old("ibft",
+                                             s_hwaddr,
+                                             s_vlanid ? "V" : "v",
+                                             s_vlanid ? s_vlanid : "",
+                                             s_ipaddr ? "A" : "DHCP",
+                                             s_ipaddr ? s_ipaddr : "");
 
     s_con = (NMSetting *) nm_connection_get_setting_connection(connection);
     if (!s_con) {
@@ -328,6 +329,8 @@ connection_setting_add(GHashTable *  nic,
                  id,
                  NM_SETTING_CONNECTION_INTERFACE_NAME,
                  NULL,
+                 NM_SETTING_CONNECTION_AUTOCONNECT_PRIORITY,
+                 NMI_AUTOCONNECT_PRIORITY_FIRMWARE,
                  NULL);
 
     g_free(uuid);
@@ -359,7 +362,7 @@ is_ibft_vlan_device(GHashTable *nic)
 static gboolean
 vlan_setting_add_from_block(GHashTable *nic, NMConnection *connection, GError **error)
 {
-    NMSetting * s_vlan      = NULL;
+    NMSetting  *s_vlan      = NULL;
     const char *vlan_id_str = NULL;
     gint64      vlan_id     = -1;
 
@@ -397,7 +400,7 @@ vlan_setting_add_from_block(GHashTable *nic, NMConnection *connection, GError **
 static gboolean
 wired_setting_add_from_block(GHashTable *nic, NMConnection *connection, GError **error)
 {
-    NMSetting * s_wired = NULL;
+    NMSetting  *s_wired = NULL;
     const char *hwaddr  = NULL;
 
     g_assert(nic);

@@ -7,7 +7,7 @@
 #define __NM_SETTING_MACVLAN_H__
 
 #if !defined(__NETWORKMANAGER_H_INSIDE__) && !defined(NETWORKMANAGER_COMPILATION)
-    #error "Only <NetworkManager.h> can be included directly."
+#error "Only <NetworkManager.h> can be included directly."
 #endif
 
 #include "nm-setting.h"
@@ -42,6 +42,8 @@ typedef struct _NMSettingMacvlanClass NMSettingMacvlanClass;
  * @NM_SETTING_MACVLAN_MODE_PRIVATE: private mode
  * @NM_SETTING_MACVLAN_MODE_PASSTHRU: passthru mode
  * @NM_SETTING_MACVLAN_MODE_SOURCE: source mode
+ *
+ * Since: 1.2
  **/
 typedef enum {
     NM_SETTING_MACVLAN_MODE_UNKNOWN  = 0,

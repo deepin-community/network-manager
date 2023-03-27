@@ -7,7 +7,7 @@
 #define NM_SETTING_HOSTNAME_H
 
 #if !defined(__NETWORKMANAGER_H_INSIDE__) && !defined(NETWORKMANAGER_COMPILATION)
-    #error "Only <NetworkManager.h> can be included directly."
+#error "Only <NetworkManager.h> can be included directly."
 #endif
 
 #include "nm-setting.h"
@@ -36,7 +36,7 @@ typedef struct _NMSettingHostnameClass NMSettingHostnameClass;
 
 NM_AVAILABLE_IN_1_30
 GType nm_setting_hostname_get_type(void);
-NM_AVAILABLE_IN_1_30
+NM_AVAILABLE_IN_1_42
 NMSetting *nm_setting_hostname_new(void);
 
 NM_AVAILABLE_IN_1_30

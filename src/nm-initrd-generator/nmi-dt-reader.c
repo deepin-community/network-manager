@@ -28,11 +28,11 @@ static gboolean
 dt_get_property(const char *base,
                 const char *dev,
                 const char *prop,
-                char **     contents,
-                size_t *    length)
+                char      **contents,
+                size_t     *length)
 {
-    gs_free char *filename      = g_build_filename(base, dev, prop, NULL);
-    gs_free_error GError *error = NULL;
+    gs_free char         *filename = g_build_filename(base, dev, prop, NULL);
+    gs_free_error GError *error    = NULL;
 
     if (!g_file_test(filename, G_FILE_TEST_EXISTS))
         return FALSE;
@@ -96,7 +96,7 @@ str_addr(const char *str, int *family)
 {
     NMIPAddr addr_bin;
 
-    if (!nm_utils_parse_inaddr_bin_full(*family, TRUE, str, family, &addr_bin)) {
+    if (!nm_inet_parse_bin_full(*family, TRUE, str, family, &addr_bin)) {
         _LOGW(LOGD_CORE, "Malformed IP address: '%s'", str);
         return NULL;
     }
@@ -106,31 +106,31 @@ str_addr(const char *str, int *family)
 NMConnection *
 nmi_dt_reader_parse(const char *sysfs_dir)
 {
-    gs_unref_object NMConnection *connection           = NULL;
-    gs_free char *                base                 = NULL;
-    gs_free char *                bootpath             = NULL;
-    gs_strfreev char **           tokens               = NULL;
-    char *                        path                 = NULL;
-    gboolean                      bootp                = FALSE;
-    const char *                  s_ipaddr             = NULL;
-    const char *                  s_netmask            = NULL;
-    const char *                  s_gateway            = NULL;
+    gs_unref_object NMConnection         *connection   = NULL;
+    gs_free char                         *base         = NULL;
+    gs_free char                         *bootpath     = NULL;
+    gs_strfreev char                    **tokens       = NULL;
+    char                                 *path         = NULL;
+    gboolean                              bootp        = FALSE;
+    const char                           *s_ipaddr     = NULL;
+    const char                           *s_netmask    = NULL;
+    const char                           *s_gateway    = NULL;
     nm_auto_unref_ip_address NMIPAddress *ipaddr       = NULL;
     nm_auto_unref_ip_address NMIPAddress *gateway      = NULL;
-    const char *                          duplex       = NULL;
-    gs_free char *                        hwaddr       = NULL;
-    gs_free char *                        local_hwaddr = NULL;
-    gs_free char *                        hostname     = NULL;
+    const char                           *duplex       = NULL;
+    gs_free char                         *hwaddr       = NULL;
+    gs_free char                         *local_hwaddr = NULL;
+    gs_free char                         *hostname     = NULL;
     guint32                               speed        = 0;
     int                                   prefix       = -1;
-    NMSettingIPConfig *                   s_ip         = NULL;
-    NMSetting *                           s_ip4        = NULL;
-    NMSetting *                           s_ip6        = NULL;
-    NMSetting *                           s_wired      = NULL;
+    NMSettingIPConfig                    *s_ip         = NULL;
+    NMSetting                            *s_ip4        = NULL;
+    NMSetting                            *s_ip6        = NULL;
+    NMSetting                            *s_wired      = NULL;
     int                                   family       = AF_UNSPEC;
     int                                   i            = 0;
-    char *                                c;
-    gs_free_error GError *error = NULL;
+    char                                 *c;
+    gs_free_error GError                 *error = NULL;
 
     base = g_build_filename(sysfs_dir, "firmware", "devicetree", "base", NULL);
 
@@ -248,6 +248,8 @@ nmi_dt_reader_parse(const char *sysfs_dir)
                                            NM_SETTING_WIRED_SETTING_NAME,
                                            NM_SETTING_CONNECTION_ID,
                                            "OpenFirmware Connection",
+                                           NM_SETTING_CONNECTION_AUTOCONNECT_PRIORITY,
+                                           NMI_AUTOCONNECT_PRIORITY_FIRMWARE,
                                            NULL));
 
     s_ip4 = nm_setting_ip4_config_new();
@@ -258,7 +260,7 @@ nmi_dt_reader_parse(const char *sysfs_dir)
 
     g_object_set(s_ip6,
                  NM_SETTING_IP6_CONFIG_ADDR_GEN_MODE,
-                 (int) NM_SETTING_IP6_CONFIG_ADDR_GEN_MODE_EUI64,
+                 (int) NM_SETTING_IP6_CONFIG_ADDR_GEN_MODE_DEFAULT_OR_EUI64,
                  NULL);
 
     if (!bootp && dt_get_property(base, "chosen", "bootp-response", NULL, NULL))
@@ -288,7 +290,7 @@ nmi_dt_reader_parse(const char *sysfs_dir)
             guint32 netmask_v4;
 
             nm_ip_address_get_address_binary(netmask, &netmask_v4);
-            prefix = nm_utils_ip4_netmask_to_prefix(netmask_v4);
+            prefix = nm_ip4_addr_netmask_to_prefix(netmask_v4);
         }
 
         if (prefix == -1)

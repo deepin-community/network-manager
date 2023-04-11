@@ -1,3 +1,10 @@
+network-manager (1.42.4-1deepin3) unstable; urgency=medium
+
+  * add wpasupplicant depends.
+  * issues https://github.com/linuxdeepin/developer-center/issues/4039
+
+ -- LiChengGang <lichenggang@uniontech.com>  Tue, 11 Apr 2023 17:39:16 +0800
+
 network-manager (1.42.4-1) unstable; urgency=medium
 
   * New upstream version 1.42.4

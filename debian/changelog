@@ -1,4 +1,4 @@
-network-manager (1.42.4-1deepin3) unstable; urgency=medium
+network-manager (1.42.4-2deepin3) unstable; urgency=medium
 
   * add wpasupplicant depends.
   * issues https://github.com/linuxdeepin/developer-center/issues/4039

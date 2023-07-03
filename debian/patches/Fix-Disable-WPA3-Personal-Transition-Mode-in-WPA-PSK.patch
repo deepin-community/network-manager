@@ -1,0 +1,27 @@
+diff --git a/src/core/supplicant/nm-supplicant-config.c b/src/core/supplicant/nm-supplicant-config.c
+index c63a005..6ceb6ad 100644
+--- a/src/core/supplicant/nm-supplicant-config.c
++++ b/src/core/supplicant/nm-supplicant-config.c
+@@ -898,14 +898,14 @@ nm_supplicant_config_add_setting_wireless_security(NMSupplicantConfig
+          * some devices that are not fully compatible with WPA3-Personal
+          * transition mode.
+          */
+-        if (_get_capability(priv, NM_SUPPL_CAP_TYPE_SAE)
+-            && _get_capability(priv, NM_SUPPL_CAP_TYPE_PMF)
+-            && _get_capability(priv, NM_SUPPL_CAP_TYPE_BIP)
+-            && (!is_ap || pmf != NM_SETTING_WIRELESS_SECURITY_PMF_DISABLE)) {
+-            g_string_append(key_mgmt_conf, " SAE");
+-            if (!is_ap && _get_capability(priv, NM_SUPPL_CAP_TYPE_FT))
+-                g_string_append(key_mgmt_conf, " FT-SAE");
+-        }
++        // if (_get_capability(priv, NM_SUPPL_CAP_TYPE_SAE)
++        //     && _get_capability(priv, NM_SUPPL_CAP_TYPE_PMF)
++        //     && _get_capability(priv, NM_SUPPL_CAP_TYPE_BIP)
++        //     && (!is_ap || pmf != NM_SETTING_WIRELESS_SECURITY_PMF_DISABLE)) {
++        //     g_string_append(key_mgmt_conf, " SAE");
++        //     if (!is_ap && _get_capability(priv, NM_SUPPL_CAP_TYPE_FT))
++        //         g_string_append(key_mgmt_conf, " FT-SAE");
++        // }
+ 
+     } else if (nm_streq(key_mgmt, "sae")) {
+         pmf = NM_SETTING_WIRELESS_SECURITY_PMF_REQUIRED;

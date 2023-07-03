@@ -1,3 +1,9 @@
+network-manager (1.42.4-2deepin4) unstable; urgency=medium
+
+  * fix: disable WPA3-Personal transition mode in wpa-psk
+
+ -- HeYuMing <heyuming@uniontech.com>  Mon, 03 Jul 2023 14:21:34 +0800
+
 network-manager (1.42.4-2deepin3) unstable; urgency=medium
 
   * add wpasupplicant depends.

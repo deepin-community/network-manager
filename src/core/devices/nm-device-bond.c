@@ -39,7 +39,8 @@
         NM_SETTING_BOND_OPTION_PACKETS_PER_SLAVE, NM_SETTING_BOND_OPTION_PRIMARY_RESELECT, \
         NM_SETTING_BOND_OPTION_RESEND_IGMP, NM_SETTING_BOND_OPTION_TLB_DYNAMIC_LB,         \
         NM_SETTING_BOND_OPTION_USE_CARRIER, NM_SETTING_BOND_OPTION_XMIT_HASH_POLICY,       \
-        NM_SETTING_BOND_OPTION_NUM_GRAT_ARP, NM_SETTING_BOND_OPTION_PEER_NOTIF_DELAY
+        NM_SETTING_BOND_OPTION_NUM_GRAT_ARP, NM_SETTING_BOND_OPTION_PEER_NOTIF_DELAY,      \
+        NM_SETTING_BOND_OPTION_ARP_MISSED_MAX, NM_SETTING_BOND_OPTION_LACP_ACTIVE
 
 #define OPTIONS_REAPPLY_SUBSET                                                             \
     NM_SETTING_BOND_OPTION_MIIMON, NM_SETTING_BOND_OPTION_UPDELAY,                         \
@@ -51,11 +52,12 @@
         NM_SETTING_BOND_OPTION_PACKETS_PER_SLAVE, NM_SETTING_BOND_OPTION_PRIMARY_RESELECT, \
         NM_SETTING_BOND_OPTION_RESEND_IGMP, NM_SETTING_BOND_OPTION_USE_CARRIER,            \
         NM_SETTING_BOND_OPTION_XMIT_HASH_POLICY, NM_SETTING_BOND_OPTION_NUM_GRAT_ARP,      \
-        NM_SETTING_BOND_OPTION_PEER_NOTIF_DELAY
+        NM_SETTING_BOND_OPTION_PEER_NOTIF_DELAY, NM_SETTING_BOND_OPTION_ARP_MISSED_MAX,    \
+        NM_SETTING_BOND_OPTION_LACP_ACTIVE
 
 #define OPTIONS_REAPPLY_FULL                                     \
     OPTIONS_REAPPLY_SUBSET, NM_SETTING_BOND_OPTION_ACTIVE_SLAVE, \
-        NM_SETTING_BOND_OPTION_ARP_IP_TARGET
+        NM_SETTING_BOND_OPTION_ARP_IP_TARGET, NM_SETTING_BOND_OPTION_NS_IP6_TARGET
 
 /*****************************************************************************/
 
@@ -227,24 +229,23 @@ controller_update_port_connection(NMDevice     *self,
                                   NMConnection *connection,
                                   GError      **error)
 {
-    NMSettingBondPort *s_port;
-    int                ifindex_port       = nm_device_get_ifindex(port);
-    NMConnection      *applied_connection = nm_device_get_applied_connection(self);
-    uint               queue_id           = NM_BOND_PORT_QUEUE_ID_DEF;
-    gs_free char      *queue_id_str       = NULL;
+    NMSettingBondPort    *s_port;
+    int                   ifindex_port       = nm_device_get_ifindex(port);
+    NMConnection         *applied_connection = nm_device_get_applied_connection(self);
+    const NMPlatformLink *pllink;
 
     g_return_val_if_fail(ifindex_port > 0, FALSE);
 
     s_port = _nm_connection_ensure_setting(connection, NM_TYPE_SETTING_BOND_PORT);
+    pllink = nm_platform_link_get(nm_device_get_platform(port), ifindex_port);
 
-    queue_id_str =
-        nm_platform_sysctl_slave_get_option(nm_device_get_platform(self), ifindex_port, "queue_id");
-    if (queue_id_str) {
-        queue_id =
-            _nm_utils_ascii_str_to_int64(queue_id_str, 10, 0, 65535, NM_BOND_PORT_QUEUE_ID_DEF);
-        g_object_set(s_port, NM_SETTING_BOND_PORT_QUEUE_ID, queue_id, NULL);
-    } else
-        _LOGW(LOGD_BOND, "failed to read bond port setting '%s'", NM_SETTING_BOND_PORT_QUEUE_ID);
+    if (pllink && pllink->port_kind == NM_PORT_KIND_BOND)
+        g_object_set(s_port,
+                     NM_SETTING_BOND_PORT_QUEUE_ID,
+                     pllink->port_data.bond.queue_id,
+                     NM_SETTING_BOND_PORT_PRIO,
+                     pllink->port_data.bond.prio,
+                     NULL);
 
     g_object_set(nm_connection_get_setting_connection(connection),
                  NM_SETTING_CONNECTION_MASTER,
@@ -268,7 +269,7 @@ set_arp_targets(NMDevice *device, const char *cur_arp_ip_target, const char *new
 
     cur_strv =
         nm_strsplit_set_full(cur_arp_ip_target, NM_ASCII_SPACES, NM_STRSPLIT_SET_FLAGS_STRSTRIP);
-    new_strv = nm_utils_bond_option_arp_ip_targets_split(new_arp_ip_target);
+    new_strv = nm_utils_bond_option_ip_split(new_arp_ip_target);
 
     cur_len = NM_PTRARRAY_LEN(cur_strv);
     new_len = NM_PTRARRAY_LEN(new_strv);
@@ -365,7 +366,7 @@ _bond_arp_ip_target_to_platform(const char *value, in_addr_t out[static NM_BOND_
     int                  i;
     int                  added = 0;
 
-    ip = nm_utils_bond_option_arp_ip_targets_split(value);
+    ip = nm_utils_bond_option_ip_split(value);
 
     if (!ip)
         return added;
@@ -377,6 +378,31 @@ _bond_arp_ip_target_to_platform(const char *value, in_addr_t out[static NM_BOND_
             nm_assert_not_reached(); /* verify() already validated the IP addresses */
 
         out[added++] = in_a;
+    }
+    return added;
+}
+
+static guint8
+_bond_ns_ip6_target_to_platform(const char     *value,
+                                struct in6_addr out[static NM_BOND_MAX_ARP_TARGETS])
+{
+    gs_free const char **ip = NULL;
+    struct in6_addr      in6_a;
+    int                  i;
+    int                  added = 0;
+
+    ip = nm_utils_bond_option_ip_split(value);
+
+    if (!ip)
+        return added;
+
+    for (i = 0; ip[i]; i++) {
+        if (added > NM_BOND_MAX_ARP_TARGETS - 1)
+            break;
+        if (!nm_inet_parse_bin(AF_INET6, ip[i], NULL, &in6_a))
+            nm_assert_not_reached(); /* verify() already validated the IP addresses */
+
+        out[added++] = in6_a;
     }
     return added;
 }
@@ -437,6 +463,10 @@ _platform_lnk_bond_init_from_setting(NMSettingBond *s_bond, NMPlatformLnkBond *p
                                    NM_SETTING_BOND_OPTION_XMIT_HASH_POLICY),
         .num_grat_arp      = _v_u8(s_bond, NM_SETTING_BOND_OPTION_NUM_GRAT_ARP),
         .all_ports_active  = _v_u8(s_bond, NM_SETTING_BOND_OPTION_ALL_SLAVES_ACTIVE),
+        .arp_missed_max    = _v_u8(s_bond, NM_SETTING_BOND_OPTION_ARP_MISSED_MAX),
+        .lacp_active       = _v_fcn(_nm_setting_bond_lacp_active_from_string,
+                              s_bond,
+                              NM_SETTING_BOND_OPTION_LACP_ACTIVE),
         .lacp_rate         = _v_fcn(_nm_setting_bond_lacp_rate_from_string,
                             s_bond,
                             NM_SETTING_BOND_OPTION_LACP_RATE),
@@ -456,6 +486,11 @@ _platform_lnk_bond_init_from_setting(NMSettingBond *s_bond, NMPlatformLnkBond *p
         props->arp_ip_targets_num =
             _bond_arp_ip_target_to_platform(opt_value, props->arp_ip_target);
 
+    opt_value = nm_setting_bond_get_option_normalized(s_bond, NM_SETTING_BOND_OPTION_NS_IP6_TARGET);
+    if (opt_value != NULL)
+        props->ns_ip6_targets_num =
+            _bond_ns_ip6_target_to_platform(opt_value, props->ns_ip6_target);
+
     props->miimon_has           = !props->arp_interval && !props->arp_validate;
     props->updelay_has          = props->miimon_has && props->miimon;
     props->downdelay_has        = props->miimon_has && props->miimon;
@@ -463,6 +498,7 @@ _platform_lnk_bond_init_from_setting(NMSettingBond *s_bond, NMPlatformLnkBond *p
     props->resend_igmp_has      = props->resend_igmp != 1;
     props->lp_interval_has      = props->lp_interval != 1;
     props->tlb_dynamic_lb_has   = NM_IN_SET(props->mode, NM_BOND_MODE_TLB, NM_BOND_MODE_ALB);
+    props->lacp_active_has      = NM_IN_SET(props->mode, NM_BOND_MODE_8023AD);
 }
 
 static void
@@ -600,23 +636,54 @@ act_stage1_prepare(NMDevice *device, NMDeviceStateReason *out_failure_reason)
 static void
 commit_port_options(NMDevice *bond_device, NMDevice *port, NMSettingBondPort *s_port)
 {
-    char queue_id_str[IFNAMSIZ + NM_STRLEN(":") + 5 + 100];
+    NMBondMode     mode = NM_BOND_MODE_UNKNOWN;
+    const char    *value;
+    NMSettingBond *s_bond;
+    gint32         prio;
+    gboolean       prio_has;
 
-    /*
-     * The queue-id of bond port is read only, we should modify bond interface using:
-     *    echo "eth1:2" > /sys/class/net/bond0/bonding/queue_id
-     * Kernel allows parital editing, so no need to care about other bond ports.
-     */
-    g_snprintf(queue_id_str,
-               sizeof(queue_id_str),
-               "%s:%" G_GUINT32_FORMAT,
-               nm_device_get_iface(port),
-               s_port ? nm_setting_bond_port_get_queue_id(s_port) : NM_BOND_PORT_QUEUE_ID_DEF);
+    s_bond = nm_device_get_applied_setting(bond_device, NM_TYPE_SETTING_BOND);
+    if (s_bond) {
+        value = nm_setting_bond_get_option_normalized(s_bond, NM_SETTING_BOND_OPTION_MODE);
+        mode  = _nm_setting_bond_mode_from_string(value);
+    }
 
-    nm_platform_sysctl_master_set_option(nm_device_get_platform(bond_device),
-                                         nm_device_get_ifindex(bond_device),
-                                         "queue_id",
-                                         queue_id_str);
+    prio = s_port ? nm_setting_bond_port_get_prio(s_port) : NM_BOND_PORT_PRIO_DEF;
+
+    if (prio != 0) {
+        /* The profile explicitly sets the priority. No matter what, we try to set it
+         * in netlink. */
+        prio_has = TRUE;
+    } else if (!NM_IN_SET(mode, NM_BOND_MODE_ACTIVEBACKUP, NM_BOND_MODE_TLB, NM_BOND_MODE_ALB)) {
+        /* The priority only is configurable with certain modes. If we don't have
+         * one of those modes, don't try to set the priority explicitly to zero. */
+        prio_has = FALSE;
+    } else if (nm_platform_kernel_support_get_full(
+                   NM_PLATFORM_KERNEL_SUPPORT_TYPE_IFLA_BOND_SLAVE_PRIO,
+                   FALSE)
+               == NM_OPTION_BOOL_TRUE) {
+        /* We can only detect support if we have it. We cannot detect lack of support if
+         * we don't have it.
+         *
+         * But we did explicitly detect support, so explicitly set the prio to zero. */
+        prio_has = TRUE;
+    } else {
+        /* We either have an unsuitable mode or didn't detect kernel support for the
+         * priority. Don't explicitly set priority to zero. It is already the default,
+         * so it shouldn't be necessary. */
+        prio_has = FALSE;
+    }
+
+    nm_platform_link_change(nm_device_get_platform(port),
+                            nm_device_get_ifindex(port),
+                            NULL,
+                            &((NMPlatformLinkBondPort){
+                                .queue_id = s_port ? nm_setting_bond_port_get_queue_id(s_port)
+                                                   : NM_BOND_PORT_QUEUE_ID_DEF,
+                                .prio     = prio_has ? prio : 0,
+                                .prio_has = prio_has,
+                            }),
+                            0);
 }
 
 static NMTernary
@@ -658,8 +725,13 @@ attach_port(NMDevice                  *device,
     return TRUE;
 }
 
-static void
-detach_port(NMDevice *device, NMDevice *port, gboolean configure)
+static NMTernary
+detach_port(NMDevice                  *device,
+            NMDevice                  *port,
+            gboolean                   configure,
+            GCancellable              *cancellable,
+            NMDeviceAttachPortCallback callback,
+            gpointer                   user_data)
 {
     NMDeviceBond *self = NM_DEVICE_BOND(device);
     gboolean      success;
@@ -721,6 +793,8 @@ detach_port(NMDevice *device, NMDevice *port, gboolean configure)
             _LOGI(LOGD_BOND, "bond port %s was detached", nm_device_get_ip_iface(port));
         }
     }
+
+    return TRUE;
 }
 
 static gboolean

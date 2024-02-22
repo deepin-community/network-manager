@@ -917,7 +917,7 @@ enum {
  * @options_route: (in-out): when line is from the OPTIONS setting, this is a pre-created
  *   route object that is completed with the settings from options. Otherwise,
  *   it shall point to %NULL and a new route is created and returned.
- * @out_route: (out) (transfer-full) (allow-none): the parsed %NMIPRoute instance.
+ * @out_route: (out) (transfer full) (optional): the parsed %NMIPRoute instance.
  *   In case a @options_route is passed in, it returns the input route that was modified
  *   in-place. But the caller must unref the returned route in either case.
  * @error: the failure description.
@@ -2481,6 +2481,11 @@ make_ip6_setting(shvarFile *ifcfg, shvarFile *network_ifcfg, gboolean routes_rea
         g_object_set(s_ip6, NM_SETTING_IP_CONFIG_DHCP_IAID, v, NULL);
 
     nm_clear_g_free(&value);
+    v = svGetValueStr(ifcfg, "DHCPV6_PD_HINT", &value);
+    if (v)
+        g_object_set(s_ip6, NM_SETTING_IP6_CONFIG_DHCP_PD_HINT, v, NULL);
+
+    nm_clear_g_free(&value);
     v = svGetValueStr(ifcfg, "DHCPV6_HOSTNAME", &value);
     /* Use DHCP_HOSTNAME as fallback if it is in FQDN format and ipv6.method is
      * auto or dhcp: this is required to support old ifcfg files
@@ -2591,7 +2596,7 @@ make_ip6_setting(shvarFile *ifcfg, shvarFile *network_ifcfg, gboolean routes_rea
                         &local)) {
         PARSE_WARNING("%s", local->message);
         g_clear_error(&local);
-    } else if (errno == ENOENT) {
+    } else if (errno == ENOKEY) {
         /* The key is not specified. If "v" (IPV6_TOKEN) is set,
          * we default to EUI64. Otherwise, the connection would not verify. */
         if (v)
@@ -2683,16 +2688,25 @@ make_hostname_setting(shvarFile *ifcfg)
     NMTernary  from_dns_lookup;
     NMTernary  only_from_default;
     int        priority;
+    gboolean   has_setting = FALSE;
 
     priority = svGetValueInt64(ifcfg, "HOSTNAME_PRIORITY", 10, G_MININT32, G_MAXINT32, 0);
+    if (!has_setting && errno != ENOKEY)
+        has_setting = TRUE;
 
-    from_dhcp         = svGetValueTernary(ifcfg, "HOSTNAME_FROM_DHCP");
-    from_dns_lookup   = svGetValueTernary(ifcfg, "HOSTNAME_FROM_DNS_LOOKUP");
+    from_dhcp = svGetValueTernary(ifcfg, "HOSTNAME_FROM_DHCP");
+    if (!has_setting && errno != ENOKEY)
+        has_setting = TRUE;
+
+    from_dns_lookup = svGetValueTernary(ifcfg, "HOSTNAME_FROM_DNS_LOOKUP");
+    if (!has_setting && errno != ENOKEY)
+        has_setting = TRUE;
+
     only_from_default = svGetValueTernary(ifcfg, "HOSTNAME_ONLY_FROM_DEFAULT");
+    if (!has_setting && errno != ENOKEY)
+        has_setting = TRUE;
 
-    /* Create the setting when at least one key is not default*/
-    if (priority == 0 && from_dhcp == NM_TERNARY_DEFAULT && from_dns_lookup == NM_TERNARY_DEFAULT
-        && only_from_default == NM_TERNARY_DEFAULT)
+    if (!has_setting)
         return NULL;
 
     setting = nm_setting_hostname_new();
@@ -5377,6 +5391,7 @@ parse_infiniband_p_key(shvarFile *ifcfg, int *out_p_key, char **out_parent, GErr
     gs_free char *physdev = NULL;
     gs_free char *pkey_id = NULL;
     int           id;
+    int           fixup_id = 0;
 
     physdev = svGetValueStr_cp(ifcfg, "PHYSDEV");
     if (!physdev) {
@@ -5387,7 +5402,14 @@ parse_infiniband_p_key(shvarFile *ifcfg, int *out_p_key, char **out_parent, GErr
         return FALSE;
     }
 
-    pkey_id = svGetValueStr_cp(ifcfg, "PKEY_ID");
+    pkey_id = svGetValueStr_cp(ifcfg, "PKEY_ID_NM");
+    if (!pkey_id) {
+        /* Only check for "$PKEY_ID". That key is interpreted as having the
+         * full membership flag set ("fixup_id"). */
+        fixup_id = 0x8000;
+        pkey_id  = svGetValueStr_cp(ifcfg, "PKEY_ID");
+    }
+
     if (!pkey_id) {
         g_set_error(error,
                     NM_SETTINGS_ERROR,
@@ -5405,6 +5427,8 @@ parse_infiniband_p_key(shvarFile *ifcfg, int *out_p_key, char **out_parent, GErr
                     pkey_id);
         return FALSE;
     }
+
+    id |= fixup_id;
 
     *out_p_key  = id;
     *out_parent = g_steal_pointer(&physdev);
@@ -5576,6 +5600,7 @@ make_bond_port_setting(shvarFile *ifcfg)
     gs_free char *value_to_free = NULL;
     const char   *value;
     guint         queue_id;
+    gint32        prio;
 
     g_return_val_if_fail(ifcfg != NULL, FALSE);
 
@@ -5584,11 +5609,23 @@ make_bond_port_setting(shvarFile *ifcfg)
         s_port = nm_setting_bond_port_new();
         queue_id =
             _nm_utils_ascii_str_to_uint64(value, 10, 0, G_MAXUINT16, NM_BOND_PORT_QUEUE_ID_DEF);
-        if (errno != 0) {
-            PARSE_WARNING("Invalid bond port queue_id value '%s'", value);
-            return s_port;
-        }
-        g_object_set(G_OBJECT(s_port), NM_SETTING_BOND_PORT_QUEUE_ID, queue_id, NULL);
+        if (errno != 0)
+            PARSE_WARNING("Invalid bond port queue_id value BOND_PORT_QUEUE_ID '%s'", value);
+        else
+            g_object_set(G_OBJECT(s_port), NM_SETTING_BOND_PORT_QUEUE_ID, queue_id, NULL);
+    }
+
+    nm_clear_g_free(&value_to_free);
+    value = svGetValue(ifcfg, "BOND_PORT_PRIO", &value_to_free);
+    if (value) {
+        if (!s_port)
+            s_port = nm_setting_bond_port_new();
+        prio =
+            _nm_utils_ascii_str_to_int64(value, 10, G_MININT32, G_MAXINT32, NM_BOND_PORT_PRIO_DEF);
+        if (errno != 0)
+            PARSE_WARNING("Invalid bond port prio value BOND_PORT_PRIO '%s'", value);
+        else
+            g_object_set(G_OBJECT(s_port), NM_SETTING_BOND_PORT_PRIO, prio, NULL);
     }
 
     return s_port;

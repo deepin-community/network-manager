@@ -16,10 +16,18 @@
 /*****************************************************************************/
 
 typedef struct {
+    GCancellable *cancellable;
+    gboolean      enabled;
+    gboolean      signal_received;
+} SigTermData;
+
+typedef struct {
+    SigTermData  *sigterm_data;
     GMainLoop    *main_loop;
     GCancellable *cancellable;
     NMCSProvider *provider_result;
     guint         detect_count;
+    gboolean      any_provider_enabled;
 } ProviderDetectData;
 
 static void
@@ -27,38 +35,45 @@ _provider_detect_cb(GObject *source, GAsyncResult *result, gpointer user_data)
 {
     gs_unref_object NMCSProvider *provider = NMCS_PROVIDER(source);
     gs_free_error GError         *error    = NULL;
-    ProviderDetectData           *dd;
+    ProviderDetectData           *dd       = user_data;
     gboolean                      success;
+
+    nm_assert(dd->detect_count > 0);
+    dd->detect_count--;
 
     success = nmcs_provider_detect_finish(provider, result, &error);
 
     nm_assert(success != (!!error));
 
-    if (nm_utils_error_is_cancelled(error))
-        return;
-
-    dd = user_data;
-
-    nm_assert(dd->detect_count > 0);
-    dd->detect_count--;
-
+    if (nm_utils_error_is_cancelled(error)) {
+        _LOGD("provider %s detection cancelled", nmcs_provider_get_name(provider));
+        goto out;
+    }
     if (error) {
+        if (nm_g_error_matches(error, NM_UTILS_ERROR, NM_UTILS_ERROR_NOT_READY)) {
+            /* This error tells us, that the provider was not enabled in configuration. */
+        } else
+            dd->any_provider_enabled = TRUE;
         _LOGI("provider %s not detected: %s", nmcs_provider_get_name(provider), error->message);
-        if (dd->detect_count > 0) {
-            /* wait longer. */
-            return;
-        }
-
-        _LOGI("no provider detected");
-        goto done;
+        goto out;
     }
 
     _LOGI("provider %s detected", nmcs_provider_get_name(provider));
     dd->provider_result = g_steal_pointer(&provider);
-
-done:
     g_cancellable_cancel(dd->cancellable);
-    g_main_loop_quit(dd->main_loop);
+
+out:
+    if (dd->detect_count == 0) {
+        if (!dd->provider_result) {
+            NMLogLevel level = LOGL_INFO;
+
+            if (dd->any_provider_enabled && !dd->sigterm_data->signal_received)
+                level = LOGL_WARN;
+
+            _NMLOG(level, "no provider detected");
+        }
+        g_main_loop_quit(dd->main_loop);
+    }
 }
 
 static void
@@ -68,21 +83,21 @@ _provider_detect_sigterm_cb(GCancellable *source, gpointer user_data)
 
     g_cancellable_cancel(dd->cancellable);
     g_clear_object(&dd->provider_result);
-    dd->detect_count = 0;
-    g_main_loop_quit(dd->main_loop);
 }
 
 static NMCSProvider *
-_provider_detect(GCancellable *sigterm_cancellable)
+_provider_detect(SigTermData *sigterm_data)
 {
     nm_auto_unref_gmainloop GMainLoop *main_loop   = g_main_loop_new(NULL, FALSE);
     gs_unref_object GCancellable      *cancellable = g_cancellable_new();
     gs_unref_object NMHttpClient      *http_client = NULL;
     ProviderDetectData                 dd          = {
-                                 .cancellable     = cancellable,
-                                 .main_loop       = main_loop,
-                                 .detect_count    = 0,
-                                 .provider_result = NULL,
+                                 .sigterm_data         = sigterm_data,
+                                 .cancellable          = cancellable,
+                                 .main_loop            = main_loop,
+                                 .detect_count         = 0,
+                                 .provider_result      = NULL,
+                                 .any_provider_enabled = FALSE,
     };
     const GType gtypes[] = {
         NMCS_TYPE_PROVIDER_EC2,
@@ -93,7 +108,7 @@ _provider_detect(GCancellable *sigterm_cancellable)
     int    i;
     gulong cancellable_signal_id;
 
-    cancellable_signal_id = g_cancellable_connect(sigterm_cancellable,
+    cancellable_signal_id = g_cancellable_connect(sigterm_data->cancellable,
                                                   G_CALLBACK(_provider_detect_sigterm_cb),
                                                   &dd,
                                                   NULL);
@@ -117,11 +132,112 @@ _provider_detect(GCancellable *sigterm_cancellable)
         g_main_loop_run(main_loop);
 
 out:
-    nm_clear_g_signal_handler(sigterm_cancellable, &cancellable_signal_id);
+    nm_clear_g_signal_handler(sigterm_data->cancellable, &cancellable_signal_id);
     return dd.provider_result;
 }
 
 /*****************************************************************************/
+
+static NMUtilsNamedValue *
+_map_interfaces_parse(void)
+{
+    gs_free const char **split = NULL;
+    NMUtilsNamedValue   *map_interfaces;
+    const char          *env_var;
+    gsize                i;
+    gsize                j;
+    gsize                alloc_len;
+
+    env_var = g_getenv(NMCS_ENV_NM_CLOUD_SETUP_MAP_INTERFACES);
+
+    if (nm_str_is_empty(env_var))
+        return NULL;
+
+    split = nm_strsplit_set_full(env_var, ";", NM_STRSPLIT_SET_FLAGS_STRSTRIP);
+
+    alloc_len = NM_PTRARRAY_LEN(split) + 1u;
+
+    map_interfaces = g_new(NMUtilsNamedValue, alloc_len);
+
+    _LOGD("test: map interfaces via NM_CLOUD_SETUP_MAP_INTERFACES=\"%s\"", env_var);
+
+    for (i = 0, j = 0; split && split[i]; i++) {
+        NMUtilsNamedValue *m;
+        const char        *str = split[i];
+        char              *hwaddr;
+        const char        *s;
+
+        s = strchr(str, '=');
+        if (!s || str == s)
+            continue;
+
+        hwaddr = nmcs_utils_hwaddr_normalize(&s[1], -1);
+        if (!hwaddr)
+            continue;
+
+        nm_assert(j < alloc_len);
+        m = &map_interfaces[j++];
+
+        *m = (NMUtilsNamedValue){
+            .name      = g_strndup(str, s - str),
+            .value_str = hwaddr,
+        };
+
+        _LOGD("test:  map \"%s\" -> %s", m->name, m->value_str);
+    }
+
+    nm_assert(j < alloc_len);
+    map_interfaces[j++] = (NMUtilsNamedValue){
+        .name      = NULL,
+        .value_str = NULL,
+    };
+
+    return g_steal_pointer(&map_interfaces);
+}
+
+static const char *
+_device_get_hwaddr(NMDeviceEthernet *device)
+{
+    static const NMUtilsNamedValue *gl_map_interfaces_map = NULL;
+    static gsize                    gl_initialized        = 0;
+    const NMUtilsNamedValue        *map                   = NULL;
+
+    nm_assert(NM_IS_DEVICE_ETHERNET(device));
+
+    /* Network interfaces in cloud environments are identified by their permanent
+     * MAC address.
+     *
+     * For testing, we can set NMCS_ENV_NM_CLOUD_SETUP_MAP_INTERFACES
+     * to a ';' separate list of "$INTERFACE=$HWADDR", which means that we
+     * pretend that device with ip-interface "$INTERFACE" has the specified permanent
+     * MAC address. */
+
+    if (g_once_init_enter(&gl_initialized)) {
+        gl_map_interfaces_map = _map_interfaces_parse();
+        g_once_init_leave(&gl_initialized, 1);
+    }
+
+    map = gl_map_interfaces_map;
+    if (G_UNLIKELY(map)) {
+        const char *const iface = nm_device_get_iface(NM_DEVICE(device));
+
+        /* For testing, the device<->hwaddr is remapped and the actual permanent
+         * MAC address of the device ignored. This mapping is configured via
+         * NMCS_ENV_NM_CLOUD_SETUP_MAP_INTERFACES environment variable. */
+
+        if (!iface)
+            return NULL;
+
+        for (; map->name; map++) {
+            if (nm_streq(map->name, iface))
+                return map->value_str;
+        }
+
+        return NULL;
+    }
+
+    return nm_device_ethernet_get_permanent_hw_address(device);
+}
 
 static char **
 _nmc_get_hwaddrs(NMClient *nmc)
@@ -145,7 +261,7 @@ _nmc_get_hwaddrs(NMClient *nmc)
         if (nm_device_get_state(device) < NM_DEVICE_STATE_UNAVAILABLE)
             continue;
 
-        hwaddr = nm_device_ethernet_get_permanent_hw_address(NM_DEVICE_ETHERNET(device));
+        hwaddr = _device_get_hwaddr(NM_DEVICE_ETHERNET(device));
         if (!hwaddr)
             continue;
 
@@ -187,7 +303,7 @@ _nmc_get_device_by_hwaddr(NMClient *nmc, const char *hwaddr)
         if (!NM_IS_DEVICE_ETHERNET(device))
             continue;
 
-        hwaddr_dev = nm_device_ethernet_get_permanent_hw_address(NM_DEVICE_ETHERNET(device));
+        hwaddr_dev = _device_get_hwaddr(NM_DEVICE_ETHERNET(device));
         if (!hwaddr_dev)
             continue;
 
@@ -315,8 +431,9 @@ _nmc_mangle_connection(NMDevice                             *device,
     addrs_new = g_ptr_array_new_full(config_data->ipv4s_len, (GDestroyNotify) nm_ip_address_unref);
     rules_new =
         g_ptr_array_new_full(config_data->ipv4s_len, (GDestroyNotify) nm_ip_routing_rule_unref);
-    routes_new = g_ptr_array_new_full(config_data->iproutes_len + !!config_data->ipv4s_len,
-                                      (GDestroyNotify) nm_ip_route_unref);
+    routes_new =
+        g_ptr_array_new_full(nm_g_ptr_array_len(config_data->iproutes) + !!config_data->ipv4s_len,
+                             (GDestroyNotify) nm_ip_route_unref);
 
     if (remote_s_ip) {
         guint len;
@@ -422,8 +539,8 @@ _nmc_mangle_connection(NMDevice                             *device,
         }
     }
 
-    for (i = 0; i < config_data->iproutes_len; ++i)
-        g_ptr_array_add(routes_new, config_data->iproutes_arr[i]);
+    for (i = 0; i < nm_g_ptr_array_len(config_data->iproutes); i++)
+        g_ptr_array_add(routes_new, _nm_ip_route_ref(config_data->iproutes->pdata[i]));
 
     addrs_changed = nmcs_setting_ip_replace_ipv4_addresses(s_ip,
                                                            (NMIPAddress **) addrs_new->pdata,
@@ -443,7 +560,7 @@ _nmc_mangle_connection(NMDevice                             *device,
 /*****************************************************************************/
 
 static gboolean
-_config_one(GCancellable                      *sigterm_cancellable,
+_config_one(SigTermData                       *sigterm_data,
             NMClient                          *nmc,
             const NMCSProviderGetConfigResult *result,
             guint                              idx)
@@ -463,7 +580,7 @@ _config_one(GCancellable                      *sigterm_cancellable,
 
     g_main_context_iteration(NULL, FALSE);
 
-    if (g_cancellable_is_cancelled(sigterm_cancellable))
+    if (g_cancellable_is_cancelled(sigterm_data->cancellable))
         return FALSE;
 
     device = nm_g_object_ref(_nmc_get_device_by_hwaddr(nmc, hwaddr));
@@ -497,7 +614,7 @@ try_again:
     g_clear_error(&error);
 
     applied_connection = nmcs_device_get_applied_connection(device,
-                                                            sigterm_cancellable,
+                                                            sigterm_data->cancellable,
                                                             &applied_version_id,
                                                             &error);
     if (!applied_connection) {
@@ -558,8 +675,12 @@ try_again:
     maybe_no_preserved_external_ip =
         (nmc_client_has_version_info_v(nmc) < NM_ENCODE_VERSION(1, 41, 6));
 
+    /* Once we start reconfiguring the system, we cannot abort in the middle. From now on,
+     * any SIGTERM gets ignored until we are done.  */
+    sigterm_data->enabled = FALSE;
+
     if (!nmcs_device_reapply(device,
-                             sigterm_cancellable,
+                             NULL,
                              applied_connection,
                              applied_version_id,
                              maybe_no_preserved_external_ip,
@@ -590,15 +711,13 @@ try_again:
 }
 
 static gboolean
-_config_all(GCancellable                      *sigterm_cancellable,
-            NMClient                          *nmc,
-            const NMCSProviderGetConfigResult *result)
+_config_all(SigTermData *sigterm_data, NMClient *nmc, const NMCSProviderGetConfigResult *result)
 {
     gboolean any_changes = FALSE;
     guint    i;
 
     for (i = 0; i < result->n_iface_datas; i++) {
-        if (_config_one(sigterm_cancellable, nmc, result, i))
+        if (_config_one(sigterm_data, nmc, result, i))
             any_changes = TRUE;
     }
 
@@ -610,13 +729,16 @@ _config_all(GCancellable                      *sigterm_cancellable,
 static gboolean
 sigterm_handler(gpointer user_data)
 {
-    GCancellable *sigterm_cancellable = user_data;
+    SigTermData *sigterm_data = user_data;
 
-    if (!g_cancellable_is_cancelled(sigterm_cancellable)) {
-        _LOGD("SIGTERM received");
-        g_cancellable_cancel(user_data);
-    } else
-        _LOGD("SIGTERM received (again)");
+    _LOGD("SIGTERM received (%s) (%s)",
+          sigterm_data->signal_received ? "first time" : "again",
+          sigterm_data->enabled ? "cancel operation" : "ignore");
+
+    sigterm_data->signal_received = TRUE;
+
+    if (sigterm_data->enabled)
+        g_cancellable_cancel(sigterm_data->cancellable);
     return G_SOURCE_CONTINUE;
 }
 
@@ -631,8 +753,9 @@ main(int argc, const char *const *argv)
     gs_unref_object NMClient                  *nmc                                   = NULL;
     nm_auto_free_nmcs_provider_get_config_result NMCSProviderGetConfigResult *result = NULL;
     gs_free_error GError                                                     *error  = NULL;
+    SigTermData                                                               sigterm_data;
 
-    _nm_logging_enabled_init(g_getenv(NMCS_ENV_VARIABLE("NM_CLOUD_SETUP_LOG")));
+    _nm_logging_enabled_init(g_getenv(NMCS_ENV_NM_CLOUD_SETUP_LOG));
 
     _LOGD("nm-cloud-setup %s starting...", NM_DIST_VERSION);
 
@@ -643,9 +766,14 @@ main(int argc, const char *const *argv)
 
     sigterm_cancellable = g_cancellable_new();
 
-    sigterm_source = nm_g_unix_signal_add_source(SIGTERM, sigterm_handler, sigterm_cancellable);
+    sigterm_data = (SigTermData){
+        .cancellable     = sigterm_cancellable,
+        .enabled         = TRUE,
+        .signal_received = FALSE,
+    };
+    sigterm_source = nm_g_unix_signal_add_source(SIGTERM, sigterm_handler, &sigterm_data);
 
-    provider = _provider_detect(sigterm_cancellable);
+    provider = _provider_detect(&sigterm_data);
     if (!provider)
         goto done;
 
@@ -674,7 +802,7 @@ main(int argc, const char *const *argv)
     if (!result)
         goto done;
 
-    if (_config_all(sigterm_cancellable, nmc, result))
+    if (_config_all(&sigterm_data, nmc, result))
         _LOGI("some changes were applied for provider %s", nmcs_provider_get_name(provider));
     else
         _LOGD("no changes were applied for provider %s", nmcs_provider_get_name(provider));

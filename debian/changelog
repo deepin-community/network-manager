@@ -1,9 +1,112 @@
-network-manager (1.42.4-2deepin3) unstable; urgency=medium
+network-manager (1.44.2-7) unstable; urgency=medium
 
-  * add wpasupplicant depends.
-  * issues https://github.com/linuxdeepin/developer-center/issues/4039
+  [ Simon McVittie ]
+  * d/control: Explicitly build-depend on gir1.2-girepository-2.0.
+    This is currently a virtual package provided by gir1.2-glib-2.0, but it
+    will need to be split into a separate package during the
+    GNOME 46/GLib 2.79.x cycle.
+    Making this dependency explicit will also help to keep track of which
+    packages will need coordination when PyGI switches from GIRepository 2.0
+    to GIRepository 3.0, which again is likely to happen during the GNOME 46
+    cycle. (Closes: #1059623)
 
- -- LiChengGang <lichenggang@uniontech.com>  Tue, 11 Apr 2023 17:39:16 +0800
+ -- Michael Biebl <biebl@debian.org>  Fri, 29 Dec 2023 19:38:14 +0100
+
+network-manager (1.44.2-6) unstable; urgency=medium
+
+  * Revert "Add versioned Breaks against isc-dhcp-client"
+    Having a Breaks against isc-dhcp-client can lead to unwanted package
+    removals by apt. As the default dhcp backend in network-manager has been
+    switched from dhclient to internal, the Breaks is not strictly necessary.
+    Users that have explicitly configured "dhcp=dhclient" are advised to
+    switch to the internal option (recommended) or temporarily disable the
+    sbin.dhclient AppArmor profile shipped by isc-dhcp-client until #1055067
+    is fixed. (Closes: #1056638)
+
+ -- Michael Biebl <biebl@debian.org>  Mon, 27 Nov 2023 07:45:49 +0100
+
+network-manager (1.44.2-5) unstable; urgency=medium
+
+  * Replace systemd Build-Depends with systemd-dev.
+    Only systemd.pc is required during build which is now shipped in
+    systemd-dev.
+  * Add versioned Breaks against isc-dhcp-client.
+    The AppArmor policy in isc-dhcp-client needs to be updated to account
+    for the move of the nm-dhcp-helper binary to /usr/libexec.
+    (Closes: #1056313)
+
+ -- Michael Biebl <biebl@debian.org>  Mon, 20 Nov 2023 23:02:41 +0100
+
+network-manager (1.44.2-4) unstable; urgency=medium
+
+  * Fix typo in latest NEWS entry
+  * Ship /etc/NetworkManager/VPN directory in network-manager package.
+    This will make an eventual cleanup easier once all VPN plugin packages
+    have moved their .name files to /usr/lib/NetworkManager/VPN.
+  * core: propagate the user-requested reason for act-request disconnection.
+    This avoids that deactivating a Wireguard VPN connection triggers an
+    error notification.
+
+ -- Michael Biebl <biebl@debian.org>  Sat, 18 Nov 2023 20:57:16 +0100
+
+network-manager (1.44.2-3) unstable; urgency=medium
+
+  * Move systemd services files and udev rules to /usr.
+    Add a corresponding versioned Build-Depends on debhelper (>= 13.11.6) to
+    ensure we have a recent enough dh_installsystemd.
+  * Install helper binaries into /usr/libexec (Closes: #1026388)
+
+ -- Michael Biebl <biebl@debian.org>  Fri, 20 Oct 2023 16:35:24 +0200
+
+network-manager (1.44.2-2) unstable; urgency=medium
+
+  * Stop executing ifupdown hook scripts on network state changes.
+    Many of those script are not meant to be run within a NetworkManager
+    context. Packages that would benefit from reacting on such network state
+    changes should install a native NetworkManager-dispatcher script.
+    The interface is documented in more detail in the
+    NetworkManager-dispatcher(8) man page.
+
+ -- Michael Biebl <biebl@debian.org>  Wed, 18 Oct 2023 14:24:23 +0200
+
+network-manager (1.44.2-1) unstable; urgency=medium
+
+  * New upstream version 1.44.2
+  * Rebase patches
+
+ -- Michael Biebl <biebl@debian.org>  Wed, 04 Oct 2023 12:09:39 +0200
+
+network-manager (1.44.0-1) unstable; urgency=medium
+
+  * New upstream version 1.44.0
+  * Explicitly set the modprobe path during configure
+  * Update symbols file for libnm0
+  * Rebase patches
+  * Remove obsolete maintscript code
+
+ -- Michael Biebl <biebl@debian.org>  Wed, 09 Aug 2023 22:22:22 +0200
+
+network-manager (1.42.8-1) unstable; urgency=medium
+
+  * New upstream version 1.42.8
+
+ -- Michael Biebl <biebl@debian.org>  Wed, 28 Jun 2023 15:22:30 +0200
+
+network-manager (1.42.6-2) unstable; urgency=medium
+
+  * Stop installing deprecated polkit pkla file.
+    The pkla backend has been superseded by the JS based backend.
+
+ -- Michael Biebl <biebl@debian.org>  Thu, 15 Jun 2023 23:08:24 +0200
+
+network-manager (1.42.6-1) unstable; urgency=medium
+
+  * New upstream version 1.42.6
+  * Rebase patches
+  * Use Build-Depends on polkitd and libpolkit-gobject-1-dev for polkit.its.
+    The obsolete policykit-1 package is going away. (Closes: #1025606)
+
+ -- Michael Biebl <biebl@debian.org>  Mon, 12 Jun 2023 14:48:14 +0200
 
 network-manager (1.42.4-1) unstable; urgency=medium
 

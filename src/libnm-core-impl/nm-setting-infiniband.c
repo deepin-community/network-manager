@@ -10,6 +10,7 @@
 #include <stdlib.h>
 #include <linux/if_infiniband.h>
 
+#include "libnm-platform/nmp-base.h"
 #include "nm-utils.h"
 #include "nm-utils-private.h"
 #include "nm-setting-private.h"
@@ -35,9 +36,7 @@ typedef struct {
     char   *mac_address;
     char   *transport_mode;
     char   *parent;
-    char   *virtual_iface_name;
-    gsize   virtual_iface_name_parent_length;
-    gint32  virtual_iface_name_p_key;
+    char    virtual_iface_name[NM_IFNAMSIZ];
     gint32  p_key;
     guint32 mtu;
 } NMSettingInfinibandPrivate;
@@ -158,31 +157,18 @@ const char *
 nm_setting_infiniband_get_virtual_interface_name(NMSettingInfiniband *setting)
 {
     NMSettingInfinibandPrivate *priv = NM_SETTING_INFINIBAND_GET_PRIVATE(setting);
-    gsize                       len;
 
-    if (priv->p_key == -1 || !priv->parent) {
-        nm_clear_g_free(&priv->virtual_iface_name);
+    if (priv->p_key == -1 || !priv->parent)
         return NULL;
-    }
 
-    len = strlen(priv->parent);
-    if (!priv->virtual_iface_name || priv->virtual_iface_name_p_key != priv->p_key
-        || priv->virtual_iface_name_parent_length != len
-        || memcmp(priv->parent, priv->virtual_iface_name, len) != 0) {
-        priv->virtual_iface_name_p_key         = priv->p_key;
-        priv->virtual_iface_name_parent_length = len;
-        g_free(priv->virtual_iface_name);
-        priv->virtual_iface_name = g_strdup_printf("%s.%04x", priv->parent, priv->p_key);
-    }
-
-    return priv->virtual_iface_name;
+    return nm_net_devname_infiniband(priv->virtual_iface_name, priv->parent, priv->p_key);
 }
 
 static gboolean
 verify(NMSetting *setting, NMConnection *connection, GError **error)
 {
-    NMSettingConnection        *s_con = NULL;
-    NMSettingInfinibandPrivate *priv  = NM_SETTING_INFINIBAND_GET_PRIVATE(setting);
+    NMSettingConnection        *s_con;
+    NMSettingInfinibandPrivate *priv = NM_SETTING_INFINIBAND_GET_PRIVATE(setting);
 
     if (priv->mac_address && !nm_utils_hwaddr_valid(priv->mac_address, INFINIBAND_ALEN)) {
         g_set_error_literal(error,
@@ -251,8 +237,10 @@ verify(NMSetting *setting, NMConnection *connection, GError **error)
         }
     }
 
-    if (connection)
-        s_con = nm_connection_get_setting_connection(connection);
+    /* *** errors above here should be always fatal, below NORMALIZABLE_ERROR *** */
+
+    s_con = connection ? nm_connection_get_setting_connection(connection) : NULL;
+
     if (s_con) {
         const char *interface_name = nm_setting_connection_get_interface_name(s_con);
 
@@ -287,12 +275,10 @@ verify(NMSetting *setting, NMConnection *connection, GError **error)
                                "%s.%s: ",
                                NM_SETTING_CONNECTION_SETTING_NAME,
                                NM_SETTING_CONNECTION_INTERFACE_NAME);
-                return FALSE;
+                return NM_SETTING_VERIFY_NORMALIZABLE_ERROR;
             }
         }
     }
-
-    /* *** errors above here should be always fatal, below NORMALIZABLE_ERROR *** */
 
     if (priv->mtu > NM_INFINIBAND_MAX_MTU) {
         /* Traditionally, MTU for "datagram" mode was limited to 2044
@@ -340,16 +326,6 @@ nm_setting_infiniband_new(void)
 }
 
 static void
-finalize(GObject *object)
-{
-    NMSettingInfinibandPrivate *priv = NM_SETTING_INFINIBAND_GET_PRIVATE(object);
-
-    g_free(priv->virtual_iface_name);
-
-    G_OBJECT_CLASS(nm_setting_infiniband_parent_class)->finalize(object);
-}
-
-static void
 nm_setting_infiniband_class_init(NMSettingInfinibandClass *klass)
 {
     GObjectClass   *object_class        = G_OBJECT_CLASS(klass);
@@ -360,7 +336,6 @@ nm_setting_infiniband_class_init(NMSettingInfinibandClass *klass)
 
     object_class->get_property = _nm_setting_property_get_property_direct;
     object_class->set_property = _nm_setting_property_set_property_direct;
-    object_class->finalize     = finalize;
 
     setting_class->verify = verify;
 
@@ -448,18 +423,31 @@ nm_setting_infiniband_class_init(NMSettingInfinibandClass *klass)
     /**
      * NMSettingInfiniband:p-key:
      *
-     * The InfiniBand P_Key to use for this device. A value of -1 means to use
-     * the default P_Key (aka "the P_Key at index 0"). Otherwise, it is a 16-bit
-     * unsigned integer, whose high bit is set if it is a "full membership"
-     * P_Key.
+     * The InfiniBand p-key to use for this device. A value of -1 means to use
+     * the default p-key (aka "the p-key at index 0"). Otherwise, it is a
+     * 16-bit unsigned integer, whose high bit 0x8000 is set if it is a "full
+     * membership" p-key. The values 0 and 0x8000 are not allowed.
+     *
+     * With the p-key set, the interface name is always "$parent.$p_key".
+     * Setting "connection.interface-name" to another name is not supported.
+     *
+     * Note that kernel will internally always set the full membership bit,
+     * although the interface name does not reflect that. Usually the user
+     * would want to configure a full membership p-key with 0x8000 flag set.
      **/
     /* ---ifcfg-rh---
      * property: p-key
-     * variable: PKEY_ID (and PKEY=yes)
+     * variable: PKEY_ID or PKEY_ID_NM(*) (requires PKEY=yes)
      * default: PKEY=no
      * description: InfiniBand P_Key. The value can be a hex number prefixed with "0x"
      *   or a decimal number.
-     *   When PKEY_ID is specified, PHYSDEV and DEVICE also must be specified.
+     *   When PKEY_ID is specified, PHYSDEV must be specified.
+     *   Note that ifcfg-rh format will always automatically set the full membership
+     *   flag 0x8000 for the PKEY_ID variable. To express IDs without the full membership
+     *   flag, use PKEY_ID_NM. Note that kernel internally treats the interface as
+     *   having the full membership flag set, this mainly affects the interface name.
+     *   For the ifcfg file to be supported by initscripts' ifup-ib, the DEVICE=
+     *   must always be set. NetworkManager does not require that.
      * example: PKEY=yes PKEY_ID=2 PHYSDEV=mlx4_ib0 DEVICE=mlx4_ib0.8002
      * ---end---
      */

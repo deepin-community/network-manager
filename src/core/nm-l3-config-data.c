@@ -2297,35 +2297,37 @@ nm_l3_config_data_cmp_full(const NML3ConfigData *a,
         const NMPObject *def_route_a = a->best_default_route_x[IS_IPv4];
         const NMPObject *def_route_b = b->best_default_route_x[IS_IPv4];
 
-        NM_CMP_SELF(def_route_a, def_route_b);
+        if (def_route_a != def_route_b) {
+            if (NM_FLAGS_HAS(flags, NM_L3_CONFIG_CMP_FLAGS_ROUTES)) {
+                NM_CMP_RETURN(
+                    nmp_object_cmp_full(def_route_a,
+                                        def_route_b,
+                                        NM_FLAGS_HAS(flags, NM_L3_CONFIG_CMP_FLAGS_IFINDEX)
+                                            ? NMP_OBJECT_CMP_FLAGS_NONE
+                                            : NMP_OBJECT_CMP_FLAGS_IGNORE_IFINDEX));
+            } else if (NM_FLAGS_HAS(flags, NM_L3_CONFIG_CMP_FLAGS_ROUTES_ID)) {
+                if (NM_FLAGS_HAS(flags, NM_L3_CONFIG_CMP_FLAGS_IFINDEX)) {
+                    NM_CMP_DIRECT(def_route_a->obj_with_ifindex.ifindex,
+                                  def_route_b->obj_with_ifindex.ifindex);
+                }
 
-        if (NM_FLAGS_HAS(flags, NM_L3_CONFIG_CMP_FLAGS_ROUTES)) {
-            NM_CMP_RETURN(nmp_object_cmp_full(def_route_a,
-                                              def_route_b,
-                                              NM_FLAGS_HAS(flags, NM_L3_CONFIG_CMP_FLAGS_IFINDEX)
-                                                  ? NMP_OBJECT_CMP_FLAGS_NONE
-                                                  : NMP_OBJECT_CMP_FLAGS_IGNORE_IFINDEX));
-        } else if (NM_FLAGS_HAS(flags, NM_L3_CONFIG_CMP_FLAGS_ROUTES_ID)) {
-            if (NM_FLAGS_HAS(flags, NM_L3_CONFIG_CMP_FLAGS_IFINDEX)) {
-                NM_CMP_DIRECT(def_route_a->obj_with_ifindex.ifindex,
-                              def_route_b->obj_with_ifindex.ifindex);
-            }
+                if (IS_IPv4) {
+                    NMPlatformIP4Route ra = def_route_a->ip4_route;
+                    NMPlatformIP4Route rb = def_route_b->ip4_route;
 
-            if (IS_IPv4) {
-                NMPlatformIP4Route ra = def_route_a->ip4_route;
-                NMPlatformIP4Route rb = def_route_b->ip4_route;
+                    NM_CMP_DIRECT(ra.metric, rb.metric);
+                    NM_CMP_DIRECT(ra.plen, rb.plen);
+                    NM_CMP_RETURN_DIRECT(
+                        nm_ip4_addr_same_prefix_cmp(ra.network, rb.network, ra.plen));
+                } else {
+                    NMPlatformIP6Route ra = def_route_a->ip6_route;
+                    NMPlatformIP6Route rb = def_route_b->ip6_route;
 
-                NM_CMP_DIRECT(ra.metric, rb.metric);
-                NM_CMP_DIRECT(ra.plen, rb.plen);
-                NM_CMP_RETURN_DIRECT(nm_ip4_addr_same_prefix_cmp(ra.network, rb.network, ra.plen));
-            } else {
-                NMPlatformIP6Route ra = def_route_a->ip6_route;
-                NMPlatformIP6Route rb = def_route_b->ip6_route;
-
-                NM_CMP_DIRECT(ra.metric, rb.metric);
-                NM_CMP_DIRECT(ra.plen, rb.plen);
-                NM_CMP_RETURN_DIRECT(
-                    nm_ip6_addr_same_prefix_cmp(&ra.network, &rb.network, ra.plen));
+                    NM_CMP_DIRECT(ra.metric, rb.metric);
+                    NM_CMP_DIRECT(ra.plen, rb.plen);
+                    NM_CMP_RETURN_DIRECT(
+                        nm_ip6_addr_same_prefix_cmp(&ra.network, &rb.network, ra.plen));
+                }
             }
         }
 
@@ -2604,7 +2606,6 @@ nm_l3_config_data_add_dependent_device_routes(NML3ConfigData       *self,
                                               int                   addr_family,
                                               guint32               route_table,
                                               guint32               route_metric,
-                                              gboolean              force_commit,
                                               const NML3ConfigData *source)
 {
     const int          IS_IPv4 = NM_IS_IPv4(addr_family);
@@ -2649,7 +2650,6 @@ nm_l3_config_data_add_dependent_device_routes(NML3ConfigData       *self,
                                                                                     self->ifindex,
                                                                                     route_table,
                                                                                     route_metric,
-                                                                                    force_commit,
                                                                                     &r_stack.r4);
             if (r)
                 nm_l3_config_data_add_route(self, addr_family, NULL, r);
@@ -2685,13 +2685,12 @@ nm_l3_config_data_add_dependent_device_routes(NML3ConfigData       *self,
                 }
 
                 rx.r6 = (NMPlatformIP6Route){
-                    .ifindex        = self->ifindex,
-                    .rt_source      = NM_IP_CONFIG_SOURCE_KERNEL,
-                    .table_coerced  = nm_platform_route_table_coerce(route_table),
-                    .metric         = route_metric,
-                    .network        = *a6,
-                    .plen           = plen,
-                    .r_force_commit = force_commit,
+                    .ifindex       = self->ifindex,
+                    .rt_source     = NM_IP_CONFIG_SOURCE_KERNEL,
+                    .table_coerced = nm_platform_route_table_coerce(route_table),
+                    .metric        = route_metric,
+                    .network       = *a6,
+                    .plen          = plen,
                 };
 
                 nm_platform_ip_route_normalize(addr_family, &rx.rx);
@@ -3197,7 +3196,6 @@ nm_l3_config_data_merge(NML3ConfigData       *self,
             NMPlatformIPXAddress       a;
             NML3ConfigMergeHookResult  hook_result = {
                  .ip4acd_not_ready = NM_OPTION_BOOL_DEFAULT,
-                 .force_commit     = NM_OPTION_BOOL_DEFAULT,
             };
 
 #define _ensure_a()                                       \
@@ -3230,12 +3228,6 @@ nm_l3_config_data_merge(NML3ConfigData       *self,
                 a.a4.a_acd_not_ready = (!!hook_result.ip4acd_not_ready);
             }
 
-            if (hook_result.force_commit != NM_OPTION_BOOL_DEFAULT
-                && (!!hook_result.force_commit) != a_src->a_force_commit) {
-                _ensure_a();
-                a.ax.a_force_commit = (!!hook_result.force_commit);
-            }
-
             nm_l3_config_data_add_address_full(self,
                                                addr_family,
                                                a_src == &a.ax ? NULL : obj,
@@ -3255,7 +3247,6 @@ nm_l3_config_data_merge(NML3ConfigData       *self,
                 NMPlatformIPXRoute        r;
                 NML3ConfigMergeHookResult hook_result = {
                     .ip4acd_not_ready = NM_OPTION_BOOL_DEFAULT,
-                    .force_commit     = NM_OPTION_BOOL_DEFAULT,
                 };
 
 #define _ensure_r()                                     \
@@ -3279,12 +3270,6 @@ nm_l3_config_data_merge(NML3ConfigData       *self,
                 if (r_src->ifindex != self->ifindex) {
                     _ensure_r();
                     r.rx.ifindex = self->ifindex;
-                }
-
-                if (hook_result.force_commit != NM_OPTION_BOOL_DEFAULT
-                    && (!!hook_result.force_commit) != r_src->r_force_commit) {
-                    _ensure_r();
-                    r.rx.r_force_commit = (!!hook_result.force_commit);
                 }
 
                 if (!NM_FLAGS_HAS(merge_flags, NM_L3_CONFIG_MERGE_FLAGS_CLONE)) {

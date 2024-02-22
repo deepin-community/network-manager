@@ -17,8 +17,10 @@
 #define NM_AZURE_METADATA_URL_BASE /* $NM_AZURE_BASE/$NM_AZURE_API_VERSION */ \
     "/metadata/instance/network/interface/"
 
+NMCS_DEFINE_HOST_BASE(_azure_base, NMCS_ENV_NM_CLOUD_SETUP_AZURE_HOST, NM_AZURE_BASE);
+
 #define _azure_uri_concat(...) \
-    nmcs_utils_uri_build_concat(NM_AZURE_BASE, __VA_ARGS__, NM_AZURE_API_VERSION)
+    nmcs_utils_uri_build_concat(_azure_base(), __VA_ARGS__, NM_AZURE_API_VERSION)
 #define _azure_uri_interfaces(...) _azure_uri_concat(NM_AZURE_METADATA_URL_BASE, ##__VA_ARGS__)
 
 /*****************************************************************************/
@@ -42,7 +44,7 @@ _detect_get_meta_data_done_cb(GObject *source, GAsyncResult *result, gpointer us
     gs_free_error GError  *get_error = NULL;
     gs_free_error GError  *error     = NULL;
 
-    nm_http_client_poll_get_finish(NM_HTTP_CLIENT(source), result, NULL, NULL, &get_error);
+    nm_http_client_poll_req_finish(NM_HTTP_CLIENT(source), result, NULL, NULL, &get_error);
 
     if (nm_utils_error_is_cancelled(get_error)) {
         g_task_return_error(task, g_steal_pointer(&get_error));
@@ -69,13 +71,14 @@ detect(NMCSProvider *provider, GTask *task)
 
     http_client = nmcs_provider_get_http_client(provider);
 
-    nm_http_client_poll_get(http_client,
+    nm_http_client_poll_req(http_client,
                             (uri = _azure_uri_concat("/metadata/instance")),
                             HTTP_TIMEOUT_MS,
                             256 * 1024,
                             7000,
                             1000,
                             NM_MAKE_STRV(NM_AZURE_METADATA_HEADER),
+                            NULL,
                             g_task_get_cancellable(task),
                             NULL,
                             NULL,
@@ -121,7 +124,7 @@ _get_config_fetch_done_cb(NMHttpClient      *http_client,
     in_addr_t                       tmp_addr;
     int                             tmp_prefix = -1;
 
-    nm_http_client_poll_get_finish(http_client, result, NULL, &response, &error);
+    nm_http_client_poll_req_finish(http_client, result, NULL, &response, &error);
 
     if (nm_utils_error_is_cancelled(error))
         return;
@@ -241,7 +244,7 @@ _get_config_ips_prefix_list_cb(GObject *source, GAsyncResult *result, gpointer u
     gsize                          line_len;
     char                           iface_idx_str[30];
 
-    nm_http_client_poll_get_finish(NM_HTTP_CLIENT(source), result, NULL, &response, &error);
+    nm_http_client_poll_req_finish(NM_HTTP_CLIENT(source), result, NULL, &response, &error);
 
     if (nm_utils_error_is_cancelled(error))
         return;
@@ -283,7 +286,7 @@ _get_config_ips_prefix_list_cb(GObject *source, GAsyncResult *result, gpointer u
 
         iface_data->n_iface_data_pending++;
 
-        nm_http_client_poll_get(
+        nm_http_client_poll_req(
             NM_HTTP_CLIENT(source),
             (uri = _azure_uri_interfaces(iface_idx_str,
                                          "/ipv4/ipAddress/",
@@ -294,6 +297,7 @@ _get_config_ips_prefix_list_cb(GObject *source, GAsyncResult *result, gpointer u
             10000,
             1000,
             NM_MAKE_STRV(NM_AZURE_METADATA_HEADER),
+            NULL,
             get_config_data->intern_cancellable,
             NULL,
             NULL,
@@ -308,7 +312,7 @@ _get_config_ips_prefix_list_cb(GObject *source, GAsyncResult *result, gpointer u
         gs_free char *uri = NULL;
 
         iface_data->n_iface_data_pending++;
-        nm_http_client_poll_get(
+        nm_http_client_poll_req(
             NM_HTTP_CLIENT(source),
             (uri = _azure_uri_interfaces(iface_idx_str, "/ipv4/subnet/0/address/")),
             HTTP_TIMEOUT_MS,
@@ -316,6 +320,7 @@ _get_config_ips_prefix_list_cb(GObject *source, GAsyncResult *result, gpointer u
             10000,
             1000,
             NM_MAKE_STRV(NM_AZURE_METADATA_HEADER),
+            NULL,
             get_config_data->intern_cancellable,
             NULL,
             NULL,
@@ -325,7 +330,7 @@ _get_config_ips_prefix_list_cb(GObject *source, GAsyncResult *result, gpointer u
         nm_clear_g_free(&uri);
 
         iface_data->n_iface_data_pending++;
-        nm_http_client_poll_get(
+        nm_http_client_poll_req(
             NM_HTTP_CLIENT(source),
             (uri = _azure_uri_interfaces(iface_idx_str, "/ipv4/subnet/0/prefix/")),
             HTTP_TIMEOUT_MS,
@@ -333,6 +338,7 @@ _get_config_ips_prefix_list_cb(GObject *source, GAsyncResult *result, gpointer u
             10000,
             1000,
             NM_MAKE_STRV(NM_AZURE_METADATA_HEADER),
+            NULL,
             get_config_data->intern_cancellable,
             NULL,
             NULL,
@@ -357,7 +363,7 @@ _get_config_iface_cb(GObject *source, GAsyncResult *result, gpointer user_data)
     gs_free const char            *uri        = NULL;
     char                           buf[100];
 
-    nm_http_client_poll_get_finish(NM_HTTP_CLIENT(source), result, NULL, &response, &error);
+    nm_http_client_poll_req_finish(NM_HTTP_CLIENT(source), result, NULL, &response, &error);
 
     if (nm_utils_error_is_cancelled(error))
         return;
@@ -408,13 +414,14 @@ _get_config_iface_cb(GObject *source, GAsyncResult *result, gpointer user_data)
 
     nm_sprintf_buf(buf, "%" G_GSSIZE_FORMAT "/ipv4/ipAddress/", iface_data->intern_iface_idx);
 
-    nm_http_client_poll_get(NM_HTTP_CLIENT(source),
+    nm_http_client_poll_req(NM_HTTP_CLIENT(source),
                             (uri = _azure_uri_interfaces(buf)),
                             HTTP_TIMEOUT_MS,
                             512 * 1024,
                             10000,
                             1000,
                             NM_MAKE_STRV(NM_AZURE_METADATA_HEADER),
+                            NULL,
                             get_config_data->intern_cancellable,
                             NULL,
                             NULL,
@@ -441,7 +448,7 @@ _get_net_ifaces_list_cb(GObject *source, GAsyncResult *result, gpointer user_dat
     guint                          i;
     gssize                         extern_iface_idx_cnt = 0;
 
-    nm_http_client_poll_get_finish(NM_HTTP_CLIENT(source), result, NULL, &response, &error);
+    nm_http_client_poll_req_finish(NM_HTTP_CLIENT(source), result, NULL, &response, &error);
 
     if (nm_utils_error_is_cancelled(error))
         return;
@@ -508,13 +515,14 @@ _get_net_ifaces_list_cb(GObject *source, GAsyncResult *result, gpointer user_dat
         nm_sprintf_buf(buf, "%" G_GSSIZE_FORMAT "/macAddress", iface_data->intern_iface_idx);
 
         get_config_data->n_pending++;
-        nm_http_client_poll_get(NM_HTTP_CLIENT(source),
+        nm_http_client_poll_req(NM_HTTP_CLIENT(source),
                                 (uri = _azure_uri_interfaces(buf)),
                                 HTTP_TIMEOUT_MS,
                                 512 * 1024,
                                 10000,
                                 1000,
                                 NM_MAKE_STRV(NM_AZURE_METADATA_HEADER),
+                                NULL,
                                 get_config_data->intern_cancellable,
                                 NULL,
                                 NULL,
@@ -531,13 +539,14 @@ get_config(NMCSProvider *provider, NMCSProviderGetConfigTaskData *get_config_dat
 {
     gs_free const char *uri = NULL;
 
-    nm_http_client_poll_get(nmcs_provider_get_http_client(provider),
+    nm_http_client_poll_req(nmcs_provider_get_http_client(provider),
                             (uri = _azure_uri_interfaces()),
                             HTTP_TIMEOUT_MS,
                             256 * 1024,
                             15000,
                             1000,
                             NM_MAKE_STRV(NM_AZURE_METADATA_HEADER),
+                            NULL,
                             get_config_data->intern_cancellable,
                             NULL,
                             NULL,
@@ -557,7 +566,7 @@ nmcs_provider_azure_class_init(NMCSProviderAzureClass *klass)
     NMCSProviderClass *provider_class = NMCS_PROVIDER_CLASS(klass);
 
     provider_class->_name                 = "azure";
-    provider_class->_env_provider_enabled = NMCS_ENV_VARIABLE("NM_CLOUD_SETUP_AZURE");
+    provider_class->_env_provider_enabled = NMCS_ENV_NM_CLOUD_SETUP_AZURE;
     provider_class->detect                = detect;
     provider_class->get_config            = get_config;
 }

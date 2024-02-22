@@ -233,10 +233,13 @@ is_available(NMDevice *device, NMDeviceCheckDevAvailableFlags flags)
 }
 
 static gboolean
-check_connection_compatible(NMDevice *device, NMConnection *connection, GError **error)
+check_connection_compatible(NMDevice     *device,
+                            NMConnection *connection,
+                            gboolean      check_properties,
+                            GError      **error)
 {
     if (!NM_DEVICE_CLASS(nm_device_wifi_p2p_parent_class)
-             ->check_connection_compatible(device, connection, error))
+             ->check_connection_compatible(device, connection, check_properties, error))
         return FALSE;
 
     /* TODO: Allow limitting the interface using the HW-address? */
@@ -585,7 +588,7 @@ act_stage3_ip_config(NMDevice *device, int addr_family)
             nm_device_devip_set_state(device, AF_INET, NM_DEVICE_IP_STATE_READY, l3cd);
 
             /* This just disables the addressing indicator. */
-            method = NM_SETTING_IP4_CONFIG_METHOD_DISABLED;
+            method = NM_SETTING_IP4_CONFIG_METHOD_MANUAL;
         }
     }
 
@@ -643,7 +646,7 @@ get_auto_ip_config_method(NMDevice *device, int addr_family)
     if (addr_family == AF_INET && priv->group_iface
         && !nm_supplicant_interface_get_p2p_group_owner(priv->group_iface)
         && nm_supplicant_interface_get_p2p_assigned_addr(priv->group_iface, NULL, NULL))
-        return NM_SETTING_IP4_CONFIG_METHOD_DISABLED;
+        return NM_SETTING_IP4_CONFIG_METHOD_MANUAL;
 
     /* Override the AUTO method to mean shared if we are group owner. */
     if (priv->group_iface && nm_supplicant_interface_get_p2p_group_owner(priv->group_iface)) {

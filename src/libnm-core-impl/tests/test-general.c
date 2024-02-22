@@ -7,6 +7,7 @@
 
 #include "libnm-core-impl/nm-default-libnm-core.h"
 
+#include <ctype.h>
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <fcntl.h>
@@ -87,21 +88,65 @@ G_STATIC_ASSERT(NM_UTILS_HWADDR_LEN_MAX == _NM_UTILS_HWADDR_LEN_MAX);
 static void
 test_nm_ascii_spaces(void)
 {
-    int               i;
-    const char *const S = NM_ASCII_SPACES;
+    int i;
 
-    for (i = 0; S[i]; i++)
-        g_assert(!strchr(&S[i + 1], S[i]));
+    {
+        const char *const S = NM_ASCII_SPACES;
 
-    for (i = 0; S[i] != '\0'; i++)
-        g_assert(g_ascii_isspace(S[i]));
+        for (i = 0; S[i]; i++)
+            g_assert(!strchr(&S[i + 1], S[i]));
 
-    g_assert(!g_ascii_isspace((char) 0));
-    for (i = 1; i < 0x100; i++) {
-        if (g_ascii_isspace((char) i))
-            g_assert(strchr(S, (char) i));
-        else
-            g_assert(!strchr(S, (char) i));
+        for (i = 0; S[i] != '\0'; i++)
+            g_assert(g_ascii_isspace(S[i]));
+
+        g_assert(!g_ascii_isspace((char) 0));
+        for (i = 1; i < 0x100; i++) {
+            g_assert((!!g_ascii_isspace((char) i)) == (!!strchr(S, (char) i)));
+        }
+    }
+
+    {
+        const char *const S = NM_ASCII_WHITESPACES;
+
+        for (i = 0; S[i]; i++)
+            g_assert(!strchr(&S[i + 1], S[i]));
+
+        for (i = 0; S[i] != '\0'; i++)
+            g_assert(nm_ascii_is_whitespace(S[i]));
+
+        g_assert(!nm_ascii_is_whitespace((char) 0));
+        for (i = 1; i < 0x100; i++) {
+            g_assert(nm_ascii_is_whitespace((char) i) == (!!strchr(S, (char) i)));
+        }
+    }
+
+    {
+        const char *const S = NM_ASCII_SPACES_CTYPE;
+
+        for (i = 0; S[i]; i++)
+            g_assert(!strchr(&S[i + 1], S[i]));
+
+        if (nm_streq0(g_getenv("LANG"), "C")) {
+            g_assert(!isspace((char) 0));
+            for (i = 1; i < 0x100; i++) {
+                g_assert((!!isspace((char) i)) == (!!strchr(S, (char) i)));
+            }
+        }
+    }
+
+    {
+        const char *const S = NM_ASCII_SPACES_KERNEL;
+
+        for (i = 0; S[i]; i++)
+            g_assert(!strchr(&S[i + 1], S[i]));
+
+        for (i = 0; S[i] != '\0'; i++)
+            g_assert(nm_ascii_is_space_kernel(S[i]));
+
+        g_assert(!nm_ascii_is_space_kernel((char) 0));
+        for (i = 1; i < 0x100; i++) {
+            g_assert(nm_ascii_is_space_kernel((char) i) == (!!strchr(S, (char) i)));
+        }
     }
 }
 
@@ -1417,6 +1462,7 @@ _do_test_c_list_sort(CListSort *elements, guint n_list, gboolean headless)
 
     g_assert(!c_list_is_empty(&head));
     g_assert(c_list_length(&head) == n_list);
+    g_assert(c_list_is_empty_or_single(&head) == (n_list <= 1));
 
     el_prev = NULL;
     c_list_for_each (iter, &head) {
@@ -1443,6 +1489,10 @@ test_c_list_sort(void)
     guint              n_list;
     guint              repeat;
 
+    g_assert(!c_list_is_linked(NULL));
+    g_assert(c_list_is_empty(NULL));
+    g_assert(c_list_is_empty_or_single(NULL));
+
     {
         CList head;
 
@@ -1450,6 +1500,7 @@ test_c_list_sort(void)
         c_list_sort(&head, _c_list_sort_cmp, NULL);
         g_assert(c_list_length(&head) == 0);
         g_assert(c_list_is_empty(&head));
+        g_assert(c_list_is_empty_or_single(&head));
     }
 
     elements = g_new0(CListSort, N_ELEMENTS);
@@ -1516,6 +1567,8 @@ _do_test_c_list_insert_sorted(CListSort *elements, guint n_list, bool append_equ
     g_assert(!c_list_length_is(&head, n_list - 1));
     g_assert(c_list_length_is(&head, n_list));
     g_assert(!c_list_length_is(&head, n_list + 1));
+
+    g_assert(c_list_is_empty_or_single(&head) == (n_list <= 1));
 
     el_prev = NULL;
     c_list_for_each_entry (el, &head, lst) {
@@ -3202,7 +3255,7 @@ test_setting_new_from_dbus_bad(void)
     nmtst_assert_success(conn, error);
     setting = nm_connection_get_setting(conn, NM_TYPE_SETTING_WIRELESS);
     g_assert(setting);
-    g_assert_cmpint(nm_setting_wireless_get_rate(NM_SETTING_WIRELESS(setting)), ==, 10);
+    g_assert_cmpint(nm_setting_wireless_get_rate(NM_SETTING_WIRELESS(setting)), ==, 0);
     g_object_unref(conn);
     g_variant_unref(dict);
 
@@ -6156,16 +6209,17 @@ test_connection_normalize_slave_type_2(void)
 }
 
 static void
-test_connection_normalize_infiniband_mtu(void)
+test_connection_normalize_infiniband(void)
 {
     gs_unref_object NMConnection *con = NULL;
     NMSettingInfiniband          *s_infini;
+    NMSettingConnection          *s_con;
     guint                         mtu_regular = nmtst_rand_select(2044, 2045, 65520);
 
-    con = nmtst_create_minimal_connection("test_connection_normalize_infiniband_mtu",
+    con = nmtst_create_minimal_connection("test_connection_normalize_infiniband",
                                           NULL,
                                           NM_SETTING_INFINIBAND_SETTING_NAME,
-                                          NULL);
+                                          &s_con);
 
     s_infini = nm_connection_get_setting_infiniband(con);
     g_object_set(s_infini, NM_SETTING_INFINIBAND_TRANSPORT_MODE, "connected", NULL);
@@ -6213,6 +6267,59 @@ test_connection_normalize_infiniband_mtu(void)
                                                          NM_CONNECTION_ERROR_INVALID_PROPERTY);
     nmtst_connection_normalize(con);
     g_assert_cmpint(65520, ==, nm_setting_infiniband_get_mtu(s_infini));
+
+    g_object_set(s_infini,
+                 NM_SETTING_INFINIBAND_PARENT,
+                 "foo",
+                 NM_SETTING_INFINIBAND_P_KEY,
+                 0x005c,
+                 NULL);
+    nmtst_assert_connection_verifies_without_normalization(con);
+
+    g_object_set(s_con, NM_SETTING_CONNECTION_INTERFACE_NAME, "foo.005c", NULL);
+    nmtst_assert_connection_verifies_without_normalization(con);
+
+    g_object_set(s_con, NM_SETTING_CONNECTION_INTERFACE_NAME, "foo", NULL);
+    nmtst_assert_connection_verifies_after_normalization(con,
+                                                         NM_CONNECTION_ERROR,
+                                                         NM_CONNECTION_ERROR_INVALID_PROPERTY);
+
+    nmtst_connection_normalize(con);
+    g_assert_cmpstr(nm_connection_get_interface_name(con), ==, "foo.005c");
+
+    g_object_set(s_infini,
+                 NM_SETTING_INFINIBAND_PARENT,
+                 "x234567890123",
+                 NM_SETTING_INFINIBAND_P_KEY,
+                 0x005c,
+                 NULL);
+    nmtst_assert_connection_verifies_after_normalization(con,
+                                                         NM_CONNECTION_ERROR,
+                                                         NM_CONNECTION_ERROR_INVALID_PROPERTY);
+
+    nmtst_connection_normalize(con);
+    g_assert_cmpstr(nm_connection_get_interface_name(con), ==, "x234567890123.0");
+
+#define iface_name(parent, p_key, expected)                  \
+    G_STMT_START                                             \
+    {                                                        \
+        char _name[NM_IFNAMSIZ];                             \
+                                                             \
+        nm_net_devname_infiniband(_name, (parent), (p_key)); \
+                                                             \
+        g_assert(nm_utils_ifname_valid_kernel(_name, NULL)); \
+        g_assert_cmpstr(_name, ==, (expected));              \
+    }                                                        \
+    G_STMT_END
+
+    iface_name("foo", 15, "foo.000f");
+    iface_name("x23456789012345", 15, "x23456789012345");
+    iface_name("x2345678901234", 15, "x2345678901234.");
+    iface_name("x234567890123", 15, "x234567890123.0");
+    iface_name("x23456789012", 15, "x23456789012.00");
+    iface_name("x2345678901", 15, "x2345678901.000");
+    iface_name("x234567890", 15, "x234567890.000f");
+    iface_name("x23456789", 15, "x23456789.000f");
 }
 
 static void
@@ -10463,7 +10570,7 @@ test_nm_ip_addr_zero(void)
     g_assert_cmpstr(nm_inet_ntop(AF_INET, &nm_ip_addr_zero, buf), ==, "0.0.0.0");
     g_assert_cmpstr(nm_inet_ntop(AF_INET6, &nm_ip_addr_zero, buf), ==, "::");
 
-    G_STATIC_ASSERT_EXPR(sizeof(a) == sizeof(a.array));
+    G_STATIC_ASSERT_EXPR(sizeof(a) == sizeof(a.addr_ptr));
 }
 
 static void
@@ -11511,8 +11618,8 @@ main(int argc, char **argv)
                     test_connection_normalize_slave_type_1);
     g_test_add_func("/core/general/test_connection_normalize_slave_type_2",
                     test_connection_normalize_slave_type_2);
-    g_test_add_func("/core/general/test_connection_normalize_infiniband_mtu",
-                    test_connection_normalize_infiniband_mtu);
+    g_test_add_func("/core/general/test_connection_normalize_infiniband",
+                    test_connection_normalize_infiniband);
     g_test_add_func("/core/general/test_connection_normalize_gateway_never_default",
                     test_connection_normalize_gateway_never_default);
     g_test_add_func("/core/general/test_connection_normalize_may_fail",

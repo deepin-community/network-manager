@@ -17,6 +17,7 @@
 #include <linux/if_ether.h>
 
 #include "libnm-glib-aux/nm-secret-utils.h"
+#include "libnm-glib-aux/nm-random-utils.h"
 #include "common.h"
 #include "connections.h"
 #include "libnmc-base/nm-client-utils.h"
@@ -1375,6 +1376,10 @@ fill_output_access_point(NMAccessPoint *ap, const APInfo *info)
             || (rsn_flags & NM_802_11_AP_SEC_KEY_MGMT_802_1X)) {
             g_string_append(security_str, "802.1X ");
         }
+        if ((wpa_flags & NM_802_11_AP_SEC_KEY_MGMT_EAP_SUITE_B_192)
+            || (rsn_flags & NM_802_11_AP_SEC_KEY_MGMT_EAP_SUITE_B_192)) {
+            g_string_append(security_str, "WPA-EAP-SUITE-B-192 ");
+        }
     }
 
     if (security_str->len > 0)
@@ -1465,32 +1470,30 @@ print_bond_bridge_info(NMDevice   *device,
                        const char *group_prefix,
                        const char *one_field)
 {
-    const GPtrArray                 *slaves = NULL;
-    GString                         *slaves_str;
+    const GPtrArray                 *ports = NULL;
+    GString                         *ports_str;
     int                              idx;
     const NMMetaAbstractInfo *const *tmpl;
     NmcOutputField                  *arr;
     NMC_OUTPUT_DATA_DEFINE_SCOPED(out);
 
-    if (NM_IS_DEVICE_BOND(device))
-        slaves = nm_device_bond_get_slaves(NM_DEVICE_BOND(device));
-    else if (NM_IS_DEVICE_BRIDGE(device))
-        slaves = nm_device_bridge_get_slaves(NM_DEVICE_BRIDGE(device));
+    if (NM_IS_DEVICE_BOND(device) || NM_IS_DEVICE_BRIDGE(device))
+        ports = nm_device_get_ports(device);
     else
         g_return_val_if_reached(FALSE);
 
-    slaves_str = g_string_new(NULL);
-    for (idx = 0; slaves && idx < slaves->len; idx++) {
-        NMDevice   *slave = g_ptr_array_index(slaves, idx);
-        const char *iface = nm_device_get_iface(slave);
+    ports_str = g_string_new(NULL);
+    for (idx = 0; ports && idx < ports->len; idx++) {
+        NMDevice   *port  = g_ptr_array_index(ports, idx);
+        const char *iface = nm_device_get_iface(port);
 
         if (iface) {
-            g_string_append(slaves_str, iface);
-            g_string_append_c(slaves_str, ' ');
+            g_string_append(ports_str, iface);
+            g_string_append_c(ports_str, ' ');
         }
     }
-    if (slaves_str->len > 0)
-        g_string_truncate(slaves_str, slaves_str->len - 1); /* Chop off last space */
+    if (ports_str->len > 0)
+        g_string_truncate(ports_str, ports_str->len - 1); /* Chop off last space */
 
     tmpl        = (const NMMetaAbstractInfo *const *) nmc_fields_dev_show_master_prop;
     out_indices = parse_output_fields(one_field, tmpl, FALSE, NULL, NULL);
@@ -1499,7 +1502,7 @@ print_bond_bridge_info(NMDevice   *device,
 
     arr = nmc_dup_fields_array(tmpl, NMC_OF_FLAG_SECTION_PREFIX);
     set_val_strc(arr, 0, group_prefix); /* i.e. BOND, TEAM, BRIDGE */
-    set_val_str(arr, 1, g_string_free(slaves_str, FALSE));
+    set_val_str(arr, 1, g_string_free(ports_str, FALSE));
     g_ptr_array_add(out.output_data, arr);
 
     print_data_prepare_width(out.output_data);
@@ -1530,30 +1533,30 @@ sanitize_team_config(const char *config)
 static gboolean
 print_team_info(NMDevice *device, NmCli *nmc, const char *group_prefix, const char *one_field)
 {
-    const GPtrArray                 *slaves = NULL;
-    GString                         *slaves_str;
+    const GPtrArray                 *ports = NULL;
+    GString                         *ports_str;
     int                              idx;
     const NMMetaAbstractInfo *const *tmpl;
     NmcOutputField                  *arr;
     NMC_OUTPUT_DATA_DEFINE_SCOPED(out);
 
     if (NM_IS_DEVICE_TEAM(device))
-        slaves = nm_device_team_get_slaves(NM_DEVICE_TEAM(device));
+        ports = nm_device_get_ports(device);
     else
         g_return_val_if_reached(FALSE);
 
-    slaves_str = g_string_new(NULL);
-    for (idx = 0; slaves && idx < slaves->len; idx++) {
-        NMDevice   *slave = g_ptr_array_index(slaves, idx);
-        const char *iface = nm_device_get_iface(slave);
+    ports_str = g_string_new(NULL);
+    for (idx = 0; ports && idx < ports->len; idx++) {
+        NMDevice   *port  = g_ptr_array_index(ports, idx);
+        const char *iface = nm_device_get_iface(port);
 
         if (iface) {
-            g_string_append(slaves_str, iface);
-            g_string_append_c(slaves_str, ' ');
+            g_string_append(ports_str, iface);
+            g_string_append_c(ports_str, ' ');
         }
     }
-    if (slaves_str->len > 0)
-        g_string_truncate(slaves_str, slaves_str->len - 1); /* Chop off last space */
+    if (ports_str->len > 0)
+        g_string_truncate(ports_str, ports_str->len - 1); /* Chop off last space */
 
     tmpl        = (const NMMetaAbstractInfo *const *) nmc_fields_dev_show_team_prop;
     out_indices = parse_output_fields(one_field, tmpl, FALSE, NULL, NULL);
@@ -1562,7 +1565,7 @@ print_team_info(NMDevice *device, NmCli *nmc, const char *group_prefix, const ch
 
     arr = nmc_dup_fields_array(tmpl, NMC_OF_FLAG_SECTION_PREFIX);
     set_val_strc(arr, 0, group_prefix); /* TEAM */
-    set_val_str(arr, 1, g_string_free(slaves_str, FALSE));
+    set_val_str(arr, 1, g_string_free(ports_str, FALSE));
     set_val_str(arr, 2, sanitize_team_config(nm_device_team_get_config(NM_DEVICE_TEAM(device))));
     g_ptr_array_add(out.output_data, arr);
 
@@ -4090,7 +4093,7 @@ generate_ssid_for_hotspot(void)
     return ssid_bytes;
 }
 
-#define WPA_PASSKEY_SIZE 8
+#define WPA_PASSKEY_SIZE 12
 static void
 generate_wpa_key(char *key, size_t len)
 {
@@ -4099,13 +4102,14 @@ generate_wpa_key(char *key, size_t len)
     g_return_if_fail(key);
     g_return_if_fail(len > WPA_PASSKEY_SIZE);
 
-    /* generate a 8-chars ASCII WPA key */
     for (i = 0; i < WPA_PASSKEY_SIZE; i++) {
         int c;
-        c = g_random_int_range(33, 126);
-        /* too many non alphanumeric characters are hard to remember for humans */
-        while (!g_ascii_isalnum(c))
-            c = g_random_int_range(33, 126);
+
+        do {
+            c = nm_random_u64_range_full(48, 122, TRUE);
+            /* skip characters that look similar */
+        } while (NM_IN_SET(c, '1', 'l', 'I', '0', 'O', 'Q', '8', 'B', '5', 'S')
+                 || !g_ascii_isalnum(c));
 
         key[i] = (char) c;
     }
@@ -4124,7 +4128,8 @@ generate_wep_key(char *key, size_t len)
     /* generate a 10-digit hex WEP key */
     for (i = 0; i < 10; i++) {
         int digit;
-        digit  = g_random_int_range(0, 16);
+
+        digit  = nm_random_u64_range_full(0, 16, TRUE);
         key[i] = hexdigits[digit];
     }
     key[10] = '\0';
@@ -4138,7 +4143,7 @@ set_wireless_security_for_hotspot(NMSettingWirelessSecurity *s_wsec,
                                   gboolean                   show_password,
                                   GError                   **error)
 {
-    char        generated_key[11];
+    char        generated_key[20];
     const char *key;
     const char *key_mgmt;
 
@@ -4264,6 +4269,8 @@ create_hotspot_conn(const GPtrArray *connections,
     NMSettingIPConfig         *s_ip4, *s_ip6;
     NMSettingProxy            *s_proxy;
 
+    nm_assert(channel_int == -1 || band);
+
     connection = nm_simple_connection_new();
     s_con      = (NMSettingConnection *) nm_setting_connection_new();
     nm_connection_add_setting(connection, NM_SETTING(s_con));
@@ -4294,6 +4301,8 @@ create_hotspot_conn(const GPtrArray *connections,
                      NM_SETTING_WIRELESS_BAND,
                      band,
                      NULL);
+    } else if (band) {
+        g_object_set(s_wifi, NM_SETTING_WIRELESS_BAND, band, NULL);
     }
 
     s_wsec = (NMSettingWirelessSecurity *) nm_setting_wireless_security_new();
@@ -4439,13 +4448,6 @@ do_device_wifi_hotspot(const NMCCommand *cmd, NmCli *nmc, int argc, const char *
     if (nmc->complete)
         return;
 
-    /* Verify band and channel parameters */
-    if (!channel) {
-        if (g_strcmp0(band, "bg") == 0)
-            channel = "1";
-        if (g_strcmp0(band, "a") == 0)
-            channel = "7";
-    }
     if (channel) {
         unsigned long int value;
 

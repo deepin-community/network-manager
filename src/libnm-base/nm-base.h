@@ -392,6 +392,7 @@ typedef struct {
 /****************************************************************************/
 
 #define NM_BOND_PORT_QUEUE_ID_DEF 0
+#define NM_BOND_PORT_PRIO_DEF     0
 
 /****************************************************************************/
 
@@ -430,5 +431,10 @@ typedef enum {
 char *nm_dhcp_iaid_to_hexstr(guint32 iaid, char buf[static NM_DHCP_IAID_TO_HEXSTR_BUF_LEN]);
 
 gboolean nm_dhcp_iaid_from_hexstr(const char *str, guint32 *out_value);
+
+/*****************************************************************************/
+
+const char *
+nm_net_devname_infiniband(char name[static NM_IFNAMSIZ], const char *parent_name, int p_key);
 
 #endif /* __NM_LIBNM_BASE_H__ */

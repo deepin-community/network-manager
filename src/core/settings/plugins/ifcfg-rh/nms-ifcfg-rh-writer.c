@@ -62,6 +62,24 @@
 /*****************************************************************************/
 
 static void
+set_error_unsupported(GError      **error,
+                      NMConnection *connection,
+                      const char   *name,
+                      gboolean      is_setting)
+{
+    g_set_error(error,
+                NM_SETTINGS_ERROR,
+                NM_SETTINGS_ERROR_NOT_SUPPORTED_BY_PLUGIN,
+                "The ifcfg-rh plugin doesn't support %s '%s'. If you are modifying an existing "
+                "connection profile saved in ifcfg-rh format, please migrate the connection to "
+                "keyfile using 'nmcli connection migrate %s' or via the Update2() D-Bus API "
+                "and try again.",
+                is_setting ? "setting" : "property",
+                name,
+                nm_connection_get_uuid(connection));
+};
+
+static void
 save_secret_flags(shvarFile *ifcfg, const char *key, NMSettingSecretFlags flags)
 {
     GString *str;
@@ -1023,7 +1041,10 @@ write_wireless_setting(NMConnection *connection,
 }
 
 static gboolean
-write_infiniband_setting(NMConnection *connection, shvarFile *ifcfg, GError **error)
+write_infiniband_setting(NMConnection *connection,
+                         shvarFile    *ifcfg,
+                         char        **out_interface_name,
+                         GError      **error)
 {
     NMSettingInfiniband *s_infiniband;
     const char          *mac, *transport_mode, *parent;
@@ -1052,11 +1073,23 @@ write_infiniband_setting(NMConnection *connection, shvarFile *ifcfg, GError **er
     p_key = nm_setting_infiniband_get_p_key(s_infiniband);
     if (p_key != -1) {
         svSetValueStr(ifcfg, "PKEY", "yes");
+
         svSetValueInt64(ifcfg, "PKEY_ID", p_key);
 
+        if (!NM_FLAGS_HAS(p_key, 0x8000)) {
+            /* initscripts' ifup-ib used to always interpret the PKEY_ID with
+             * the full membership flag (0x8000) set. For compatibility, we do
+             * interpret PKEY_ID as having that flag set.
+             *
+             * However, now we want to persist a p-key which doesn't have the
+             * flag. Use a NetworkManager specific variable for that. This configuration
+             * is not supported by initscripts' ifup-ib.
+             */
+            svSetValueInt64(ifcfg, "PKEY_ID_NM", p_key);
+        }
+
         parent = nm_setting_infiniband_get_parent(s_infiniband);
-        if (parent)
-            svSetValueStr(ifcfg, "PHYSDEV", parent);
+        svSetValueStr(ifcfg, "PHYSDEV", parent);
     }
 
     svSetValueStr(ifcfg, "TYPE", TYPE_INFINIBAND);
@@ -1313,6 +1346,7 @@ write_ethtool_setting(NMConnection *connection, shvarFile *ifcfg, GError **error
         guint32              u32;
         gboolean             b;
         gboolean             any_option = FALSE;
+        char                 prop_name[300];
 
         s_con = nm_connection_get_setting_connection(connection);
         if (s_con) {
@@ -1391,6 +1425,30 @@ write_ethtool_setting(NMConnection *connection, shvarFile *ifcfg, GError **error
             g_string_append(str, nms_ifcfg_rh_utils_get_ethtool_name(ethtool_id));
             g_string_append(str, b ? " on" : " off");
             any_option = TRUE;
+        }
+
+        is_first = TRUE;
+        for (ethtool_id = _NM_ETHTOOL_ID_CHANNELS_FIRST; ethtool_id <= _NM_ETHTOOL_ID_CHANNELS_LAST;
+             ethtool_id++) {
+            if (nm_setting_option_get_uint32(NM_SETTING(s_ethtool),
+                                             nm_ethtool_data[ethtool_id]->optname,
+                                             &u32)) {
+                nm_sprintf_buf(prop_name, "ethtool.%s", nm_ethtool_data[ethtool_id]->optname);
+                set_error_unsupported(error, connection, prop_name, FALSE);
+                return FALSE;
+            }
+        }
+
+        is_first = TRUE;
+        for (ethtool_id = _NM_ETHTOOL_ID_EEE_FIRST; ethtool_id <= _NM_ETHTOOL_ID_EEE_LAST;
+             ethtool_id++) {
+            if (nm_setting_option_get_boolean(NM_SETTING(s_ethtool),
+                                              nm_ethtool_data[ethtool_id]->optname,
+                                              &b)) {
+                nm_sprintf_buf(prop_name, "ethtool.%s", nm_ethtool_data[ethtool_id]->optname);
+                set_error_unsupported(error, connection, prop_name, FALSE);
+                return FALSE;
+            }
         }
 
         if (!any_option) {
@@ -1911,8 +1969,10 @@ write_bond_port_setting(NMConnection *connection, shvarFile *ifcfg)
     NMSettingBondPort *s_port;
 
     s_port = _nm_connection_get_setting(connection, NM_TYPE_SETTING_BOND_PORT);
-    if (s_port)
+    if (s_port) {
         svSetValueInt64(ifcfg, "BOND_PORT_QUEUE_ID", nm_setting_bond_port_get_queue_id(s_port));
+        svSetValueInt64(ifcfg, "BOND_PORT_PRIO", nm_setting_bond_port_get_prio(s_port));
+    }
 }
 
 static gboolean
@@ -2093,7 +2153,7 @@ write_dcb_setting(NMConnection *connection, shvarFile *ifcfg, GError **error)
 }
 
 static void
-write_connection_setting(NMSettingConnection *s_con, shvarFile *ifcfg)
+write_connection_setting(NMSettingConnection *s_con, shvarFile *ifcfg, const char *interface_name)
 {
     guint32                       n, i;
     nm_auto_free_gstring GString *str = NULL;
@@ -2110,7 +2170,9 @@ write_connection_setting(NMSettingConnection *s_con, shvarFile *ifcfg)
     svSetValueStr(ifcfg, "NAME", nm_setting_connection_get_id(s_con));
     svSetValueStr(ifcfg, "UUID", nm_setting_connection_get_uuid(s_con));
     svSetValueStr(ifcfg, "STABLE_ID", nm_setting_connection_get_stable_id(s_con));
-    svSetValueStr(ifcfg, "DEVICE", nm_setting_connection_get_interface_name(s_con));
+    svSetValueStr(ifcfg,
+                  "DEVICE",
+                  interface_name ?: nm_setting_connection_get_interface_name(s_con));
     svSetValueBoolean(ifcfg, "ONBOOT", nm_setting_connection_get_autoconnect(s_con));
 
     vint = nm_setting_connection_get_autoconnect_priority(s_con);
@@ -2198,34 +2260,38 @@ write_connection_setting(NMSettingConnection *s_con, shvarFile *ifcfg)
             master       = NULL;
         }
 
-        if (nm_setting_connection_is_slave_type(s_con, NM_SETTING_BOND_SETTING_NAME)) {
+        if (nm_streq0(nm_setting_connection_get_port_type(s_con), NM_SETTING_BOND_SETTING_NAME)) {
             svSetValueStr(ifcfg, "MASTER_UUID", master);
             svSetValueStr(ifcfg, "MASTER", master_iface);
             svSetValueStr(ifcfg, "SLAVE", "yes");
-        } else if (nm_setting_connection_is_slave_type(s_con, NM_SETTING_BRIDGE_SETTING_NAME)) {
+        } else if (nm_streq0(nm_setting_connection_get_port_type(s_con),
+                             NM_SETTING_BRIDGE_SETTING_NAME)) {
             svSetValueStr(ifcfg, "BRIDGE_UUID", master);
             svSetValueStr(ifcfg, "BRIDGE", master_iface);
-        } else if (nm_setting_connection_is_slave_type(s_con, NM_SETTING_TEAM_SETTING_NAME)) {
+        } else if (nm_streq0(nm_setting_connection_get_port_type(s_con),
+                             NM_SETTING_TEAM_SETTING_NAME)) {
             svSetValueStr(ifcfg, "TEAM_MASTER_UUID", master);
             svSetValueStr(ifcfg, "TEAM_MASTER", master_iface);
             if (NM_IN_STRSET(type, NM_SETTING_WIRED_SETTING_NAME, NM_SETTING_VLAN_SETTING_NAME))
                 svUnsetValue(ifcfg, "TYPE");
-        } else if (nm_setting_connection_is_slave_type(s_con, NM_SETTING_OVS_PORT_SETTING_NAME)) {
+        } else if (nm_streq0(nm_setting_connection_get_port_type(s_con),
+                             NM_SETTING_OVS_PORT_SETTING_NAME)) {
             svSetValueStr(ifcfg, "OVS_PORT_UUID", master);
             svSetValueStr(ifcfg, "OVS_PORT", master_iface);
-        } else if (nm_setting_connection_is_slave_type(s_con, NM_SETTING_VRF_SETTING_NAME)) {
+        } else if (nm_streq0(nm_setting_connection_get_port_type(s_con),
+                             NM_SETTING_VRF_SETTING_NAME)) {
             svSetValueStr(ifcfg, "VRF_UUID", master);
             svSetValueStr(ifcfg, "VRF", master_iface);
         } else {
             _LOGW("don't know how to set master for a %s slave",
-                  nm_setting_connection_get_slave_type(s_con));
+                  nm_setting_connection_get_port_type(s_con));
         }
     }
 
     if (nm_streq0(type, NM_SETTING_TEAM_SETTING_NAME))
         svSetValueStr(ifcfg, "DEVICETYPE", TYPE_TEAM);
     else if (master_iface
-             && nm_setting_connection_is_slave_type(s_con, NM_SETTING_TEAM_SETTING_NAME))
+             && nm_streq0(nm_setting_connection_get_port_type(s_con), NM_SETTING_TEAM_SETTING_NAME))
         svSetValueStr(ifcfg, "DEVICETYPE", TYPE_TEAM_PORT);
 
     /* secondary connection UUIDs */
@@ -2538,7 +2604,7 @@ write_user_setting(NMConnection *connection, shvarFile *ifcfg, GError **error)
 
             g_string_set_size(str, 0);
             g_string_append(str, "NM_USER_");
-            nms_ifcfg_rh_utils_user_key_encode(key, str);
+            nm_utils_env_var_encode_name(key, str);
             svSetValue(ifcfg, str->str, nm_setting_user_get_data(s_user, key));
         }
     }
@@ -3081,6 +3147,9 @@ write_ip6_setting(NMConnection *connection, shvarFile *ifcfg, GString **out_rout
                   "DHCPV6_DUID",
                   nm_setting_ip6_config_get_dhcp_duid(NM_SETTING_IP6_CONFIG(s_ip6)));
     svSetValueStr(ifcfg, "DHCPV6_IAID", nm_setting_ip_config_get_dhcp_iaid(s_ip6));
+    svSetValueStr(ifcfg,
+                  "DHCPV6_PD_HINT",
+                  nm_setting_ip6_config_get_dhcp_pd_hint(NM_SETTING_IP6_CONFIG(s_ip6)));
 
     hostname = nm_setting_ip_config_get_dhcp_hostname(s_ip6);
     svSetValueStr(ifcfg, "DHCPV6_HOSTNAME", hostname);
@@ -3291,6 +3360,8 @@ do_write_construct(NMConnection                   *connection,
                    GError                        **error)
 {
     NMSettingConnection                *s_con;
+    NMSettingIPConfig                  *s_ip4;
+    NMSettingIPConfig                  *s_ip6;
     nm_auto_shvar_file_close shvarFile *ifcfg = NULL;
     const char                         *ifcfg_name;
     gs_free char                       *ifcfg_name_free = NULL;
@@ -3308,6 +3379,7 @@ do_write_construct(NMConnection                   *connection,
     nm_auto_shvar_file_close shvarFile *route_content_svformat = NULL;
     nm_auto_free_gstring GString       *route_content          = NULL;
     nm_auto_free_gstring GString       *route6_content         = NULL;
+    gs_free char                       *interface_name         = NULL;
 
     nm_assert(NM_IS_CONNECTION(connection));
     nm_assert(_nm_connection_verify(connection, NULL) == NM_SETTING_VERIFY_SUCCESS);
@@ -3413,7 +3485,7 @@ do_write_construct(NMConnection                   *connection,
         if (!write_wireless_setting(connection, ifcfg, secrets, &no_8021x, error))
             return FALSE;
     } else if (!strcmp(type, NM_SETTING_INFINIBAND_SETTING_NAME)) {
-        if (!write_infiniband_setting(connection, ifcfg, error))
+        if (!write_infiniband_setting(connection, ifcfg, &interface_name, error))
             return FALSE;
     } else if (!strcmp(type, NM_SETTING_BOND_SETTING_NAME)) {
         if (!write_bond_setting(connection, ifcfg, &wired, error))
@@ -3465,14 +3537,17 @@ do_write_construct(NMConnection                   *connection,
     write_sriov_setting(connection, ifcfg);
     write_tc_setting(connection, ifcfg);
 
+    if (_nm_connection_get_setting(connection, NM_TYPE_SETTING_LINK)) {
+        set_error_unsupported(error, connection, "link", TRUE);
+        return FALSE;
+    }
+
     route_path_is_svformat = utils_has_route_file_new_syntax(route_path);
 
     has_complex_routes_v4 = utils_has_complex_routes(ifcfg_name, AF_INET);
     has_complex_routes_v6 = utils_has_complex_routes(ifcfg_name, AF_INET6);
 
     if (has_complex_routes_v4 || has_complex_routes_v6) {
-        NMSettingIPConfig *s_ip4, *s_ip6;
-
         s_ip4 = nm_connection_get_setting_ip4_config(connection);
         s_ip6 = nm_connection_get_setting_ip6_config(connection);
         if ((s_ip4 && nm_setting_ip_config_get_num_routes(s_ip4) > 0)
@@ -3509,6 +3584,15 @@ do_write_construct(NMConnection                   *connection,
     } else
         route_ignore = FALSE;
 
+    if ((s_ip4 = nm_connection_get_setting_ip4_config(connection))
+        && nm_setting_ip_config_get_dhcp_dscp(s_ip4)) {
+        set_error_unsupported(error,
+                              connection,
+                              NM_SETTING_IP4_CONFIG_SETTING_NAME "." NM_SETTING_IP_CONFIG_DHCP_DSCP,
+                              FALSE);
+        return FALSE;
+    }
+
     write_ip4_setting(connection,
                       ifcfg,
                       !route_ignore && route_path_is_svformat ? &route_content_svformat : NULL,
@@ -3518,7 +3602,7 @@ do_write_construct(NMConnection                   *connection,
 
     write_ip_routing_rules(connection, ifcfg, route_ignore);
 
-    write_connection_setting(s_con, ifcfg);
+    write_connection_setting(s_con, ifcfg, interface_name);
 
     NM_SET_OUT(out_ifcfg, g_steal_pointer(&ifcfg));
     NM_SET_OUT(out_blobs, g_steal_pointer(&blobs));

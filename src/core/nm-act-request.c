@@ -259,7 +259,8 @@ static void
 device_state_changed(NMActiveConnection *active,
                      NMDevice           *device,
                      NMDeviceState       new_state,
-                     NMDeviceState       old_state)
+                     NMDeviceState       old_state,
+                     NMDeviceStateReason reason)
 {
     NMActiveConnectionState       cur_ac_state    = nm_active_connection_get_state(active);
     NMActiveConnectionState       ac_state        = NM_ACTIVE_CONNECTION_STATE_UNKNOWN;
@@ -319,14 +320,20 @@ device_state_changed(NMActiveConnection *active,
                          active);
         break;
     case NM_DEVICE_STATE_DEACTIVATING:
+        if (reason == NM_DEVICE_STATE_REASON_USER_REQUESTED)
+            ac_state_reason = NM_ACTIVE_CONNECTION_STATE_REASON_USER_DISCONNECTED;
+
         ac_state = NM_ACTIVE_CONNECTION_STATE_DEACTIVATING;
         break;
     case NM_DEVICE_STATE_FAILED:
     case NM_DEVICE_STATE_DISCONNECTED:
     case NM_DEVICE_STATE_UNMANAGED:
     case NM_DEVICE_STATE_UNAVAILABLE:
-        ac_state        = NM_ACTIVE_CONNECTION_STATE_DEACTIVATED;
-        ac_state_reason = NM_ACTIVE_CONNECTION_STATE_REASON_DEVICE_DISCONNECTED;
+        ac_state = NM_ACTIVE_CONNECTION_STATE_DEACTIVATED;
+        if (reason == NM_DEVICE_STATE_REASON_USER_REQUESTED)
+            ac_state_reason = NM_ACTIVE_CONNECTION_STATE_REASON_USER_DISCONNECTED;
+        else
+            ac_state_reason = NM_ACTIVE_CONNECTION_STATE_REASON_DEVICE_DISCONNECTED;
 
         g_signal_handlers_disconnect_by_func(device, G_CALLBACK(device_notify), active);
         break;
@@ -416,8 +423,8 @@ nm_act_request_init(NMActRequest *req)
 /**
  * nm_act_request_new:
  *
- * @settings_connection: (allow-none): the connection to activate @device with
- * @applied_connection: (allow-none): the applied connection
+ * @settings_connection: (nullable): the connection to activate @device with
+ * @applied_connection: (nullable): the applied connection
  * @specific_object: the object path of the specific object (ie, Wi-Fi access point,
  *    etc) that will be used to activate @connection and @device
  * @subject: the #NMAuthSubject representing the requestor of the activation

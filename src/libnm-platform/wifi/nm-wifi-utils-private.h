@@ -7,7 +7,6 @@
 #define __WIFI_UTILS_PRIVATE_H__
 
 #include "nm-wifi-utils.h"
-#include "libnm-platform/nm-platform.h"
 
 typedef struct {
     GObjectClass parent;
@@ -28,8 +27,9 @@ typedef struct {
     /* Return current frequency in MHz (really associated BSS frequency) */
     guint32 (*get_freq)(NMWifiUtils *data);
 
-    /* Return first supported frequency in the zero-terminated list */
-    guint32 (*find_freq)(NMWifiUtils *data, const guint32 *freqs);
+    /* Return first supported frequency in the zero-terminated list. @ap
+     * indicates that the frequency must be suited for AP mode. */
+    guint32 (*find_freq)(NMWifiUtils *data, const guint32 *freqs, gboolean ap);
 
     /*
      * @out_bssid: must be NULL or an ETH_ALEN-byte buffer
@@ -54,10 +54,6 @@ typedef struct {
     gboolean (*set_mesh_ssid)(NMWifiUtils *data, const guint8 *ssid, gsize len);
 
     gboolean (*indicate_addressing_running)(NMWifiUtils *data, gboolean running);
-
-    gboolean (*get_csme_conn_info)(NMWifiUtils *data, NMPlatformCsmeConnInfo *out_conn_info);
-
-    gboolean (*get_device_from_csme)(NMWifiUtils *data);
 } NMWifiUtilsClass;
 
 struct NMWifiUtils {

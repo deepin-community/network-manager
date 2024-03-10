@@ -195,51 +195,9 @@ _nm_auto_freev(gpointer ptr)
 
 /*****************************************************************************/
 
-#if defined(__GNUC__)
-#define _NM_PRAGMA_WARNING_DO(warning) G_STRINGIFY(GCC diagnostic ignored warning)
-#elif defined(__clang__)
-#define _NM_PRAGMA_WARNING_DO(warning) G_STRINGIFY(clang diagnostic ignored warning)
-#endif
-
-/* you can only suppress a specific warning that the compiler
- * understands. Otherwise you will get another compiler warning
- * about invalid pragma option.
- * It's not that bad however, because gcc and clang often have the
- * same name for the same warning. */
-
-#if defined(__GNUC__) && (__GNUC__ > 4 || (__GNUC__ == 4 && __GNUC_MINOR__ >= 6))
-#define NM_PRAGMA_DIAGNOSTICS_PUSH _Pragma("GCC diagnostic push")
-#define NM_PRAGMA_WARNING_DISABLE(warning) \
-    NM_PRAGMA_DIAGNOSTICS_PUSH _Pragma(_NM_PRAGMA_WARNING_DO(warning))
-#define NM_PRAGMA_WARNING_REENABLE _Pragma("GCC diagnostic pop")
-#elif defined(__clang__)
-#define NM_PRAGMA_DIAGNOSTICS_PUSH _Pragma("clang diagnostic push")
-#define NM_PRAGMA_WARNING_DISABLE(warning)                                                \
-    NM_PRAGMA_DIAGNOSTICS_PUSH _Pragma(_NM_PRAGMA_WARNING_DO("-Wunknown-warning-option")) \
-        _Pragma(_NM_PRAGMA_WARNING_DO(warning))
-#define NM_PRAGMA_WARNING_REENABLE _Pragma("clang diagnostic pop")
-#else
-#define NM_PRAGMA_DIAGNOSTICS_PUSH
-#define NM_PRAGMA_WARNING_DISABLE(warning)
-#define NM_PRAGMA_WARNING_REENABLE
-#endif
-
-/*****************************************************************************/
-
-/* Seems gcc-12 has a tendency for false-positive -Wdangling-pointer warnings with
- * g_error()'s `for(;;);`. See https://bugzilla.redhat.com/show_bug.cgi?id=2056613 .
- * Work around, but only for the affected gcc 12.0.1. */
-#if defined(__GNUC__) && __GNUC__ == 12 && __GNUC_MINOR__ == 0 && __GNUC_PATCHLEVEL__ <= 1
-#define NM_PRAGMA_WARNING_DISABLE_DANGLING_POINTER NM_PRAGMA_WARNING_DISABLE("-Wdangling-pointer")
-#else
-#define NM_PRAGMA_WARNING_DISABLE_DANGLING_POINTER NM_PRAGMA_DIAGNOSTICS_PUSH
-#endif
-
-/*****************************************************************************/
-
 /**
  * NM_G_ERROR_MSG:
- * @error: (allow-none): the #GError instance
+ * @error: (nullable): the #GError instance
  *
  * All functions must follow the convention that when they
  * return a failure, they must also set the GError to a valid
@@ -259,41 +217,41 @@ NM_G_ERROR_MSG(GError *error)
 
 #if _NM_CC_SUPPORT_GENERIC
 #define _NM_CONSTCAST_FULL_1(type, obj_expr, obj) \
-    (_Generic ((obj_expr), \
-               const void        *: ((const type *) (obj)), \
-                     void        *: ((      type *) (obj)), \
-               const type        *: ((const type *) (obj)), \
-                     type        *: ((      type *) (obj))))
+    (_Generic((obj_expr),                         \
+        const void *: ((const type *) (obj)),     \
+        void *: ((type *) (obj)),                 \
+        const type *: ((const type *) (obj)),     \
+        type *: ((type *) (obj))))
 #define _NM_CONSTCAST_FULL_2(type, obj_expr, obj, alias_type2) \
-    (_Generic ((obj_expr), \
-               const void        *: ((const type *) (obj)), \
-                     void        *: ((      type *) (obj)), \
-               const alias_type2 *: ((const type *) (obj)), \
-                     alias_type2 *: ((      type *) (obj)), \
-               const type        *: ((const type *) (obj)), \
-                     type        *: ((      type *) (obj))))
+    (_Generic((obj_expr),                                      \
+        const void *: ((const type *) (obj)),                  \
+        void *: ((type *) (obj)),                              \
+        const alias_type2 *: ((const type *) (obj)),           \
+        alias_type2 *: ((type *) (obj)),                       \
+        const type *: ((const type *) (obj)),                  \
+        type *: ((type *) (obj))))
 #define _NM_CONSTCAST_FULL_3(type, obj_expr, obj, alias_type2, alias_type3) \
-    (_Generic ((obj_expr), \
-               const void        *: ((const type *) (obj)), \
-                     void        *: ((      type *) (obj)), \
-               const alias_type2 *: ((const type *) (obj)), \
-                     alias_type2 *: ((      type *) (obj)), \
-               const alias_type3 *: ((const type *) (obj)), \
-                     alias_type3 *: ((      type *) (obj)), \
-               const type        *: ((const type *) (obj)), \
-                     type        *: ((      type *) (obj))))
+    (_Generic((obj_expr),                                                   \
+        const void *: ((const type *) (obj)),                               \
+        void *: ((type *) (obj)),                                           \
+        const alias_type2 *: ((const type *) (obj)),                        \
+        alias_type2 *: ((type *) (obj)),                                    \
+        const alias_type3 *: ((const type *) (obj)),                        \
+        alias_type3 *: ((type *) (obj)),                                    \
+        const type *: ((const type *) (obj)),                               \
+        type *: ((type *) (obj))))
 #define _NM_CONSTCAST_FULL_4(type, obj_expr, obj, alias_type2, alias_type3, alias_type4) \
-    (_Generic ((obj_expr), \
-               const void        *: ((const type *) (obj)), \
-                     void        *: ((      type *) (obj)), \
-               const alias_type2 *: ((const type *) (obj)), \
-                     alias_type2 *: ((      type *) (obj)), \
-               const alias_type3 *: ((const type *) (obj)), \
-                     alias_type3 *: ((      type *) (obj)), \
-               const alias_type4 *: ((const type *) (obj)), \
-                     alias_type4 *: ((      type *) (obj)), \
-               const type        *: ((const type *) (obj)), \
-                     type        *: ((      type *) (obj))))
+    (_Generic((obj_expr),                                                                \
+        const void *: ((const type *) (obj)),                                            \
+        void *: ((type *) (obj)),                                                        \
+        const alias_type2 *: ((const type *) (obj)),                                     \
+        alias_type2 *: ((type *) (obj)),                                                 \
+        const alias_type3 *: ((const type *) (obj)),                                     \
+        alias_type3 *: ((type *) (obj)),                                                 \
+        const alias_type4 *: ((const type *) (obj)),                                     \
+        alias_type4 *: ((type *) (obj)),                                                 \
+        const type *: ((const type *) (obj)),                                            \
+        type *: ((type *) (obj))))
 #define _NM_CONSTCAST_FULL_x(type, obj_expr, obj, n, ...) \
     (_NM_CONSTCAST_FULL_##n(type, obj_expr, obj, ##__VA_ARGS__))
 #define _NM_CONSTCAST_FULL_y(type, obj_expr, obj, n, ...) \
@@ -308,18 +266,18 @@ NM_G_ERROR_MSG(GError *error)
 
 #if _NM_CC_SUPPORT_GENERIC
 #define NM_UNCONST_PTR(type, arg) \
-    _Generic((arg), const type * : ((type *) (arg)), type * : ((type *) (arg)))
+    _Generic((arg), const type *: ((type *) (arg)), type *: ((type *) (arg)))
 #else
 #define NM_UNCONST_PTR(type, arg) ((type *) (arg))
 #endif
 
 #if _NM_CC_SUPPORT_GENERIC
-#define NM_UNCONST_PPTR(type, arg) \
-    _Generic ((arg), \
-              const type *     *: ((type **) (arg)), \
-                    type *     *: ((type **) (arg)), \
-              const type *const*: ((type **) (arg)), \
-                    type *const*: ((type **) (arg)))
+#define NM_UNCONST_PPTR(type, arg)              \
+    _Generic((arg),                             \
+        const type **: ((type **) (arg)),       \
+        type **: ((type **) (arg)),             \
+        const type *const *: ((type **) (arg)), \
+        type *const *: ((type **) (arg)))
 #else
 #define NM_UNCONST_PPTR(type, arg) ((type **) (arg))
 #endif
@@ -377,30 +335,29 @@ NM_G_ERROR_MSG(GError *error)
  * These macros do the cast, but they only accept a compatible input
  * type, otherwise they will fail compilation.
  */
-#define NM_CAST_STRV_MC(value) \
-    (_Generic ((value), \
-               const char *     *: (const char *     *) (value), \
-                     char *     *: (const char *     *) (value), \
-                           void *: (const char *     *) (value)))
-#define NM_CAST_STRV_CC(value) \
-    (_Generic ((value), \
-               const char *const*: (const char *const*) (value), \
-               const char *     *: (const char *const*) (value), \
-                     char *const*: (const char *const*) (value), \
-                     char *     *: (const char *const*) (value), \
-                     const void *: (const char *const*) (value), \
-                           void *: (const char *const*) (value)))
+#define NM_CAST_STRV_MC(value)                  \
+    (_Generic((value),                          \
+        const char **: (const char **) (value), \
+        char **: (const char **) (value),       \
+        void *: (const char **) (value)))
+#define NM_CAST_STRV_CC(value)                              \
+    (_Generic((value),                                      \
+        const char *const *: (const char *const *) (value), \
+        const char **: (const char *const *) (value),       \
+        char *const *: (const char *const *) (value),       \
+        char **: (const char *const *) (value),             \
+        const void *: (const char *const *) (value),        \
+        void *: (const char *const *) (value)))
 #else
 #define NM_CAST_STRV_MC(value) ((const char **) (value))
 #define NM_CAST_STRV_CC(value) ((const char *const *) (value))
 #endif
 
 #if _NM_CC_SUPPORT_GENERIC
-#define NM_PROPAGATE_CONST(test_expr, ptr) \
-    (_Generic ((test_expr), \
-               const typeof (*(test_expr)) *: ((const typeof (*(ptr)) *) (ptr)), \
-                                     default: (_Generic ((test_expr), \
-                                                         typeof (*(test_expr)) *: (ptr)))))
+#define NM_PROPAGATE_CONST(test_expr, ptr)                              \
+    (_Generic((test_expr),                                              \
+        const typeof(*(test_expr)) *: ((const typeof(*(ptr)) *) (ptr)), \
+        default: (_Generic((test_expr), typeof(*(test_expr)) *: (ptr)))))
 #else
 #define NM_PROPAGATE_CONST(test_expr, ptr) (ptr)
 #endif
@@ -572,10 +529,10 @@ nm_str_realloc(char *str)
     }
 
 #define NM_GOBJECT_PROPERTIES_DEFINE_NOTIFY(suffix, obj_type)                                 \
-    static inline void _nm_gobject_notify_together_impl##suffix(                              \
+    static inline void _nm_gobject_notify_together_full_v##suffix(                            \
         obj_type                     *obj,                                                    \
-        guint                         n,                                                      \
-        const _PropertyEnums##suffix *props)                                                  \
+        const _PropertyEnums##suffix *props,                                                  \
+        guint                         n)                                                      \
     {                                                                                         \
         GObject *const gobj        = (GObject *) obj;                                         \
         GParamSpec    *pspec_first = NULL;                                                    \
@@ -615,7 +572,7 @@ nm_str_realloc(char *str)
                                                                                               \
     _nm_unused static inline void _notify##suffix(obj_type *obj, _PropertyEnums##suffix prop) \
     {                                                                                         \
-        _nm_gobject_notify_together_impl##suffix(obj, 1, &prop);                              \
+        _nm_gobject_notify_together_full_v##suffix(obj, &prop, 1);                            \
     }                                                                                         \
     _NM_DUMMY_STRUCT_FOR_TRAILING_SEMICOLON
 
@@ -632,15 +589,15 @@ nm_str_realloc(char *str)
 /* invokes _notify() for all arguments (of type _PropertyEnums). Note, that if
  * there are more than one prop arguments, this will involve a freeze/thaw
  * of GObject property notifications. */
-#define nm_gobject_notify_together_full(suffix, obj, ...)                            \
-    G_STMT_START                                                                     \
-    {                                                                                \
-        const _PropertyEnums##suffix _props[] = {__VA_ARGS__};                       \
-                                                                                     \
-        G_STATIC_ASSERT(G_N_ELEMENTS(_props) == NM_NARG(__VA_ARGS__));               \
-                                                                                     \
-        _nm_gobject_notify_together_impl##suffix(obj, G_N_ELEMENTS(_props), _props); \
-    }                                                                                \
+#define nm_gobject_notify_together_full(suffix, obj, ...)                              \
+    G_STMT_START                                                                       \
+    {                                                                                  \
+        const _PropertyEnums##suffix _props[] = {__VA_ARGS__};                         \
+                                                                                       \
+        G_STATIC_ASSERT(G_N_ELEMENTS(_props) == NM_NARG(__VA_ARGS__));                 \
+                                                                                       \
+        _nm_gobject_notify_together_full_v##suffix(obj, _props, G_N_ELEMENTS(_props)); \
+    }                                                                                  \
     G_STMT_END
 
 #define nm_gobject_notify_together(obj, ...) nm_gobject_notify_together_full(, obj, __VA_ARGS__)
@@ -1023,34 +980,43 @@ nm_g_variant_equal(GVariant *a, GVariant *b)
 #define NM_FLAGS_SET(flags, val)              \
     ({                                        \
         const typeof(flags) _flags = (flags); \
-        const typeof(flags) _val   = (val);   \
+        typeof(_flags)      _val   = (val);   \
                                               \
-        _flags | _val;                        \
+        (void) (FALSE && (flags) == (val));   \
+                                              \
+        (_flags | _val);                      \
     })
 
 #define NM_FLAGS_UNSET(flags, val)            \
     ({                                        \
         const typeof(flags) _flags = (flags); \
-        const typeof(flags) _val   = (val);   \
+        typeof(_flags)      _val   = (val);   \
                                               \
-        _flags & (~_val);                     \
+        (void) (FALSE && (flags) == (val));   \
+                                              \
+        (_flags & (~_val));                   \
     })
 
-#define NM_FLAGS_ASSIGN(flags, val, assign)            \
-    ({                                                 \
-        const typeof(flags) _flags = (flags);          \
-        const typeof(flags) _val   = (val);            \
-                                                       \
-        (assign) ? _flags | (_val) : _flags & (~_val); \
+#define NM_FLAGS_ASSIGN(flags, val, assign)              \
+    ({                                                   \
+        const typeof(flags) _flags = (flags);            \
+        typeof(_flags)      _val   = (val);              \
+                                                         \
+        (void) (FALSE && (flags) == (val));              \
+                                                         \
+        (assign) ? (_flags | _val) : (_flags & (~_val)); \
     })
 
-#define NM_FLAGS_ASSIGN_MASK(flags, mask, val) \
-    ({                                         \
-        const typeof(flags) _flags = (flags);  \
-        const typeof(flags) _mask  = (mask);   \
-        const typeof(flags) _val   = (val);    \
-                                               \
-        ((_flags & ~_mask) | (_mask & _val));  \
+#define NM_FLAGS_ASSIGN_MASK(flags, mask, val)  \
+    ({                                          \
+        const typeof(flags) _flags = (flags);   \
+        typeof(_flags)      _mask  = (mask);    \
+        typeof(_flags)      _val   = (val);     \
+                                                \
+        (void) (FALSE && (flags) == (val));     \
+        (void) (FALSE && (flags) == (mask));    \
+                                                \
+        ((_flags & (~_mask)) | (_val & _mask)); \
     })
 
 /*****************************************************************************/
@@ -1078,10 +1044,19 @@ nm_g_variant_equal(GVariant *a, GVariant *b)
 /* mirrors g_ascii_isspace() and what we consider spaces in general. */
 #define NM_ASCII_SPACES " \n\t\r\f"
 
-/* Like NM_ASCII_SPACES, but without "\f" (0x0c, Formfeed Page Break).
- * This is what for example systemd calls WHITESPACE and what it uses to tokenize
- * the kernel command line. */
+/* Like NM_ASCII_SPACES, but without "\f" (0x0c, Formfeed Page Break).  This is
+ * what for example systemd calls WHITESPACE and what it uses to tokenize the
+ * kernel command line. */
 #define NM_ASCII_WHITESPACES " \n\t\r"
+
+/* mirrors <ctype.h>'s isspace() with C locale. It's like NM_ASCII_SPACES but
+ * additionally also considers '\v' (vertical tab). */
+#define NM_ASCII_SPACES_CTYPE NM_ASCII_SPACES "\v"
+
+/* mirrors kernel's isspace() from "include/linux/ctype.h", which treats as
+ * space the common ASCII spaces, including '\v' (vertical tab), but also
+ * '\240' (non-breaking space, NBSP in Latin-1). */
+#define NM_ASCII_SPACES_KERNEL NM_ASCII_SPACES_CTYPE "\240"
 
 static inline gboolean
 nm_ascii_is_whitespace(char ch)
@@ -1090,6 +1065,13 @@ nm_ascii_is_whitespace(char ch)
      * Similar to g_ascii_isspace(), however this one does not accept '\f'.
      * This is the same as systemd's strchr(WHITESPACE, ch). */
     return NM_IN_SET(ch, ' ', '\n', '\t', '\r');
+}
+
+static inline gboolean
+nm_ascii_is_space_kernel(char ch)
+{
+    /* Checks whether @ch is in NM_ASCII_SPACES_KERNEL. */
+    return NM_IN_SET(ch, ' ', '\n', '\t', '\r', '\f', '\v', '\240');
 }
 
 #define NM_ASCII_NEWLINE "\n\r"
@@ -1490,23 +1472,21 @@ _nm_strndup_a_step(char *s, const char *str, gsize len)
  *
  * Instead, this generic macro is supposed to handle all integers correctly. */
 #if _NM_CC_SUPPORT_GENERIC
-#define nm_strdup_int(val)                                                       \
-    _Generic((val), char                                                         \
-             : g_strdup_printf("%d", (int) (val)),                               \
-                                                                                 \
-               signed char                                                       \
-             : g_strdup_printf("%d", (signed) (val)), signed short               \
-             : g_strdup_printf("%d", (signed) (val)), signed                     \
-             : g_strdup_printf("%d", (signed) (val)), signed long                \
-             : g_strdup_printf("%ld", (signed long) (val)), signed long long     \
-             : g_strdup_printf("%lld", (signed long long) (val)),                \
-                                                                                 \
-               unsigned char                                                     \
-             : g_strdup_printf("%u", (unsigned) (val)), unsigned short           \
-             : g_strdup_printf("%u", (unsigned) (val)), unsigned                 \
-             : g_strdup_printf("%u", (unsigned) (val)), unsigned long            \
-             : g_strdup_printf("%lu", (unsigned long) (val)), unsigned long long \
-             : g_strdup_printf("%llu", (unsigned long long) (val)))
+#define nm_strdup_int(val)                                                   \
+    _Generic((val),                                                          \
+        char: g_strdup_printf("%d", (int) (val)),                            \
+                                                                             \
+        signed char: g_strdup_printf("%d", (signed) (val)),                  \
+        signed short: g_strdup_printf("%d", (signed) (val)),                 \
+        signed: g_strdup_printf("%d", (signed) (val)),                       \
+        signed long: g_strdup_printf("%ld", (signed long) (val)),            \
+        signed long long: g_strdup_printf("%lld", (signed long long) (val)), \
+                                                                             \
+        unsigned char: g_strdup_printf("%u", (unsigned) (val)),              \
+        unsigned short: g_strdup_printf("%u", (unsigned) (val)),             \
+        unsigned: g_strdup_printf("%u", (unsigned) (val)),                   \
+        unsigned long: g_strdup_printf("%lu", (unsigned long) (val)),        \
+        unsigned long long: g_strdup_printf("%llu", (unsigned long long) (val)))
 #else
 #define nm_strdup_int(val)                                        \
     ((sizeof(val) == sizeof(guint64) && ((typeof(val)) -1) > 0)   \

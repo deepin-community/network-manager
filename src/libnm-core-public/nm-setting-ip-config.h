@@ -332,6 +332,7 @@ char *nm_ip_routing_rule_to_string(const NMIPRoutingRule       *self,
 #define NM_SETTING_IP_CONFIG_DHCP_HOSTNAME       "dhcp-hostname"
 #define NM_SETTING_IP_CONFIG_DHCP_SEND_HOSTNAME  "dhcp-send-hostname"
 #define NM_SETTING_IP_CONFIG_DHCP_HOSTNAME_FLAGS "dhcp-hostname-flags"
+#define NM_SETTING_IP_CONFIG_DHCP_DSCP           "dhcp-dscp"
 #define NM_SETTING_IP_CONFIG_NEVER_DEFAULT       "never-default"
 #define NM_SETTING_IP_CONFIG_MAY_FAIL            "may-fail"
 #define NM_SETTING_IP_CONFIG_DAD_TIMEOUT         "dad-timeout"
@@ -362,6 +363,10 @@ char *nm_ip_routing_rule_to_string(const NMIPRoutingRule       *self,
 #define NM_SETTING_DNS_OPTION_USE_VC                "use-vc"
 #define NM_SETTING_DNS_OPTION_NO_RELOAD             "no-reload"
 #define NM_SETTING_DNS_OPTION_TRUST_AD              "trust-ad"
+#define NM_SETTING_DNS_OPTION_NO_AAAA               "no-aaaa"
+/* Internal options (not added to resolv.conf) */
+#define NM_SETTING_DNS_OPTION_INTERNAL_NO_ADD_EDNS0    "_no-add-edns0"
+#define NM_SETTING_DNS_OPTION_INTERNAL_NO_ADD_TRUST_AD "_no-add-trust-ad"
 
 typedef struct _NMSettingIPConfigClass NMSettingIPConfigClass;
 
@@ -474,6 +479,8 @@ gboolean nm_setting_ip_config_get_ignore_auto_dns(NMSettingIPConfig *setting);
 
 const char *nm_setting_ip_config_get_dhcp_hostname(NMSettingIPConfig *setting);
 gboolean    nm_setting_ip_config_get_dhcp_send_hostname(NMSettingIPConfig *setting);
+NM_AVAILABLE_IN_1_46
+const char *nm_setting_ip_config_get_dhcp_dscp(NMSettingIPConfig *setting);
 
 gboolean nm_setting_ip_config_get_never_default(NMSettingIPConfig *setting);
 gboolean nm_setting_ip_config_get_may_fail(NMSettingIPConfig *setting);
@@ -500,7 +507,7 @@ NM_AVAILABLE_IN_1_28
 void nm_setting_ip_config_clear_dhcp_reject_servers(NMSettingIPConfig *setting);
 NM_AVAILABLE_IN_1_42
 NMTernary nm_setting_ip_config_get_auto_route_ext_gw(NMSettingIPConfig *setting);
-NM_AVAILABLE_IN_1_42_2
+NM_AVAILABLE_IN_1_44
 NMTernary nm_setting_ip_config_get_replace_local_rule(NMSettingIPConfig *setting);
 
 G_END_DECLS

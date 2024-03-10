@@ -106,6 +106,10 @@
 </tr>
 <tr>
 <td class="define_keyword">#define</td>
+<td class="function_name"><a class="link" href="libnm-nm-dbus-interface.html#NM-DBUS-INTERFACE-DEVICE-HSR:CAPS" title="NM_DBUS_INTERFACE_DEVICE_HSR">NM_DBUS_INTERFACE_DEVICE_HSR</a></td>
+</tr>
+<tr>
+<td class="define_keyword">#define</td>
 <td class="function_name"><a class="link" href="libnm-nm-dbus-interface.html#NM-DBUS-INTERFACE-DEVICE-INFINIBAND:CAPS" title="NM_DBUS_INTERFACE_DEVICE_INFINIBAND">NM_DBUS_INTERFACE_DEVICE_INFINIBAND</a></td>
 </tr>
 <tr>
@@ -528,6 +532,18 @@
 <td class="datatype_keyword">enum</td>
 <td class="function_name"><a class="link" href="libnm-nm-dbus-interface.html#NMMptcpFlags" title="enum NMMptcpFlags">NMMptcpFlags</a></td>
 </tr>
+<tr>
+<td class="define_keyword">#define</td>
+<td class="function_name"><a class="link" href="libnm-nm-dbus-interface.html#NM-SECRET-TAG-VPN-MSG:CAPS" title="NM_SECRET_TAG_VPN_MSG">NM_SECRET_TAG_VPN_MSG</a></td>
+</tr>
+<tr>
+<td class="define_keyword">#define</td>
+<td class="function_name"><a class="link" href="libnm-nm-dbus-interface.html#NM-SECRET-TAG-DYNAMIC-CHALLENGE:CAPS" title="NM_SECRET_TAG_DYNAMIC_CHALLENGE">NM_SECRET_TAG_DYNAMIC_CHALLENGE</a></td>
+</tr>
+<tr>
+<td class="define_keyword">#define</td>
+<td class="function_name"><a class="link" href="libnm-nm-dbus-interface.html#NM-SECRET-TAG-DYNAMIC-CHALLENGE-ECHO:CAPS" title="NM_SECRET_TAG_DYNAMIC_CHALLENGE_ECHO">NM_SECRET_TAG_DYNAMIC_CHALLENGE_ECHO</a></td>
+</tr>
 </tbody>
 </table></div>
 </div>
@@ -672,6 +688,12 @@
 <div class="refsect2">
 <a name="NM-DBUS-INTERFACE-DEVICE-GRE:CAPS"></a><h3>NM_DBUS_INTERFACE_DEVICE_GRE</h3>
 <pre class="programlisting">#define NM_DBUS_INTERFACE_DEVICE_GRE           NM_DBUS_INTERFACE_DEVICE ".Gre"
+</pre>
+</div>
+<hr>
+<div class="refsect2">
+<a name="NM-DBUS-INTERFACE-DEVICE-HSR:CAPS"></a><h3>NM_DBUS_INTERFACE_DEVICE_HSR</h3>
+<pre class="programlisting">#define NM_DBUS_INTERFACE_DEVICE_HSR           NM_DBUS_INTERFACE_DEVICE ".Hsr"
 </pre>
 </div>
 <hr>
@@ -1406,6 +1428,13 @@ GSM/UMTS, or LTE network access protocols</p>
 </td>
 <td class="enum_member_annotations"> </td>
 </tr>
+<tr>
+<td class="enum_member_name"><p><a name="NM-DEVICE-TYPE-HSR:CAPS"></a>NM_DEVICE_TYPE_HSR</p></td>
+<td class="enum_member_description">
+<p>A HSR/PRP device. Since: 1.46.</p>
+</td>
+<td class="enum_member_annotations"> </td>
+</tr>
 </tbody>
 </table></div>
 </div>
@@ -1556,6 +1585,13 @@ GSM/UMTS, or LTE network access protocols</p>
 <td class="enum_member_name"><p><a name="NM-WIFI-DEVICE-CAP-FREQ-5GHZ:CAPS"></a>NM_WIFI_DEVICE_CAP_FREQ_5GHZ</p></td>
 <td class="enum_member_description">
 <p>device supports 5GHz frequencies</p>
+</td>
+<td class="enum_member_annotations"> </td>
+</tr>
+<tr>
+<td class="enum_member_name"><p><a name="NM-WIFI-DEVICE-CAP-FREQ-6GHZ:CAPS"></a>NM_WIFI_DEVICE_CAP_FREQ_6GHZ</p></td>
+<td class="enum_member_description">
+<p>device supports 6GHz frequencies. Since: 1.46.</p>
 </td>
 <td class="enum_member_annotations"> </td>
 </tr>
@@ -1919,7 +1955,7 @@ GPRS, EDGE, UMTS, HSDPA, HSUPA, or HSPA+ packet switched data capability</p>
 <tr>
 <td class="enum_member_name"><p><a name="NM-DEVICE-MODEM-CAPABILITY-5GNR:CAPS"></a>NM_DEVICE_MODEM_CAPABILITY_5GNR</p></td>
 <td class="enum_member_description">
-<p>modem has 5GNR data capability (Since: 1.36)</p>
+<p>modem has 5GNR data capability. Since: 1.36.</p>
 </td>
 <td class="enum_member_annotations"> </td>
 </tr>
@@ -2587,6 +2623,14 @@ network and is cleaning up the connection request</p>
 <td class="enum_member_name"><p><a name="NM-DEVICE-STATE-REASON-PEER-NOT-FOUND:CAPS"></a>NM_DEVICE_STATE_REASON_PEER_NOT_FOUND</p></td>
 <td class="enum_member_description">
 <p>The Wi-Fi P2P peer could not be found</p>
+</td>
+<td class="enum_member_annotations"> </td>
+</tr>
+<tr>
+<td class="enum_member_name"><p><a name="NM-DEVICE-STATE-REASON-DEVICE-HANDLER-FAILED:CAPS"></a>NM_DEVICE_STATE_REASON_DEVICE_HANDLER_FAILED</p></td>
+<td class="enum_member_description">
+<p>The device handler dispatcher returned an
+error. Since: 1.46</p>
 </td>
 <td class="enum_member_annotations"> </td>
 </tr>
@@ -3334,7 +3378,7 @@ disconnect any new device appeared after the checkpoint. Since: 1.6.</p>
 <td class="enum_member_name"><p><a name="NM-CHECKPOINT-CREATE-FLAG-ALLOW-OVERLAPPING:CAPS"></a>NM_CHECKPOINT_CREATE_FLAG_ALLOW_OVERLAPPING</p></td>
 <td class="enum_member_description">
 <p>by default, creating
-a checkpoint fails if there are already existing checkoints that
+a checkpoint fails if there are already existing checkpoints that
 reference the same devices. With this flag, creation of such
 checkpoints is allowed, however, if an older checkpoint
 that references overlapping devices gets rolled back, it will
@@ -3362,7 +3406,7 @@ behavior. Since: 1.38.</p>
 </tbody>
 </table></div>
 </div>
-<p class="since">Since: 1.12 (public since 1.4, g-ir since 1.12)</p>
+<p class="since">Since: 1.12: Public since 1.4, g-ir since 1.12.</p>
 </div>
 <hr>
 <div class="refsect2">
@@ -4283,6 +4327,24 @@ sub-option will trigger creation of an additional subflow to generate a full mes
 </table></div>
 </div>
 <p class="since">Since: 1.40</p>
+</div>
+<hr>
+<div class="refsect2">
+<a name="NM-SECRET-TAG-VPN-MSG:CAPS"></a><h3>NM_SECRET_TAG_VPN_MSG</h3>
+<pre class="programlisting">#define NM_SECRET_TAG_VPN_MSG "x-vpn-message:"
+</pre>
+</div>
+<hr>
+<div class="refsect2">
+<a name="NM-SECRET-TAG-DYNAMIC-CHALLENGE:CAPS"></a><h3>NM_SECRET_TAG_DYNAMIC_CHALLENGE</h3>
+<pre class="programlisting">#define NM_SECRET_TAG_DYNAMIC_CHALLENGE      "x-dynamic-challenge:"
+</pre>
+</div>
+<hr>
+<div class="refsect2">
+<a name="NM-SECRET-TAG-DYNAMIC-CHALLENGE-ECHO:CAPS"></a><h3>NM_SECRET_TAG_DYNAMIC_CHALLENGE_ECHO</h3>
+<pre class="programlisting">#define NM_SECRET_TAG_DYNAMIC_CHALLENGE_ECHO "x-dynamic-challenge-echo:"
+</pre>
 </div>
 </div>
 </div>

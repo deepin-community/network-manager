@@ -44,8 +44,10 @@ gboolean nm_supplicant_config_add_setting_wireless(NMSupplicantConfig *self,
                                                    guint32             fixed_freq,
                                                    GError            **error);
 
-gboolean
-nm_supplicant_config_add_bgscan(NMSupplicantConfig *self, NMConnection *connection, GError **error);
+gboolean nm_supplicant_config_add_bgscan(NMSupplicantConfig *self,
+                                         NMConnection       *connection,
+                                         guint               num_seen_bssids,
+                                         GError            **error);
 
 gboolean nm_supplicant_config_add_setting_wireless_security(NMSupplicantConfig        *self,
                                                             NMSettingWirelessSecurity *setting,
@@ -66,9 +68,10 @@ gboolean nm_supplicant_config_add_setting_8021x(NMSupplicantConfig *self,
                                                 gboolean            wired,
                                                 GError            **error);
 
-gboolean nm_supplicant_config_add_setting_macsec(NMSupplicantConfig *self,
-                                                 NMSettingMacsec    *setting,
-                                                 GError            **error);
+gboolean nm_supplicant_config_add_setting_macsec(NMSupplicantConfig    *self,
+                                                 NMSettingMacsec       *setting,
+                                                 NMSettingMacsecOffload offload,
+                                                 GError               **error);
 
 gboolean nm_supplicant_config_enable_pmf_akm(NMSupplicantConfig *self, GError **error);
 

@@ -164,9 +164,6 @@ typedef void (*NMSettingValueIterFn)(NMSetting    *setting,
                                      GParamFlags   flags,
                                      gpointer      user_data);
 
-/*< private >*/
-typedef gboolean (*_NMConnectionForEachSecretFunc)(NMSettingSecretFlags flags, gpointer user_data);
-
 typedef struct _NMSettingClass NMSettingClass;
 
 GType nm_setting_get_type(void);
@@ -257,6 +254,9 @@ void nm_setting_option_clear_by_name(NMSetting *setting, NMUtilsPredicateStr pre
 
 const GVariantType *nm_setting_get_dbus_property_type(NMSetting  *setting,
                                                       const char *property_name);
+
+NM_AVAILABLE_IN_1_46
+GType nm_setting_get_enum_property_type(GType setting_type, const char *property_name);
 
 /*****************************************************************************/
 

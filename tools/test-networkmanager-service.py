@@ -50,7 +50,6 @@ class TestError(AssertionError):
 
 
 class Util:
-
     PY3 = sys.version_info[0] == 3
 
     @staticmethod
@@ -288,8 +287,15 @@ class Util:
         return (Util.ip_addr_ntop(a, family), family)
 
     @staticmethod
-    def eprint(*args, **kwargs):
-        print(*args, file=sys.stderr, **kwargs)
+    def log(message):
+        if gl.log_file:
+            try:
+                gl.log_file.write(message + "\n")
+                gl.log_file.flush()
+            except Exception:
+                pass
+        else:
+            print(message, file=sys.stderr)
 
     @staticmethod
     def variant_from_dbus(val):
@@ -308,9 +314,9 @@ class Util:
         if isinstance(val, dbus.Array):
             try:
                 if val.signature == "s":
-                    return GLib.Variant("as", [Util.variant_from_dbus(x) for x in val])
+                    return GLib.Variant("as", [str(x) for x in val])
                 if val.signature == "b":
-                    return GLib.Variant("ab", [Util.variant_from_dbus(x) for x in val])
+                    return GLib.Variant("ab", [bool(x) for x in val])
                 if val.signature == "y":
                     return GLib.Variant("ay", [int(x) for x in val])
                 if val.signature == "u":
@@ -342,8 +348,7 @@ class Util:
                     )
             except Exception as e:
                 raise Exception(
-                    "Cannot convert array element to type '%s': %s"
-                    % (val.signature, e.message)
+                    "Cannot convert array element to type '%s': %s" % (val.signature, e)
                 )
         if isinstance(val, dbus.Dictionary):
             if val.signature == "ss":
@@ -358,7 +363,7 @@ class Util:
                         [(str(k), Util.variant_from_dbus(v)) for k, v in val.items()]
                     ),
                 )
-            if val.signature == "sa{sv}":
+            if val.signature == "sa{sv}" or val.signature == "sa{ss}":
                 c = collections.OrderedDict(
                     [
                         (
@@ -503,7 +508,6 @@ class BusErr:
 class NmUtil:
     @staticmethod
     def con_hash_to_connection(con_hash, do_verify=False, do_normalize=False):
-
         x_con = []
         for v_setting_name, v_setting in list(con_hash.items()):
             if isinstance(v_setting_name, (dbus.String, str)):
@@ -622,7 +626,6 @@ class NmUtil:
 
 
 class ExportedObj(dbus.service.Object):
-
     DBusInterface = collections.namedtuple("DBusInterface", ["dbus_iface", "props"])
 
     @staticmethod
@@ -814,21 +817,21 @@ PRP_DEVICE_INTERFACE_FLAGS = "InterfaceFlags"
 
 
 class Device(ExportedObj):
-
     path_counter_next = 1
     path_prefix = "/org/freedesktop/NetworkManager/Devices/"
 
     def __init__(self, iface, devtype, ident=None):
-
         if ident is None:
             ident = iface
 
         ExportedObj.__init__(self, ExportedObj.create_path(Device), ident)
 
+        self.applied_con = {}
         self.ip4_config = None
         self.ip6_config = None
         self.dhcp4_config = None
         self.dhcp6_config = None
+        self.activation_state_change_delay_ms = 50
 
         self.prp_state = NM.DeviceState.UNAVAILABLE
 
@@ -1037,6 +1040,20 @@ class Device(ExportedObj):
     def Disconnect(self):
         pass
 
+    @dbus.service.method(
+        dbus_interface=IFACE_DEVICE, in_signature="u", out_signature="a{sa{sv}}t"
+    )
+    def GetAppliedConnection(self, flags):
+        ac = self._dbus_property_get(IFACE_DEVICE, PRP_DEVICE_ACTIVE_CONNECTION)
+        return (self.applied_con, 0)
+
+    @dbus.service.method(
+        dbus_interface=IFACE_DEVICE, in_signature="a{sa{sv}}tu", out_signature=""
+    )
+    def Reapply(self, connection, version_id, flags):
+        self.applied_con = connection
+        pass
+
     @dbus.service.method(dbus_interface=IFACE_DEVICE, in_signature="", out_signature="")
     def Delete(self):
         # We don't currently support any software device types, so...
@@ -1067,6 +1084,10 @@ class Device(ExportedObj):
 
     def set_active_connection(self, ac):
         self._dbus_property_set(IFACE_DEVICE, PRP_DEVICE_ACTIVE_CONNECTION, ac)
+        if ac is None:
+            self.applied_con = {}
+        else:
+            self.applied_con = ac.con_inst.con_hash
 
     def connection_is_available(self, con_inst):
         if con_inst.is_vpn():
@@ -1184,10 +1205,10 @@ PRP_WIFI_AP_MODE = "Mode"
 PRP_WIFI_AP_MAX_BITRATE = "MaxBitrate"
 PRP_WIFI_AP_STRENGTH = "Strength"
 PRP_WIFI_AP_LAST_SEEN = "LastSeen"
+PRP_WIFI_AP_BANDWIDTH = "Bandwidth"
 
 
 class WifiAp(ExportedObj):
-
     path_counter_next = 1
     path_prefix = "/org/freedesktop/NetworkManager/AccessPoint/"
 
@@ -1202,7 +1223,6 @@ class WifiAp(ExportedObj):
         strength=None,
         ident=None,
     ):
-
         ExportedObj.__init__(self, ExportedObj.create_path(WifiAp), ident)
 
         NM_AP_FLAGS = getattr(NM, "80211ApSecurityFlags")
@@ -1242,6 +1262,7 @@ class WifiAp(ExportedObj):
             PRP_WIFI_AP_MAX_BITRATE: dbus.UInt32(54000),
             PRP_WIFI_AP_STRENGTH: dbus.Byte(strength),
             PRP_WIFI_AP_LAST_SEEN: dbus.Int32(NM.utils_get_timestamp_msec() / 1000),
+            PRP_WIFI_AP_BANDWIDTH: dbus.UInt32(40),
         }
 
         self.dbus_interface_add(IFACE_WIFI_AP, props)
@@ -1376,21 +1397,19 @@ PRP_VPN_CONNECTION_BANNER = "Banner"
 
 
 class ActiveConnection(ExportedObj):
-
     path_counter_next = 1
     path_prefix = "/org/freedesktop/NetworkManager/ActiveConnection/"
 
     def __init__(self, device, con_inst, specific_object):
-
         ExportedObj.__init__(self, ExportedObj.create_path(ActiveConnection))
 
         self.device = device
         self.con_inst = con_inst
         self.is_vpn = con_inst.is_vpn()
 
+        self.activation_state_change_delay_ms = device.activation_state_change_delay_ms
         self._activation_id = None
         self._deactivation_id = None
-        self.activation_state_change_delay_ms = 50
 
         s_con = con_inst.con_hash[NM.SETTING_CONNECTION_SETTING_NAME]
 
@@ -1486,9 +1505,17 @@ class ActiveConnection(ExportedObj):
 
     def start_activation(self):
         assert self._activation_id is None
-        self._activation_id = GLib.timeout_add(
-            self.activation_state_change_delay_ms, self._activation_step1
-        )
+        if self.activation_state_change_delay_ms == 0:
+            self.device.set_active_connection(self)
+            self._set_state(
+                NM.ActiveConnectionState.ACTIVATED,
+                NM.ActiveConnectionStateReason.UNKNOWN,
+            )
+            self.device.set_state(NM.DeviceState.ACTIVATED, NM.DeviceStateReason.NONE)
+        else:
+            self._activation_id = GLib.timeout_add(
+                self.activation_state_change_delay_ms, self._activation_step1
+            )
 
     def start_deactivation(self):
         assert self._deactivation_id is None
@@ -1553,7 +1580,9 @@ class NetworkManager(ExportedObj):
             PRP_NM_ACTIVATING_CONNECTION: ExportedObj.to_path(None),
             PRP_NM_STARTUP: False,
             PRP_NM_STATE: dbus.UInt32(NM.State.DISCONNECTED),
-            PRP_NM_VERSION: "0.9.9.0",
+            PRP_NM_VERSION: os.environ.get(
+                "NM_TEST_NETWORKMANAGER_SERVICE_VERSION", "0.9.9.0"
+            ),
             PRP_NM_CONNECTIVITY: dbus.UInt32(NM.ConnectivityState.NONE),
         }
 
@@ -1918,9 +1947,9 @@ class NetworkManager(ExportedObj):
 
     @dbus.service.method(dbus_interface=IFACE_TEST, in_signature="ou", out_signature="")
     def SetActiveConnectionStateChangedDelay(self, devpath, delay_ms):
-        for ac in reversed(self.active_connections):
-            if ac.device.path == devpath:
-                ac.activation_state_change_delay_ms = delay_ms
+        for d in self.devices:
+            if d.path == devpath:
+                d.activation_state_change_delay_ms = delay_ms
                 return
         raise BusErr.UnknownDeviceException(
             "Device with iface '%s' not found" % devpath
@@ -1998,7 +2027,6 @@ PRP_CONNECTION_FILENAME = "Filename"
 
 class Connection(ExportedObj):
     def __init__(self, path_counter, con_hash, do_verify_strict=True):
-
         path = "/org/freedesktop/NetworkManager/Settings/Connection/%s" % (path_counter)
 
         ExportedObj.__init__(self, path)
@@ -2041,7 +2069,6 @@ class Connection(ExportedObj):
         return self.get_type() == NM.SETTING_VPN_SETTING_NAME
 
     def update_connection(self, con_hash, do_verify_strict):
-
         NmUtil.con_hash_verify(con_hash, do_verify_strict=do_verify_strict)
 
         old_uuid = self.get_uuid()
@@ -2265,7 +2292,6 @@ PRP_IP4_CONFIG_WINSSERVERS = "WinsServers"
 
 
 class IP4Config(ExportedObj):
-
     path_counter_next = 1
     path_prefix = "/org/freedesktop/NetworkManager/IP4Config/"
 
@@ -2464,7 +2490,6 @@ PRP_IP6_CONFIG_DNSPRIORITY = "DnsPriority"
 
 
 class IP6Config(ExportedObj):
-
     path_counter_next = 1
     path_prefix = "/org/freedesktop/NetworkManager/IP6Config/"
 
@@ -2638,7 +2663,6 @@ PRP_DHCP4_CONFIG_OPTIONS = "Options"
 
 
 class Dhcp4Config(ExportedObj):
-
     path_counter_next = 1
     path_prefix = "/org/freedesktop/NetworkManager/DHCP4Config/"
 
@@ -2679,7 +2703,6 @@ PRP_DHCP6_CONFIG_OPTIONS = "Options"
 
 
 class Dhcp6Config(ExportedObj):
-
     path_counter_next = 1
     path_prefix = "/org/freedesktop/NetworkManager/DHCP6Config/"
 
@@ -2856,6 +2879,26 @@ class ObjectManager(dbus.service.Object):
         return managed_objects
 
 
+def setup_log_file():
+    """
+    Get environment variable for the log file , if any
+    We accept a %p placeholder to replace with the pid of the current
+    process
+    """
+    try:
+        log_file_name = os.environ["NM_TEST_NETWORKMANAGER_SERVICE_LOGFILE"]
+    except KeyError:
+        return None
+    if "%p" in log_file_name:
+        log_file_name = log_file_name.replace("%p", str(os.getpid()))
+    try:
+        log_file = open(log_file_name, "w")
+    except Exception:
+        log_file = None
+
+    return log_file
+
+
 ###############################################################################
 
 
@@ -2867,6 +2910,7 @@ def main():
     global gl
     gl = Global()
 
+    gl.log_file = setup_log_file()
     gl.mainloop = GLib.MainLoop()
     gl.bus = dbus.SessionBus()
     gl.force_activation_failure = {}
@@ -2899,7 +2943,8 @@ def main():
     gl.settings.unexport()
     gl.manager.unexport()
     gl.object_manager.remove_from_connection()
-
+    if gl.log_file:
+        gl.log_file.close()
     sys.exit(0)
 
 

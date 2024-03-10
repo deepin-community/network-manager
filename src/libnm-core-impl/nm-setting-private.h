@@ -6,7 +6,7 @@
 #ifndef __NM_SETTING_PRIVATE_H__
 #define __NM_SETTING_PRIVATE_H__
 
-#if !((NETWORKMANAGER_COMPILATION) &NM_NETWORKMANAGER_COMPILATION_WITH_LIBNM_CORE_PRIVATE)
+#if !((NETWORKMANAGER_COMPILATION) & NM_NETWORKMANAGER_COMPILATION_WITH_LIBNM_CORE_PRIVATE)
 #error Cannot use this header.
 #endif
 
@@ -17,6 +17,14 @@
 #include "nm-core-enum-types.h"
 
 #include "libnm-core-intern/nm-core-internal.h"
+
+/*****************************************************************************/
+
+/* This holds a property of type NM_VALUE_TYPE_STRV. You probably want
+ * to use nm_strvarray_*() API with this. */
+typedef struct {
+    GArray *arr;
+} NMValueStrv;
 
 /*****************************************************************************/
 
@@ -80,6 +88,8 @@ void _nm_connection_private_clear(NMConnectionPrivate *priv);
 
 /*****************************************************************************/
 
+struct _NMSettingPrivate;
+
 /**
  * NMSetting:
  *
@@ -87,14 +97,12 @@ void _nm_connection_private_clear(NMConnectionPrivate *priv);
  * It should only be accessed through the functions described below.
  */
 struct _NMSetting {
-    GObject parent;
-    /* In the past, this struct was public API. Preserve ABI! */
+    GObject                   parent;
+    struct _NMSettingPrivate *_priv;
 };
 
 struct _NMSettingClass {
     GObjectClass parent;
-
-    /* In the past, this struct was public API. Preserve ABI! */
 
     int (*verify)(NMSetting *setting, NMConnection *connection, GError **error);
 
@@ -119,8 +127,6 @@ struct _NMSettingClass {
                               NMSetting                       *setting,
                               NMSettingClearSecretsWithFlagsFn func,
                               gpointer                         user_data);
-
-    void (*padding_1)(void);
 
     void (*duplicate_copy_properties)(const struct _NMSettInfoSetting *sett_info,
                                       NMSetting                       *src,
@@ -158,58 +164,42 @@ struct _NMSettingClass {
  */
 struct _NMSettingIPConfig {
     NMSetting parent;
-    /* In the past, this struct was public API. Preserve ABI! */
 };
 
 struct _NMSettingIPConfigClass {
     NMSettingClass parent;
-
-    /* In the past, this struct was public API. Preserve ABI! */
-
-    union {
-        gpointer _dummy1;
-        int      private_offset;
-    };
-
-    union {
-        gpointer _dummy2;
-        gint8    addr_family;
-    };
-
-    union {
-        gpointer _dummy3;
-        bool     is_ipv4;
-    };
-
-    gpointer padding[5];
+    int            private_offset;
+    gint8          addr_family;
+    bool           is_ipv4;
 };
 
 typedef struct {
-    GPtrArray *dns;         /* array of IP address strings */
-    GPtrArray *dns_search;  /* array of domain name strings */
-    GPtrArray *dns_options; /* array of DNS options */
-    GPtrArray *addresses;   /* array of NMIPAddress */
-    GPtrArray *routes;      /* array of NMIPRoute */
-    GPtrArray *routing_rules;
-    GArray    *dhcp_reject_servers;
-    char      *method;
-    char      *gateway;
-    char      *dhcp_hostname;
-    char      *dhcp_iaid;
-    gint64     route_metric;
-    int        auto_route_ext_gw;
-    int        replace_local_rule;
-    gint32     required_timeout;
-    gint32     dad_timeout;
-    gint32     dhcp_timeout;
-    gint32     dns_priority;
-    guint32    route_table;
-    guint32    dhcp_hostname_flags;
-    bool       ignore_auto_routes;
-    bool       ignore_auto_dns;
-    bool       dhcp_send_hostname;
-    bool       never_default;
-    bool       may_fail;
+    NMValueStrv dns_search; /* array of domain name strings */
+    NMValueStrv dhcp_reject_servers;
+    NMValueStrv dns_options; /* array of DNS options */
+    GPtrArray  *dns;         /* array of IP address strings */
+    GPtrArray  *addresses;   /* array of NMIPAddress */
+    GPtrArray  *routes;      /* array of NMIPRoute */
+    GPtrArray  *routing_rules;
+    char       *method;
+    char       *gateway;
+    char       *dhcp_hostname;
+    char       *dhcp_iaid;
+    char       *dhcp_dscp;
+    gint64      route_metric;
+    int         auto_route_ext_gw;
+    int         replace_local_rule;
+    gint32      required_timeout;
+    gint32      dad_timeout;
+    gint32      dhcp_timeout;
+    gint32      dns_priority;
+    guint32     route_table;
+    guint32     dhcp_hostname_flags;
+    bool        ignore_auto_routes;
+    bool        ignore_auto_dns;
+    bool        dhcp_send_hostname;
+    bool        never_default;
+    bool        may_fail;
 } NMSettingIPConfigPrivate;
 
 void _nm_setting_ip_config_private_init(gpointer self, NMSettingIPConfigPrivate *priv);
@@ -296,14 +286,6 @@ gboolean _nm_setting_clear_secrets(NMSetting                       *setting,
 
 /*****************************************************************************/
 
-/* This holds a property of type NM_VALUE_TYPE_STRV. You probably want
- * to use nm_strvarray_*() API with this. */
-typedef struct {
-    GArray *arr;
-} NMValueStrv;
-
-/*****************************************************************************/
-
 struct _NMRange {
     int     refcount;
     guint64 start;
@@ -350,6 +332,7 @@ extern const NMSettInfoPropertType nm_sett_info_propert_type_setting_name;
 extern const NMSettInfoPropertType nm_sett_info_propert_type_deprecated_interface_name;
 extern const NMSettInfoPropertType nm_sett_info_propert_type_deprecated_ignore_i;
 extern const NMSettInfoPropertType nm_sett_info_propert_type_deprecated_ignore_u;
+extern const NMSettInfoPropertType nm_sett_info_propert_type_gprop_strv_oldstyle;
 
 extern const NMSettInfoPropertType nm_sett_info_propert_type_direct_boolean;
 extern const NMSettInfoPropertType nm_sett_info_propert_type_direct_int32;
@@ -417,6 +400,27 @@ gboolean _nm_setting_property_from_dbus_fcn_direct(_NM_SETT_INFO_PROP_FROM_DBUS_
 
 gboolean _nm_setting_property_from_dbus_fcn_gprop(_NM_SETT_INFO_PROP_FROM_DBUS_FCN_ARGS _nm_nil);
 
+gboolean _nm_setting_connection_controller_from_dbus(_NM_SETT_INFO_PROP_FROM_DBUS_FCN_ARGS _nm_nil);
+
+GVariant *_nm_setting_connection_controller_to_dbus(_NM_SETT_INFO_PROP_TO_DBUS_FCN_ARGS _nm_nil);
+
+gboolean _nm_setting_connection_master_from_dbus(_NM_SETT_INFO_PROP_FROM_DBUS_FCN_ARGS _nm_nil);
+
+gboolean _nm_setting_connection_port_type_from_dbus(_NM_SETT_INFO_PROP_FROM_DBUS_FCN_ARGS _nm_nil);
+
+GVariant *_nm_setting_connection_port_type_to_dbus(_NM_SETT_INFO_PROP_TO_DBUS_FCN_ARGS _nm_nil);
+
+gboolean _nm_setting_connection_slave_type_from_dbus(_NM_SETT_INFO_PROP_FROM_DBUS_FCN_ARGS _nm_nil);
+
+gboolean
+_nm_setting_connection_autoconnect_ports_from_dbus(_NM_SETT_INFO_PROP_FROM_DBUS_FCN_ARGS _nm_nil);
+
+GVariant *
+_nm_setting_connection_autoconnect_ports_to_dbus(_NM_SETT_INFO_PROP_TO_DBUS_FCN_ARGS _nm_nil);
+
+gboolean
+_nm_setting_connection_autoconnect_slaves_from_dbus(_NM_SETT_INFO_PROP_FROM_DBUS_FCN_ARGS _nm_nil);
+
 GVariant *_nm_setting_to_dbus(NMSetting                              *setting,
                               NMConnection                           *connection,
                               NMConnectionSerializationFlags          flags,
@@ -438,11 +442,7 @@ const NMSettInfoProperty *
 _nm_sett_info_property_lookup_by_param_spec(const NMSettInfoSetting *sett_info,
                                             const GParamSpec        *param_spec);
 
-static inline GArray *
-_nm_sett_info_property_override_create_array_sized(guint reserved_size)
-{
-    return g_array_sized_new(FALSE, FALSE, sizeof(NMSettInfoProperty), reserved_size);
-}
+GArray *_nm_sett_info_property_override_create_array_sized(guint reserved_size);
 
 static inline GArray *
 _nm_sett_info_property_override_create_array(void)
@@ -497,23 +497,30 @@ void _nm_setting_class_commit(NMSettingClass             *setting_class,
 
 gboolean _nm_properties_override_assert(const NMSettInfoProperty *prop_info);
 
-static inline void
+static inline guint
 _nm_properties_override(GArray *properties_override, const NMSettInfoProperty *prop_info)
 {
     nm_assert(properties_override);
     nm_assert(_nm_properties_override_assert(prop_info));
     g_array_append_vals(properties_override, prop_info, 1);
+    return properties_override->len - 1u;
 }
 
-#define _nm_properties_override_gobj(properties_override,                             \
-                                     p_param_spec,                                    \
-                                     p_property_type,                                 \
-                                     ... /* extra NMSettInfoProperty fields */)       \
-    _nm_properties_override((properties_override),                                    \
-                            NM_SETT_INFO_PROPERTY(.name          = NULL,              \
-                                                  .param_spec    = (p_param_spec),    \
-                                                  .property_type = (p_property_type), \
-                                                  __VA_ARGS__))
+#define _nm_properties_override_gobj(properties_override,                                     \
+                                     p_param_spec,                                            \
+                                     p_property_type,                                         \
+                                     ... /* extra NMSettInfoProperty fields */)               \
+    ({                                                                                        \
+        GParamSpec *const _p_param_spec_2 = (p_param_spec);                                   \
+                                                                                              \
+        nm_assert(_p_param_spec_2);                                                           \
+                                                                                              \
+        _nm_properties_override((properties_override),                                        \
+                                NM_SETT_INFO_PROPERTY(.name          = _p_param_spec_2->name, \
+                                                      .param_spec    = _p_param_spec_2,       \
+                                                      .property_type = (p_property_type),     \
+                                                      __VA_ARGS__));                          \
+    })
 
 #define _nm_properties_override_dbus(properties_override,                             \
                                      p_name,                                          \
@@ -557,12 +564,12 @@ _nm_properties_override(GArray *properties_override, const NMSettInfoProperty *p
                                                                                                \
         nm_assert(NM_IN_SET(_default_value, 0, 1));                                            \
                                                                                                \
-        _param_spec =                                                                          \
-            g_param_spec_boolean("" prop_name "",                                              \
-                                 "",                                                           \
-                                 "",                                                           \
-                                 _default_value,                                               \
-                                 G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS | (param_flags));  \
+        _param_spec = g_param_spec_boolean("" prop_name "",                                    \
+                                           "",                                                 \
+                                           "",                                                 \
+                                           _default_value,                                     \
+                                           G_PARAM_READWRITE | G_PARAM_EXPLICIT_NOTIFY         \
+                                               | G_PARAM_STATIC_STRINGS | (param_flags));      \
                                                                                                \
         (obj_properties)[(prop_id)] = _param_spec;                                             \
                                                                                                \
@@ -600,14 +607,14 @@ _nm_properties_override(GArray *properties_override, const NMSettInfoProperty *p
         G_STATIC_ASSERT((default_value) <= (guint64) (max_value));                                \
         G_STATIC_ASSERT((max_value) <= (guint64) G_MAXUINT32);                                    \
                                                                                                   \
-        _param_spec =                                                                             \
-            g_param_spec_uint("" prop_name "",                                                    \
-                              "",                                                                 \
-                              "",                                                                 \
-                              (min_value),                                                        \
-                              (max_value),                                                        \
-                              (default_value),                                                    \
-                              G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS | (param_flags));        \
+        _param_spec = g_param_spec_uint("" prop_name "",                                          \
+                                        "",                                                       \
+                                        "",                                                       \
+                                        (min_value),                                              \
+                                        (max_value),                                              \
+                                        (default_value),                                          \
+                                        G_PARAM_READWRITE | G_PARAM_EXPLICIT_NOTIFY               \
+                                            | G_PARAM_STATIC_STRINGS | (param_flags));            \
                                                                                                   \
         (obj_properties)[(prop_id)] = _param_spec;                                                \
                                                                                                   \
@@ -646,14 +653,14 @@ _nm_properties_override(GArray *properties_override, const NMSettInfoProperty *p
         G_STATIC_ASSERT((default_value) <= (gint64) (max_value));                                \
         G_STATIC_ASSERT((max_value) <= (gint64) G_MAXUINT32);                                    \
                                                                                                  \
-        _param_spec =                                                                            \
-            g_param_spec_int("" prop_name "",                                                    \
-                             "",                                                                 \
-                             "",                                                                 \
-                             (min_value),                                                        \
-                             (max_value),                                                        \
-                             (default_value),                                                    \
-                             G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS | (param_flags));        \
+        _param_spec = g_param_spec_int("" prop_name "",                                          \
+                                       "",                                                       \
+                                       "",                                                       \
+                                       (min_value),                                              \
+                                       (max_value),                                              \
+                                       (default_value),                                          \
+                                       G_PARAM_READWRITE | G_PARAM_EXPLICIT_NOTIFY               \
+                                           | G_PARAM_STATIC_STRINGS | (param_flags));            \
                                                                                                  \
         (obj_properties)[(prop_id)] = _param_spec;                                               \
                                                                                                  \
@@ -692,14 +699,14 @@ _nm_properties_override(GArray *properties_override, const NMSettInfoProperty *p
         G_STATIC_ASSERT((default_value) <= (max_value));                                         \
         G_STATIC_ASSERT((max_value) <= G_MAXINT64);                                              \
                                                                                                  \
-        _param_spec =                                                                            \
-            g_param_spec_int64("" prop_name "",                                                  \
-                               "",                                                               \
-                               "",                                                               \
-                               (min_value),                                                      \
-                               (max_value),                                                      \
-                               (default_value),                                                  \
-                               G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS | (param_flags));      \
+        _param_spec = g_param_spec_int64("" prop_name "",                                        \
+                                         "",                                                     \
+                                         "",                                                     \
+                                         (min_value),                                            \
+                                         (max_value),                                            \
+                                         (default_value),                                        \
+                                         G_PARAM_READWRITE | G_PARAM_EXPLICIT_NOTIFY             \
+                                             | G_PARAM_STATIC_STRINGS | (param_flags));          \
                                                                                                  \
         (obj_properties)[(prop_id)] = _param_spec;                                               \
                                                                                                  \
@@ -737,14 +744,14 @@ _nm_properties_override(GArray *properties_override, const NMSettInfoProperty *p
         G_STATIC_ASSERT((default_value) == 0 || (default_value) -1u < (max_value));               \
         G_STATIC_ASSERT((max_value) <= G_MAXUINT64);                                              \
                                                                                                   \
-        _param_spec =                                                                             \
-            g_param_spec_uint64("" prop_name "",                                                  \
-                                "",                                                               \
-                                "",                                                               \
-                                (min_value),                                                      \
-                                (max_value),                                                      \
-                                (default_value),                                                  \
-                                G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS | (param_flags));      \
+        _param_spec = g_param_spec_uint64("" prop_name "",                                        \
+                                          "",                                                     \
+                                          "",                                                     \
+                                          (min_value),                                            \
+                                          (max_value),                                            \
+                                          (default_value),                                        \
+                                          G_PARAM_READWRITE | G_PARAM_EXPLICIT_NOTIFY             \
+                                              | G_PARAM_STATIC_STRINGS | (param_flags));          \
                                                                                                   \
         (obj_properties)[(prop_id)] = _param_spec;                                                \
                                                                                                   \
@@ -769,8 +776,7 @@ _nm_properties_override(GArray *properties_override, const NMSettInfoProperty *p
                                                        private_struct_type,                       \
                                                        private_struct_field,                      \
                                                        ... /* extra NMSettInfoProperty fields */) \
-    G_STMT_START                                                                                  \
-    {                                                                                             \
+    ({                                                                                            \
         GParamSpec                  *_param_spec;                                                 \
         const NMSettInfoPropertType *_property_type = (property_type);                            \
                                                                                                   \
@@ -782,14 +788,17 @@ _nm_properties_override(GArray *properties_override, const NMSettInfoProperty *p
         nm_assert(_property_type);                                                                \
         nm_assert(g_variant_type_equal(_property_type->dbus_type, "s"));                          \
         nm_assert(_property_type->direct_type == NM_VALUE_TYPE_STRING);                           \
-        nm_assert(_property_type->to_dbus_fcn == _nm_setting_property_to_dbus_fcn_direct);        \
+        nm_assert(NM_IN_SET(_property_type->to_dbus_fcn,                                          \
+                            _nm_setting_property_to_dbus_fcn_direct,                              \
+                            _nm_setting_connection_controller_to_dbus,                            \
+                            _nm_setting_connection_port_type_to_dbus));                           \
                                                                                                   \
-        _param_spec =                                                                             \
-            g_param_spec_string("" prop_name "",                                                  \
-                                "",                                                               \
-                                "",                                                               \
-                                NULL,                                                             \
-                                G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS | (param_flags));      \
+        _param_spec = g_param_spec_string("" prop_name "",                                        \
+                                          "",                                                     \
+                                          "",                                                     \
+                                          NULL,                                                   \
+                                          G_PARAM_READWRITE | G_PARAM_EXPLICIT_NOTIFY             \
+                                              | G_PARAM_STATIC_STRINGS | (param_flags));          \
                                                                                                   \
         (obj_properties)[(prop_id)] = _param_spec;                                                \
                                                                                                   \
@@ -800,8 +809,7 @@ _nm_properties_override(GArray *properties_override, const NMSettInfoProperty *p
             .direct_offset =                                                                      \
                 NM_STRUCT_OFFSET_ENSURE_TYPE(char *, private_struct_type, private_struct_field),  \
             __VA_ARGS__);                                                                         \
-    }                                                                                             \
-    G_STMT_END
+    })
 
 #define _nm_setting_property_define_direct_string(properties_override,                       \
                                                   obj_properties,                            \
@@ -839,12 +847,12 @@ _nm_properties_override(GArray *properties_override, const NMSettInfoProperty *p
                                       ~(NM_SETTING_PARAM_SECRET | NM_SETTING_PARAM_INFERRABLE      \
                                         | NM_SETTING_PARAM_FUZZY_IGNORE)));                        \
                                                                                                    \
-        _param_spec =                                                                              \
-            g_param_spec_boxed("" prop_name "",                                                    \
-                               "",                                                                 \
-                               "",                                                                 \
-                               G_TYPE_BYTES,                                                       \
-                               G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS | (param_flags));        \
+        _param_spec = g_param_spec_boxed("" prop_name "",                                          \
+                                         "",                                                       \
+                                         "",                                                       \
+                                         G_TYPE_BYTES,                                             \
+                                         G_PARAM_READWRITE | G_PARAM_EXPLICIT_NOTIFY               \
+                                             | G_PARAM_STATIC_STRINGS | (param_flags));            \
                                                                                                    \
         (obj_properties)[(prop_id)] = _param_spec;                                                 \
                                                                                                    \
@@ -874,12 +882,12 @@ _nm_properties_override(GArray *properties_override, const NMSettInfoProperty *p
                                                                                              \
         G_STATIC_ASSERT(!NM_FLAGS_ANY((param_flags), ~(NM_SETTING_PARAM_FUZZY_IGNORE)));     \
                                                                                              \
-        _param_spec =                                                                        \
-            g_param_spec_boxed("" prop_name "",                                              \
-                               "",                                                           \
-                               "",                                                           \
-                               G_TYPE_STRV,                                                  \
-                               G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS | (param_flags));  \
+        _param_spec = g_param_spec_boxed("" prop_name "",                                    \
+                                         "",                                                 \
+                                         "",                                                 \
+                                         G_TYPE_STRV,                                        \
+                                         G_PARAM_READWRITE | G_PARAM_EXPLICIT_NOTIFY         \
+                                             | G_PARAM_STATIC_STRINGS | (param_flags));      \
                                                                                              \
         (obj_properties)[(prop_id)] = _param_spec;                                           \
                                                                                              \
@@ -896,6 +904,13 @@ _nm_properties_override(GArray *properties_override, const NMSettInfoProperty *p
 
 /*****************************************************************************/
 
+/* Define a direct property of type enum, but using `int` as type in the underlying
+ * GObject property. This is the preferred way to define enum properties because using
+ * real enums it is not possible to maintain backwards compatibility with clients
+ * using an old libnm (glib asserts against new values of the enum not being valid).
+ * The main difference from define_direct_real_enum is that this will accept any
+ * integer value, and we'll check that it's valid in #NMSetting::verify, as doing
+ * 'verify' is optional for clients. */
 #define _nm_setting_property_define_direct_enum(properties_override,                             \
                                                 obj_properties,                                  \
                                                 prop_name,                                       \
@@ -903,37 +918,105 @@ _nm_properties_override(GArray *properties_override, const NMSettInfoProperty *p
                                                 gtype_enum,                                      \
                                                 default_value,                                   \
                                                 param_flags,                                     \
+                                                property_type,                                   \
                                                 private_struct_type,                             \
                                                 private_struct_field,                            \
                                                 ... /* extra NMSettInfoProperty fields */)       \
-    G_STMT_START                                                                                 \
-    {                                                                                            \
-        GParamSpec *_param_spec;                                                                 \
+    ({                                                                                           \
+        GParamSpec                  *_param_spec;                                                \
+        const NMSettInfoPropertType *_property_type;                                             \
                                                                                                  \
         G_STATIC_ASSERT(                                                                         \
             !NM_FLAGS_ANY((param_flags),                                                         \
                           ~(NM_SETTING_PARAM_REAPPLY_IMMEDIATELY | NM_SETTING_PARAM_FUZZY_IGNORE \
                             | NM_SETTING_PARAM_INFERRABLE)));                                    \
                                                                                                  \
-        _param_spec =                                                                            \
-            g_param_spec_enum("" prop_name "",                                                   \
-                              "",                                                                \
-                              "",                                                                \
-                              (gtype_enum),                                                      \
-                              (default_value),                                                   \
-                              G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS | (param_flags));       \
+        nm_assert(G_TYPE_IS_ENUM(gtype_enum));                                                   \
+                                                                                                 \
+        _param_spec = g_param_spec_int("" prop_name "",                                          \
+                                       "",                                                       \
+                                       "",                                                       \
+                                       G_MININT32,                                               \
+                                       G_MAXINT32,                                               \
+                                       (default_value),                                          \
+                                       G_PARAM_READWRITE | G_PARAM_EXPLICIT_NOTIFY               \
+                                           | G_PARAM_STATIC_STRINGS | (param_flags));            \
                                                                                                  \
         (obj_properties)[(prop_id)] = _param_spec;                                               \
+        _property_type              = (property_type) ?: &nm_sett_info_propert_type_direct_enum; \
                                                                                                  \
         _nm_properties_override_gobj(                                                            \
             (properties_override),                                                               \
             _param_spec,                                                                         \
-            &nm_sett_info_propert_type_direct_enum,                                              \
+            _property_type,                                                                      \
             .direct_offset =                                                                     \
                 NM_STRUCT_OFFSET_ENSURE_TYPE(int, private_struct_type, private_struct_field),    \
+            .direct_data.enum_gtype = (gtype_enum),                                              \
             __VA_ARGS__);                                                                        \
-    }                                                                                            \
-    G_STMT_END
+    })
+
+/*****************************************************************************/
+
+/* Define an enum property using real enums in the GObject, not integers. Note that
+ * this is not backwards compatible because clients with old libnm will reject
+ * newer values of the enum. Generally you want to use define_direct_enum and use this
+ * one only for properties that already existed as real enums */
+#define _nm_setting_property_define_direct_real_enum(properties_override,                        \
+                                                     obj_properties,                             \
+                                                     prop_name,                                  \
+                                                     prop_id,                                    \
+                                                     gtype_enum,                                 \
+                                                     default_value,                              \
+                                                     param_flags,                                \
+                                                     property_type,                              \
+                                                     private_struct_type,                        \
+                                                     private_struct_field,                       \
+                                                     ... /* extra NMSettInfoProperty fields */)  \
+    ({                                                                                           \
+        GParamSpec                  *_param_spec;                                                \
+        const NMSettInfoPropertType *_property_type;                                             \
+                                                                                                 \
+        G_STATIC_ASSERT(                                                                         \
+            !NM_FLAGS_ANY((param_flags),                                                         \
+                          ~(NM_SETTING_PARAM_REAPPLY_IMMEDIATELY | NM_SETTING_PARAM_FUZZY_IGNORE \
+                            | NM_SETTING_PARAM_INFERRABLE)));                                    \
+                                                                                                 \
+        nm_assert(G_TYPE_IS_ENUM(gtype_enum));                                                   \
+                                                                                                 \
+        _param_spec = g_param_spec_enum("" prop_name "",                                         \
+                                        "",                                                      \
+                                        "",                                                      \
+                                        (gtype_enum),                                            \
+                                        (default_value),                                         \
+                                        G_PARAM_READWRITE | G_PARAM_EXPLICIT_NOTIFY              \
+                                            | G_PARAM_STATIC_STRINGS | (param_flags));           \
+                                                                                                 \
+        (obj_properties)[(prop_id)] = _param_spec;                                               \
+        _property_type              = (property_type) ?: &nm_sett_info_propert_type_direct_enum; \
+                                                                                                 \
+        _nm_properties_override_gobj(                                                            \
+            (properties_override),                                                               \
+            _param_spec,                                                                         \
+            _property_type,                                                                      \
+            .direct_offset =                                                                     \
+                NM_STRUCT_OFFSET_ENSURE_TYPE(int, private_struct_type, private_struct_field),    \
+            .direct_data.enum_gtype = (gtype_enum),                                              \
+            __VA_ARGS__);                                                                        \
+    })
+
+/*****************************************************************************/
+
+#define _nm_setting_property_is_valid_direct_enum(property_info)                               \
+    ({                                                                                         \
+        const NMSettInfoProperty *_property_info = (property_info);                            \
+        NMValueType               direct_nmtype  = _property_info->property_type->direct_type; \
+        GType                     direct_gtype   = _property_info->direct_data.enum_gtype;     \
+        GParamSpec               *spec           = _property_info->param_spec;                 \
+        GType                     spec_gtype     = spec ? spec->value_type : G_TYPE_INVALID;   \
+                                                                                               \
+        direct_nmtype == NM_VALUE_TYPE_ENUM &&direct_gtype &&G_TYPE_IS_ENUM(direct_gtype)      \
+            && NM_IN_SET(spec_gtype, G_TYPE_INT, direct_gtype);                                \
+    })
 
 /*****************************************************************************/
 
@@ -945,16 +1028,17 @@ _nm_properties_override(GArray *properties_override, const NMSettInfoProperty *p
                                                         private_struct_type,  \
                                                         private_struct_field, \
                                                         ...)                  \
-    _nm_setting_property_define_direct_enum((properties_override),            \
-                                            (obj_properties),                 \
-                                            prop_name,                        \
-                                            (prop_id),                        \
-                                            NM_TYPE_TERNARY,                  \
-                                            NM_TERNARY_DEFAULT,               \
-                                            (param_flags),                    \
-                                            private_struct_type,              \
-                                            private_struct_field,             \
-                                            __VA_ARGS__)
+    _nm_setting_property_define_direct_real_enum((properties_override),       \
+                                                 (obj_properties),            \
+                                                 prop_name,                   \
+                                                 (prop_id),                   \
+                                                 NM_TYPE_TERNARY,             \
+                                                 NM_TERNARY_DEFAULT,          \
+                                                 (param_flags),               \
+                                                 NULL,                        \
+                                                 private_struct_type,         \
+                                                 private_struct_field,        \
+                                                 __VA_ARGS__)
 
 /*****************************************************************************/
 
@@ -976,13 +1060,13 @@ _nm_properties_override(GArray *properties_override, const NMSettInfoProperty *p
             !NM_FLAGS_ANY((param_flags),                                                        \
                           ~(NM_SETTING_PARAM_FUZZY_IGNORE | NM_SETTING_PARAM_INFERRABLE)));     \
                                                                                                 \
-        _param_spec =                                                                           \
-            g_param_spec_flags("" prop_name "",                                                 \
-                               "",                                                              \
-                               "",                                                              \
-                               (gtype_flags),                                                   \
-                               (default_value),                                                 \
-                               G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS | (param_flags));     \
+        _param_spec = g_param_spec_flags("" prop_name "",                                       \
+                                         "",                                                    \
+                                         "",                                                    \
+                                         (gtype_flags),                                         \
+                                         (default_value),                                       \
+                                         G_PARAM_READWRITE | G_PARAM_EXPLICIT_NOTIFY            \
+                                             | G_PARAM_STATIC_STRINGS | (param_flags));         \
                                                                                                 \
         (obj_properties)[(prop_id)] = _param_spec;                                              \
                                                                                                 \
@@ -1035,12 +1119,12 @@ _nm_properties_override(GArray *properties_override, const NMSettInfoProperty *p
                                         | NM_SETTING_PARAM_INFERRABLE                             \
                                         | NM_SETTING_PARAM_REAPPLY_IMMEDIATELY)));                \
                                                                                                   \
-        _param_spec =                                                                             \
-            g_param_spec_string("" prop_name "",                                                  \
-                                "",                                                               \
-                                "",                                                               \
-                                NULL,                                                             \
-                                G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS | (param_flags));      \
+        _param_spec = g_param_spec_string("" prop_name "",                                        \
+                                          "",                                                     \
+                                          "",                                                     \
+                                          NULL,                                                   \
+                                          G_PARAM_READWRITE | G_PARAM_EXPLICIT_NOTIFY             \
+                                              | G_PARAM_STATIC_STRINGS | (param_flags));          \
                                                                                                   \
         (obj_properties)[(prop_id)] = _param_spec;                                                \
                                                                                                   \
@@ -1052,6 +1136,38 @@ _nm_properties_override(GArray *properties_override, const NMSettInfoProperty *p
                 NM_STRUCT_OFFSET_ENSURE_TYPE(char *, private_struct_type, private_struct_field),  \
             __VA_ARGS__);                                                                         \
     }                                                                                             \
+    G_STMT_END
+
+/* This should not be used for new strv properties. Use _nm_setting_property_define_direct_strv().
+ *
+ * FIXME: existing properties should migrate to _nm_setting_property_define_direct_strv(). */
+#define _nm_setting_property_define_gprop_strv_oldstyle(properties_override,                    \
+                                                        obj_properties,                         \
+                                                        prop_name,                              \
+                                                        prop_id,                                \
+                                                        param_flags)                            \
+    G_STMT_START                                                                                \
+    {                                                                                           \
+        GParamSpec *_param_spec;                                                                \
+                                                                                                \
+        G_STATIC_ASSERT(!NM_FLAGS_ANY((param_flags),                                            \
+                                      ~(NM_SETTING_PARAM_SECRET | NM_SETTING_PARAM_FUZZY_IGNORE \
+                                        | NM_SETTING_PARAM_INFERRABLE                           \
+                                        | NM_SETTING_PARAM_REAPPLY_IMMEDIATELY)));              \
+                                                                                                \
+        _param_spec =                                                                           \
+            g_param_spec_boxed("" prop_name "",                                                 \
+                               "",                                                              \
+                               "",                                                              \
+                               G_TYPE_STRV,                                                     \
+                               G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS | (param_flags));     \
+                                                                                                \
+        (obj_properties)[(prop_id)] = _param_spec;                                              \
+                                                                                                \
+        _nm_properties_override_gobj((properties_override),                                     \
+                                     _param_spec,                                               \
+                                     &nm_sett_info_propert_type_gprop_strv_oldstyle);           \
+    }                                                                                           \
     G_STMT_END
 
 /*****************************************************************************/
@@ -1095,6 +1211,13 @@ _nm_sett_info_prop_to_dbus_fcn_cloned_mac_address(_NM_SETT_INFO_PROP_TO_DBUS_FCN
 
 gboolean
 _nm_sett_info_prop_from_dbus_fcn_cloned_mac_address(_NM_SETT_INFO_PROP_FROM_DBUS_FCN_ARGS _nm_nil);
+
+/*****************************************************************************/
+
+void _nm_setting_wireless_normalize_mac_address_randomization(
+    NMSettingWireless         *s_wifi,
+    const char               **out_cloned_mac_address,
+    NMSettingMacRandomization *out_mac_address_randomization);
 
 /*****************************************************************************/
 

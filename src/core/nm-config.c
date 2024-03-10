@@ -853,11 +853,11 @@ static const ConfigGroup config_groups[] = {
                              NM_CONFIG_KEYFILE_KEY_MAIN_HOSTNAME_MODE,
                              NM_CONFIG_KEYFILE_KEY_MAIN_IGNORE_CARRIER,
                              NM_CONFIG_KEYFILE_KEY_MAIN_IWD_CONFIG_PATH,
+                             NM_CONFIG_KEYFILE_KEY_MAIN_MIGRATE_IFCFG_RH,
                              NM_CONFIG_KEYFILE_KEY_MAIN_MONITOR_CONNECTION_FILES,
                              NM_CONFIG_KEYFILE_KEY_MAIN_NO_AUTO_DEFAULT,
                              NM_CONFIG_KEYFILE_KEY_MAIN_PLUGINS,
                              NM_CONFIG_KEYFILE_KEY_MAIN_RC_MANAGER,
-                             NM_CONFIG_KEYFILE_KEY_MAIN_SLAVES_ORDER,
                              NM_CONFIG_KEYFILE_KEY_MAIN_SYSTEMD_RESOLVED, ),
     },
     {
@@ -878,6 +878,7 @@ static const ConfigGroup config_groups[] = {
         .group = NM_CONFIG_KEYFILE_GROUP_KEYFILE,
         .keys  = NM_MAKE_STRV(NM_CONFIG_KEYFILE_KEY_KEYFILE_HOSTNAME,
                              NM_CONFIG_KEYFILE_KEY_KEYFILE_PATH,
+                             NM_CONFIG_KEYFILE_KEY_KEYFILE_RENAME,
                              NM_CONFIG_KEYFILE_KEY_KEYFILE_UNMANAGED_DEVICES, ),
     },
     {
@@ -1127,12 +1128,12 @@ read_config(GKeyFile   *keyfile,
                     /* merge the string lists, by omitting duplicates. */
 
                     for (iter_val = old_val; iter_val && *iter_val; iter_val++) {
-                        if (last_char != '-' || nm_strv_find_first(new_val, -1, *iter_val) < 0)
+                        if (last_char != '-' || !nm_strv_contains(new_val, -1, *iter_val))
                             g_ptr_array_add(new, g_strdup(*iter_val));
                     }
                     for (iter_val = new_val; iter_val && *iter_val; iter_val++) {
                         /* don't add duplicates. That means an "option=a,b"; "option+=a,c" results in "option=a,b,c" */
-                        if (last_char == '+' && nm_strv_find_first(old_val, -1, *iter_val) < 0)
+                        if (last_char == '+' && !nm_strv_contains(old_val, -1, *iter_val))
                             g_ptr_array_add(new, *iter_val);
                         else
                             g_free(*iter_val);
@@ -1531,7 +1532,7 @@ nm_config_keyfile_has_global_dns_config(GKeyFile *keyfile, gboolean internal)
  * intern_config_read:
  * @filename: the filename where to store the internal config
  * @keyfile_conf: the merged configuration from user (/etc/NM/NetworkManager.conf).
- * @out_needs_rewrite: (allow-none): whether the read keyfile contains inconsistent
+ * @out_needs_rewrite: (out) (optional): whether the read keyfile contains inconsistent
  *   data (compared to @keyfile_conf). If %TRUE, you might want to rewrite
  *   the file.
  *
@@ -2058,7 +2059,7 @@ nm_config_set_connectivity_check_enabled(NMConfig *self, gboolean enabled)
 /**
  * nm_config_set_values:
  * @self: the NMConfig instance
- * @keyfile_intern_new: (allow-none): the new internal settings to set.
+ * @keyfile_intern_new: (nullable): the new internal settings to set.
  *   If %NULL, it is equal to an empty keyfile.
  * @allow_write: only if %TRUE, allow writing the changes to file. Otherwise,
  *   do the changes in-memory only.
@@ -2353,9 +2354,10 @@ _nm_config_state_set(NMConfig *self, gboolean allow_persist, gboolean force_pers
     "route-metric-default-aspired"
 #define DEVICE_RUN_STATE_KEYFILE_KEY_DEVICE_ROUTE_METRIC_DEFAULT_EFFECTIVE \
     "route-metric-default-effective"
-#define DEVICE_RUN_STATE_KEYFILE_KEY_DEVICE_ROOT_PATH     "root-path"
-#define DEVICE_RUN_STATE_KEYFILE_KEY_DEVICE_NEXT_SERVER   "next-server"
-#define DEVICE_RUN_STATE_KEYFILE_KEY_DEVICE_DHCP_BOOTFILE "dhcp-bootfile"
+#define DEVICE_RUN_STATE_KEYFILE_KEY_DEVICE_ROOT_PATH        "root-path"
+#define DEVICE_RUN_STATE_KEYFILE_KEY_DEVICE_NEXT_SERVER      "next-server"
+#define DEVICE_RUN_STATE_KEYFILE_KEY_DEVICE_DHCP_BOOTFILE    "dhcp-bootfile"
+#define DEVICE_RUN_STATE_KEYFILE_KEY_DEVICE_GENERIC_SOFTWARE "generic-software"
 
 static NM_UTILS_LOOKUP_STR_DEFINE(
     _device_state_managed_type_to_str,
@@ -2456,6 +2458,12 @@ _config_device_state_data_new(int ifindex, GKeyFile *kf)
     device_state->route_metric_default_aspired   = route_metric_default_aspired;
     device_state->route_metric_default_effective = route_metric_default_effective;
 
+    device_state->generic_sw =
+        nm_config_keyfile_get_boolean(kf,
+                                      DEVICE_RUN_STATE_KEYFILE_GROUP_DEVICE,
+                                      DEVICE_RUN_STATE_KEYFILE_KEY_DEVICE_GENERIC_SOFTWARE,
+                                      FALSE);
+
     p = (char *) (&device_state[1]);
     if (connection_uuid) {
         memcpy(p, connection_uuid, connection_uuid_len);
@@ -2501,7 +2509,7 @@ nm_config_device_state_load(int ifindex)
                        ? ", nm-owned=1"
                        : (device_state->nm_owned == NM_TERNARY_FALSE ? ", nm-owned=0" : "");
 
-    _LOGT("device-state: %s #%d (%s); managed=%s%s%s%s%s%s%s%s, "
+    _LOGT("device-state: %s #%d (%s); managed=%s%s%s%s%s%s%s%s%s, "
           "route-metric-default=%" G_GUINT32_FORMAT "-%" G_GUINT32_FORMAT "",
           kf ? "read" : "miss",
           ifindex,
@@ -2518,6 +2526,7 @@ nm_config_device_state_load(int ifindex)
                               "",
                               ""),
           nm_owned_str,
+          device_state->generic_sw ? ", generic-software" : "",
           device_state->route_metric_default_aspired,
           device_state->route_metric_default_effective);
 
@@ -2576,7 +2585,8 @@ nm_config_device_state_write(int                            ifindex,
                              guint32                        route_metric_default_aspired,
                              guint32                        route_metric_default_effective,
                              NMDhcpConfig                  *dhcp4_config,
-                             NMDhcpConfig                  *dhcp6_config)
+                             NMDhcpConfig                  *dhcp6_config,
+                             gboolean                       generic_sw)
 {
     char    path[NM_STRLEN(NM_CONFIG_DEVICE_STATE_DIR "/") + DEVICE_STATE_FILENAME_LEN_MAX + 1];
     GError *local                                 = NULL;
@@ -2663,6 +2673,13 @@ nm_config_device_state_write(int                            ifindex,
                               dhcp_bootfile);
     }
 
+    if (generic_sw) {
+        g_key_file_set_boolean(kf,
+                               DEVICE_RUN_STATE_KEYFILE_GROUP_DEVICE,
+                               DEVICE_RUN_STATE_KEYFILE_KEY_DEVICE_GENERIC_SOFTWARE,
+                               TRUE);
+    }
+
     for (IS_IPv4 = 1; IS_IPv4 >= 0; IS_IPv4--) {
         NMDhcpConfig              *dhcp_config = IS_IPv4 ? dhcp4_config : dhcp6_config;
         gs_free NMUtilsNamedValue *values      = NULL;
@@ -2690,7 +2707,7 @@ nm_config_device_state_write(int                            ifindex,
         g_error_free(local);
         return FALSE;
     }
-    _LOGT("device-state: write #%d (%s); managed=%s%s%s%s%s%s%s, "
+    _LOGT("device-state: write #%d (%s); managed=%s%s%s%s%s%s%s%s, "
           "route-metric-default=%" G_GUINT32_FORMAT "-%" G_GUINT32_FORMAT "%s%s%s"
           "%s%s%s"
           "%s%s%s",
@@ -2699,6 +2716,7 @@ nm_config_device_state_write(int                            ifindex,
           _device_state_managed_type_to_str(managed),
           NM_PRINT_FMT_QUOTED(connection_uuid, ", connection-uuid=", connection_uuid, "", ""),
           NM_PRINT_FMT_QUOTED(perm_hw_addr_fake, ", perm-hw-addr-fake=", perm_hw_addr_fake, "", ""),
+          generic_sw ? ", generic-software" : "",
           route_metric_default_aspired,
           route_metric_default_effective,
           NM_PRINT_FMT_QUOTED(next_server, ", next-server=", next_server, "", ""),
@@ -3017,8 +3035,7 @@ set_property(GObject *object, guint prop_id, const GValue *value, GParamSpec *ps
 gboolean
 nm_config_kernel_command_line_nm_debug(void)
 {
-    return (nm_strv_find_first(nm_utils_proc_cmdline_split(), -1, NM_CONFIG_KERNEL_CMDLINE_NM_DEBUG)
-            >= 0);
+    return nm_strv_contains(nm_utils_proc_cmdline_split(), -1, NM_CONFIG_KERNEL_CMDLINE_NM_DEBUG);
 }
 
 /*****************************************************************************/

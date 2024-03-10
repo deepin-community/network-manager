@@ -87,6 +87,7 @@ static const struct Opt opt_table[] = {
                              "OWE",
                              "NONE", )),
     OPT_INT("macsec_integ_only", 0, 1),
+    OPT_INT("macsec_offload", 0, 2),
     OPT_INT("macsec_policy", 0, 1),
     OPT_INT("macsec_port", 1, 65534),
     OPT_BYTES("mka_cak", 65536),
@@ -228,7 +229,7 @@ validate_type_keyword(const struct Opt *opt, const char *value, const guint32 le
             s++;
         }
 
-        if (nm_strv_find_first(opt->str_allowed, -1, value) < 0)
+        if (!nm_strv_contains(opt->str_allowed, -1, value))
             return FALSE;
 
         if (!s)

@@ -333,9 +333,8 @@ do_test_nm_utils_kill_child(void)
 
     /* pid3s should not be a valid process, hence the call should fail. Note, that there
      * is a race here. */
-    NMTST_EXPECT_NM_ERROR(
-        "kill child process 'test-s-3-2' (*): failed due to unexpected return value -1 by waitpid "
-        "(No child process*, 10) after sending no signal (0)");
+    NMTST_EXPECT_NM_ERROR("kill child process 'test-s-3-2' (*): unexpected error while waitpid: No "
+                          "child process* (10)");
     test_nm_utils_kill_child_sync_do("test-s-3-2", pid3s, 0, 0, FALSE, NULL);
 
     NMTST_EXPECT_NM_DEBUG("kill child process 'test-s-4' (*): waiting up to 50 milliseconds for "
@@ -396,9 +395,8 @@ do_test_nm_utils_kill_child(void)
 
     /* pid3a should not be a valid process, hence the call should fail. Note, that there
      * is a race here. */
-    NMTST_EXPECT_NM_ERROR(
-        "kill child process 'test-a-3-2' (*): failed due to unexpected return value -1 by waitpid "
-        "(No child process*, 10) after sending no signal (0)");
+    NMTST_EXPECT_NM_ERROR("kill child process 'test-a-3-2' (*): unexpected error while "
+                          "waitpid: No child process* (10)");
     NMTST_EXPECT_NM_DEBUG(
         "kill child process 'test-a-3-2' (*): invoke callback: killing child failed");
     test_nm_utils_kill_child_async_do("test-a-3-2", pid3a, 0, 0, FALSE, NULL);
@@ -619,7 +617,7 @@ test_nmp_utils_new_vlan_name(void)
             g_assert(ifname && ifname[0]);
             g_assert_cmpint(strlen(ifname),
                             ==,
-                            MIN(15, strlen(parent_names[i]) + strlen(vlan_id_s)));
+                            NM_MIN(15u, strlen(parent_names[i]) + strlen(vlan_id_s)));
             g_assert(g_str_has_suffix(ifname, vlan_id_s));
             g_assert(ifname[strlen(ifname) - strlen(vlan_id_s)] == '.');
             g_assert(strncmp(ifname, parent_names[i], strlen(ifname) - strlen(vlan_id_s)) == 0);

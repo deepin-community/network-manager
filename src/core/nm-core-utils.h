@@ -193,14 +193,20 @@ typedef enum {
     NM_MATCH_SPEC_NEG_MATCH = 2,
 } NMMatchSpecMatchType;
 
-NMMatchSpecMatchType nm_match_spec_device(const GSList *specs,
-                                          const char   *interface_name,
-                                          const char   *device_type,
-                                          const char   *driver,
-                                          const char   *driver_version,
-                                          const char   *hwaddr,
-                                          const char   *s390_subchannels,
-                                          const char   *dhcp_plugin);
+int nm_match_spec_match_type_to_bool(NMMatchSpecMatchType m, int no_match_value);
+
+typedef struct _NMMatchSpecDeviceData {
+    const char *interface_name;
+    const char *device_type;
+    const char *driver;
+    const char *driver_version;
+    const char *dhcp_plugin;
+    const char *hwaddr;
+    const char *s390_subchannels;
+} NMMatchSpecDeviceData;
+
+NMMatchSpecMatchType nm_match_spec_device(const GSList *specs, const NMMatchSpecDeviceData *data);
+
 NMMatchSpecMatchType nm_match_spec_config(const GSList *specs, guint nm_version, const char *env);
 GSList              *nm_match_spec_split(const char *value);
 char                *nm_match_spec_join(GSList *specs);
@@ -262,18 +268,17 @@ _nmtst_auto_utils_host_id_context_pop(const char *const *unused)
     nmtst_utils_host_id_pop();
 }
 
-#define _NMTST_UTILS_HOST_ID_CONTEXT(uniq, host_id)                                        \
-    _nm_unused nm_auto(_nmtst_auto_utils_host_id_context_pop) const char *const NM_UNIQ_T( \
-        _host_id_context_,                                                                 \
-        uniq) = ({                                                                         \
-        const gint64 _timestamp_ns = 1631000672;                                           \
-                                                                                           \
-        nmtst_utils_host_id_push((const guint8 *) "" host_id "",                           \
-                                 NM_STRLEN(host_id),                                       \
-                                 TRUE,                                                     \
-                                 &_timestamp_ns);                                          \
-        "" host_id "";                                                                     \
-    })
+#define _NMTST_UTILS_HOST_ID_CONTEXT(uniq, host_id)                      \
+    _nm_unused            nm_auto(_nmtst_auto_utils_host_id_context_pop) \
+        const char *const NM_UNIQ_T(_host_id_context_, uniq) = ({        \
+            const gint64 _timestamp_ns = 1631000672;                     \
+                                                                         \
+            nmtst_utils_host_id_push((const guint8 *) "" host_id "",     \
+                                     NM_STRLEN(host_id),                 \
+                                     TRUE,                               \
+                                     &_timestamp_ns);                    \
+            "" host_id "";                                               \
+        })
 
 #define NMTST_UTILS_HOST_ID_CONTEXT(host_id) _NMTST_UTILS_HOST_ID_CONTEXT(NM_UNIQ, host_id)
 
@@ -308,7 +313,13 @@ NMUtilsStableType nm_utils_stable_id_parse(const char *stable_id,
                                            const char *hwaddr,
                                            const char *bootid,
                                            const char *uuid,
+                                           GBytes     *ssid,
                                            char      **out_generated);
+
+NMUtilsStableType nm_utils_stable_id_parse_network_ssid(GBytes     *ssid,
+                                                        const char *uuid,
+                                                        gboolean    complete,
+                                                        char      **out_stable_id);
 
 char *nm_utils_stable_id_random(void);
 char *nm_utils_stable_id_generated_complete(const char *msg);
@@ -450,6 +461,7 @@ const char *nm_utils_parse_dns_domain(const char *domain, gboolean *is_routing);
 void nm_wifi_utils_parse_ies(const guint8 *bytes,
                              gsize         len,
                              guint32      *out_max_rate,
+                             guint32      *out_bandwidth,
                              gboolean     *out_metered,
                              gboolean     *out_owe_transition_mode);
 

@@ -111,7 +111,6 @@ def mainloop_run(timeout_msec=0, mainloop=None):
 
 
 def connection_update2(remote_connection, connection):
-
     mainloop = GLib.MainLoop()
     result_error = []
 
@@ -160,7 +159,6 @@ def device_get_applied_connection(device):
 
 
 def device_reapply(device, connection, version_id):
-
     mainloop = GLib.MainLoop()
     result_error = []
 
@@ -236,11 +234,13 @@ DataTypeE = DataTypeTuple(
     NM.SettingOvsExternalIDs,
     NM.SETTING_OVS_EXTERNAL_IDS_DATA,
 )
+
+o = getattr(NM, "SettingOvsOtherConfig", None)
 DataTypeO = DataTypeTuple(
     "other-config",
     "ovs-other-config",
-    NM.SettingOvsOtherConfig,
-    NM.SETTING_OVS_OTHER_CONFIG_DATA,
+    o,
+    NM.SETTING_OVS_OTHER_CONFIG_DATA if o else None,
 )
 
 
@@ -420,12 +420,13 @@ def ids_select(ids, mode, ids_arg):
 
 def connection_print(connection, mode, ids_arg, dbus_path, prefix=""):
     def _num_str(connection, data_type):
+        if data_type.setting_type is None:
+            return "n/a"
         sett = connection.get_setting(data_type.setting_type)
-        num_str = "none"
-        if sett is not None:
-            all_ids = list(sett.get_data_keys())
-            num_str = "%s" % (len(all_ids))
-        return num_str
+        if sett is None:
+            return "none"
+        all_ids = list(sett.get_data_keys())
+        return "%s" % (len(all_ids),)
 
     _print(
         "%s%s [e:%s, o:%s]"
@@ -440,19 +441,17 @@ def connection_print(connection, mode, ids_arg, dbus_path, prefix=""):
         _print("%s   %s" % (prefix, dbus_path))
 
     for data_type in [DataTypeE, DataTypeO]:
+        if data_type.setting_type is None:
+            continue
 
         sett = connection.get_setting(data_type.setting_type)
-        if sett is not None:
-            all_ids = list(sett.get_data_keys())
-            keys, requested = ids_select(all_ids, mode, ids_arg)
-        else:
-            keys = []
-            requested = []
+        if sett is None:
+            continue
 
-        if sett is not None:
-            dd = sett.get_property(data_type.property_name)
-        else:
-            dd = {}
+        all_ids = list(sett.get_data_keys())
+        keys, requested = ids_select(all_ids, mode, ids_arg)
+
+        dd = sett.get_property(data_type.property_name)
         for k in keys:
             v = sett.get_data(k)
             assert v is not None
@@ -463,7 +462,6 @@ def connection_print(connection, mode, ids_arg, dbus_path, prefix=""):
 
 
 def sett_update(connection, ids_arg):
-
     for d in ids_arg:
         op = d[0][0]
         key = d[0][1:]
@@ -477,6 +475,11 @@ def sett_update(connection, ids_arg):
             key = key[2:]
         else:
             data_type = DataTypeE
+
+        if data_type.setting_type is None:
+            raise Exception(
+                "%s is not supported by this version of libnm" % (data_type.name,)
+            )
 
         sett = connection.get_setting(data_type.setting_type)
 
@@ -547,7 +550,6 @@ def do_get(connections, ids_arg):
 
 
 def do_set(nmc, connection, ids_arg, do_test):
-
     remote_connection = connection
     connection = NM.SimpleConnection.new_clone(remote_connection)
 
@@ -604,7 +606,6 @@ def do_set(nmc, connection, ids_arg, do_test):
 
 
 def do_apply(nmc, device, ids_arg, do_test):
-
     try:
         connection_orig, version_id = device_get_applied_connection(device)
     except Exception as e:
@@ -670,13 +671,11 @@ def do_apply(nmc, device, ids_arg, do_test):
 ###############################################################################
 
 if __name__ == "__main__":
-
     args = parse_args(sys.argv)
 
     nmc = NM.Client.new(None)
 
     if args["mode"] == MODE_APPLY:
-
         devices = devices_filter(nmc.get_devices(), args["select_arg"])
 
         if len(devices) != 1:
@@ -688,7 +687,6 @@ if __name__ == "__main__":
         do_apply(nmc, devices[0], args["ids_arg"], do_test=args["do_test"])
 
     else:
-
         connections = connections_filter(nmc.get_connections(), args["select_arg"])
 
         if args["mode"] == MODE_SET:

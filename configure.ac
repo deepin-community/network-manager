@@ -7,8 +7,8 @@ dnl  - add corresponding NM_VERSION_x_y_z macros in
 dnl    "shared/nm-version-macros.h.in"
 dnl  - update number in meson.build
 m4_define([nm_major_version], [1])
-m4_define([nm_minor_version], [42])
-m4_define([nm_micro_version], [4])
+m4_define([nm_minor_version], [46])
+m4_define([nm_micro_version], [0])
 m4_define([nm_version],
           [nm_major_version.nm_minor_version.nm_micro_version])
 
@@ -21,7 +21,7 @@ AC_CONFIG_MACRO_DIR([m4])
 AC_CONFIG_AUX_DIR([build-aux])
 AC_REQUIRE_AUX_FILE([tap-driver.sh])
 
-AM_INIT_AUTOMAKE(1.12 foreign tar-ustar no-dist-gzip dist-xz -Wno-portability)  dnl NB: Do not [quote] this parameter.
+AM_INIT_AUTOMAKE(1.12 foreign tar-pax no-dist-gzip dist-xz -Wno-portability)  dnl NB: Do not [quote] this parameter.
 AM_MAINTAINER_MODE([enable])
 AM_SILENT_RULES([yes])
 
@@ -120,6 +120,9 @@ AC_CHECK_DECLS([
 ]])
 
 AC_CHECK_HEADERS(sys/auxv.h)
+AC_CHECK_HEADERS(threads.h,
+                 [],
+                 [AC_DEFINE([HAVE_THREADS_H], [0], [Define to 1 if you have the <threads.h> header file.])])
 
 AC_CHECK_DECLS([getrandom],
                [AC_DEFINE([USE_SYS_RANDOM_H], [1], [sys/random.h is usable])
@@ -169,10 +172,9 @@ AC_SUBST(nmrundir, '${runstatedir}'/$PACKAGE, [NetworkManager runtime state dire
 AC_CHECK_FUNCS([__secure_getenv secure_getenv])
 
 # Alternative configuration plugins
-AC_ARG_ENABLE(ifcfg-rh, AS_HELP_STRING([--enable-ifcfg-rh], [enable ifcfg-rh configuration plugin (Fedora/RHEL)]))
+AC_ARG_ENABLE(ifcfg-rh, AS_HELP_STRING([--enable-ifcfg-rh], [enable ifcfg-rh configuration plugin (Fedora/RHEL) (deprecated)]))
 AC_ARG_ENABLE(ifupdown, AS_HELP_STRING([--enable-ifupdown], [enable ifupdown configuration plugin (Debian/Ubuntu)]))
 # Default alternative plugins by distribution
-AS_IF([test -z "$enable_ifcfg_rh" -a -d /etc/sysconfig/network-scripts], enable_ifcfg_rh=yes)
 AS_IF([test -z "$enable_ifupdown" -a -f /etc/debian_version],            enable_ifupdown=yes)
 # Otherwise, plugins default to "no"
 AS_IF([test -z "$enable_ifcfg_rh"], enable_ifcfg_rh=no)
@@ -271,13 +273,11 @@ AC_SEARCH_LIBS([dlopen], [dl dld],
 	[test "$ac_cv_search_dlopen" = "none required" || AC_SUBST([DL_LIBS], "$ac_cv_search_dlopen"]),
 	[])
 
-PKG_CHECK_MODULES(GLIB, [gio-unix-2.0 >= 2.37.6 gmodule-2.0],
-                  [AC_SUBST(LOG_DRIVER, '$(top_srcdir)/build-aux/tap-driver.sh')
-                   AC_SUBST(AM_TESTS_FD_REDIRECT, '--tap')],
-                  [PKG_CHECK_MODULES(GLIB, gio-unix-2.0 >= 2.40 gmodule-2.0)
-                   AC_SUBST(LOG_DRIVER, '$(top_srcdir)/build-aux/test-driver')])
+PKG_CHECK_MODULES(GLIB, [gio-unix-2.0 >= 2.42 gmodule-2.0])
 
-GLIB_CFLAGS="$GLIB_CFLAGS -DGLIB_VERSION_MIN_REQUIRED=GLIB_VERSION_2_40 -DGLIB_VERSION_MAX_ALLOWED=GLIB_VERSION_2_40"
+AC_SUBST(LOG_DRIVER, '$(top_srcdir)/build-aux/test-driver')
+
+GLIB_CFLAGS="$GLIB_CFLAGS -DGLIB_VERSION_MIN_REQUIRED=GLIB_VERSION_2_42 -DGLIB_VERSION_MAX_ALLOWED=GLIB_VERSION_2_42"
 
 AC_SUBST(GLIB_CFLAGS)
 AC_SUBST(GLIB_LIBS)
@@ -331,9 +331,6 @@ AM_CONDITIONAL(HAVE_SYSTEMD, [test "$with_systemdsystemunitdir" != no])
 if test "$with_systemdsystemunitdir" != no; then
 	AC_SUBST([systemdsystemunitdir], [$with_systemdsystemunitdir])
 fi
-
-PKG_CHECK_MODULES(SYSTEMD_200, [systemd >= 200], [have_systemd_200=yes], [have_systemd_200=no])
-AM_CONDITIONAL(HAVE_SYSTEMD_200, test "${have_systemd_200}" = "yes")
 
 # Hostname persist mode
 AC_ARG_WITH(hostname-persist,
@@ -406,6 +403,26 @@ fi
 AC_DEFINE_UNQUOTED(NM_CONFIG_DEFAULT_LOGGING_BACKEND, "$nm_config_logging_backend_default", [Default configuration option for logging.backend])
 NM_CONFIG_DEFAULT_LOGGING_BACKEND_TEXT="$nm_config_logging_backend_default"
 AC_SUBST(NM_CONFIG_DEFAULT_LOGGING_BACKEND_TEXT)
+
+AC_ARG_WITH(config-migrate-ifcfg-rh-default,
+            AS_HELP_STRING([--with-config-migrate-ifcfg-rh-default=yes|no],
+                           [Default value for main.migrate-ifcfg-rh]),
+            nm_config_migrate_ifcfg_rh_default="$withval",
+            nm_config_migrate_ifcfg_rh_default="no")
+
+if test "$nm_config_migrate_ifcfg_rh_default" = yes; then
+	if test "$enable_ifcfg_rh" = no; then
+		AC_MSG_ERROR([ifcfg-rh migration can be enabled by default only when the ifcfg-rh plugin is enabled])
+	fi
+	AC_DEFINE(NM_CONFIG_DEFAULT_MAIN_MIGRATE_IFCFG_RH, "true", [The default value of the main.migrate-ifcfg-rh configuration option])
+	NM_CONFIG_DEFAULT_MAIN_MIGRATE_IFCFG_RH_TEXT='true'
+elif test "$nm_config_migrate_ifcfg_rh_default" = no; then
+	AC_DEFINE(NM_CONFIG_DEFAULT_MAIN_MIGRATE_IFCFG_RH, "false", [The default value of the main.migrate-ifcfg-rh configuration option])
+	NM_CONFIG_DEFAULT_MAIN_MIGRATE_IFCFG_RH_TEXT='false'
+else
+	AC_MSG_ERROR([The value of --with-config-migrate-ifcfg-rh-default must be either "yes" or "no".])
+fi
+AC_SUBST(NM_CONFIG_DEFAULT_MAIN_MIGRATE_IFCFG_RH_TEXT)
 
 AC_ARG_WITH(config-wifi-backend-default,
             AS_HELP_STRING([--with-config-wifi-backend-default=backend],
@@ -754,13 +771,23 @@ fi
 AC_SUBST(DBUS_SYS_DIR)
 
 # pppd
+NM_PPP_VERSION_2_5_OR_NEWER=0
+PPPD_VERSION=2.4.9
+PKG_CHECK_EXISTS([pppd], [
+	PPPD_VERSION=`$PKG_CONFIG --modversion pppd`
+	PPPD_CFLAGS=`$PKG_CONFIG --cflags pppd`
+	NM_PPP_VERSION_2_5_OR_NEWER=1
+])
+
 AC_ARG_ENABLE(ppp,
               AS_HELP_STRING([--enable-ppp], [enable PPP/PPPoE support]),
               [enable_ppp=${enableval}], [enable_ppp=yes])
 if test "${enable_ppp}" = "yes"; then
-	AC_CHECK_HEADERS(pppd/pppd.h,,
-	                 AC_MSG_ERROR("couldn't find pppd.h. pppd development headers are required."))
-
+	if test -z "$PPPD_CFLAGS" ; then
+		AC_CHECK_HEADERS(pppd/pppd.h,,
+		                 AC_MSG_ERROR("couldn't find pppd.h. pppd development headers are required."),)
+	fi
+	AC_SUBST(PPPD_CFLAGS, ["$PPPD_CFLAGS"])
 	AC_DEFINE(WITH_PPP, 1, [Define if you have PPP support])
 else
 	AC_DEFINE(WITH_PPP, 0, [Define if you have PPP support])
@@ -769,13 +796,13 @@ AM_CONDITIONAL(WITH_PPP, test "${enable_ppp}" = "yes")
 
 AC_ARG_WITH([pppd-plugin-dir],
             AS_HELP_STRING([--with-pppd-plugin-dir=DIR], [path to the pppd plugins directory]))
-
 if test -n "$with_pppd_plugin_dir" ; then
 	PPPD_PLUGIN_DIR="$with_pppd_plugin_dir"
 else
-	PPPD_PLUGIN_DIR="${libdir}/pppd/2.4.5"
+	PPPD_PLUGIN_DIR="${libdir}/pppd/$PPPD_VERSION"
 fi
 AC_SUBST(PPPD_PLUGIN_DIR)
+AC_DEFINE_UNQUOTED(NM_PPP_VERSION_2_5_OR_NEWER, $NM_PPP_VERSION_2_5_OR_NEWER, [The detected ppp API version])
 
 AC_ARG_WITH(pppd, AS_HELP_STRING([--with-pppd=/path/to/pppd], [path to pppd binary]))
 if test "x${with_pppd}" = x; then
@@ -996,6 +1023,19 @@ fi
 AC_DEFINE_UNQUOTED(NFT_PATH, "$NFT_PATH", [Define to path of nft binary])
 AC_SUBST(NFT_PATH)
 
+AC_ARG_WITH(modprobe,
+			AS_HELP_STRING([--with-modprobe=/sbin/modprobe], [path to modprobe]))
+if test "x${with_modprobe}" = x; then
+	AC_PATH_PROG(MODPROBE_PATH, modprobe, [], $PATH:/sbin:/usr/sbin)
+	if test "x$MODPROBE_PATH" = x; then
+		MODPROBE_PATH='/sbin/modprobe'
+	fi
+else
+	MODPROBE_PATH="$with_modprobe"
+fi
+AC_DEFINE_UNQUOTED(MODPROBE_PATH, "$MODPROBE_PATH", [Define to path of modprobe binary])
+AC_SUBST(MODPROBE_PATH)
+
 AC_ARG_WITH(dnsmasq,
             AS_HELP_STRING([--with-dnsmasq=/path/to/dnsmasq], [path to dnsmasq]))
 if test "x${with_dnsmasq}" = x; then
@@ -1042,6 +1082,7 @@ else
 fi
 AM_CONDITIONAL(WITH_LIBPSL, test "$with_libpsl" != "no")
 
+have_libcurl=''
 
 AC_ARG_ENABLE(concheck,
               AS_HELP_STRING([--enable-concheck], [enable connectivity checking support]),
@@ -1065,12 +1106,12 @@ AC_ARG_WITH(nmcli,
             AS_HELP_STRING([--with-nmcli=yes|no], [Build nmcli]),
             [],
             [with_nmcli=yes])
-if test "$with_nmcli" == yes; then
+if test "$with_nmcli" = yes; then
     if test "$with_readline" = none; then
         AC_MSG_FAILURE([nmcli requires readline library. Use --with-readline or --with-nmcli=no])
     fi
     build_nmcli=yes
-elif test "$with_nmcli" == no; then
+elif test "$with_nmcli" = no; then
     build_nmcli=no
 else
     AC_MSG_ERROR([invalid --with-nmcli option. Valid options are --with-nmcli=yes|no])
@@ -1078,9 +1119,11 @@ fi
 AM_CONDITIONAL(BUILD_NMCLI, test "$build_nmcli" = yes)
 
 AC_ARG_WITH(nm-cloud-setup,
-            AS_HELP_STRING([--with-nm-cloud-setup=yes|no], [Build nm-cloud-setup, a tool for automatically configure networking in cloud (EXPERIMENTAL!)]))
+            AS_HELP_STRING([--with-nm-cloud-setup=yes|no], [Build nm-cloud-setup, a tool for automatically configuring networking in cloud]))
 if test "$with_nm_cloud_setup" != no; then
-	PKG_CHECK_MODULES(LIBCURL, [libcurl >= 7.24.0], [have_libcurl=yes], [have_libcurl=no])
+	if test "$have_libcurl" = ""; then
+		PKG_CHECK_MODULES(LIBCURL, [libcurl >= 7.24.0], [have_libcurl=yes], [have_libcurl=no])
+	fi
 	if test "$have_libcurl" != "yes"; then
 		AC_MSG_ERROR(--with-nm-cloud-setup requires libcurl library.)
 	fi
@@ -1407,10 +1450,12 @@ echo "  iwd: $ac_with_iwd"
 echo "  jansson: $have_jansson${JANSSON_SONAME:+ (soname: $JANSSON_SONAME)}"
 echo "  iptables: $IPTABLES_PATH"
 echo "  nft: $NFT_PATH"
+echo "  modprobe: $MODPROBE_PATH"
 echo
 
 echo "Configuration plugins (main.plugins=${config_plugins_default})"
 echo "  ifcfg-rh: ${enable_ifcfg_rh}"
+echo "    default value of main.migrate-ifcfg-rh: ${nm_config_migrate_ifcfg_rh_default}"
 echo "  ifupdown: ${enable_ifupdown}"
 echo
 

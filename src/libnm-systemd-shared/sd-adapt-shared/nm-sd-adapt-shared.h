@@ -12,11 +12,6 @@
 
 /*****************************************************************************/
 
-/* strerror() is not thread-safe. Patch systemd-sources via a define. */
-#define strerror(errsv) nm_strerror_native(errsv)
-
-/*****************************************************************************/
-
 /* systemd detects whether compiler supports "-Wstringop-truncation" to disable
  * the warning at particular places. Since we anyway build with -Wno-pragma,
  * we don't do that and just let systemd call
@@ -28,11 +23,13 @@
 
 /*****************************************************************************/
 
-#ifndef VALGRIND
-#define VALGRIND 0
-#endif
+#define HAVE_VALGRIND_VALGRIND_H 0
 
 #define ENABLE_DEBUG_HASHMAP 0
+
+#define SD_BOOT 0
+
+#define HAVE_SPLIT_USR 0
 
 /*****************************************************************************
  * The remainder of the header is only enabled when building the systemd code
@@ -45,7 +42,7 @@
 #include <sys/ioctl.h>
 #include <pthread.h>
 
-#define ENABLE_GSHADOW FALSE
+#define ENABLE_GSHADOW 0
 
 #define HAVE_SECCOMP 0
 

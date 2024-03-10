@@ -2231,7 +2231,7 @@ test_clear_master(void)
     s_con = nmtst_connection_assert_setting(connection, NM_TYPE_SETTING_CONNECTION);
 
     g_assert_cmpstr(nm_setting_connection_get_master(s_con), ==, "br0");
-    g_assert_cmpstr(nm_setting_connection_get_slave_type(s_con), ==, "bridge");
+    g_assert_cmpstr(nm_setting_connection_get_port_type(s_con), ==, "bridge");
 
     /* 2. write the connection to a new file */
     _writer_new_connec_exp(connection,
@@ -2248,7 +2248,7 @@ test_clear_master(void)
                  NULL);
 
     g_assert_cmpstr(nm_setting_connection_get_master(s_con), ==, NULL);
-    g_assert_cmpstr(nm_setting_connection_get_slave_type(s_con), ==, NULL);
+    g_assert_cmpstr(nm_setting_connection_get_port_type(s_con), ==, NULL);
 
     nmtst_assert_connection_verifies_after_normalization(connection, 0, 0);
 
@@ -3622,6 +3622,11 @@ test_roundtrip_ethtool(void)
 
             optname = nm_ethtool_data[ethtool_id]->optname;
             vtype   = nm_ethtool_id_get_variant_type(ethtool_id);
+
+            if (nm_ethtool_optname_is_channels(optname) || nm_ethtool_optname_is_eee(optname)) {
+                /* Not supported */
+                continue;
+            }
 
             if (NM_IN_SET(ethtool_id,
                           NM_ETHTOOL_ID_COALESCE_ADAPTIVE_RX,
@@ -7664,9 +7669,7 @@ test_read_bridge_component(void)
 
     s_con = nmtst_connection_assert_setting(connection, NM_TYPE_SETTING_CONNECTION);
     g_assert_cmpstr(nm_setting_connection_get_master(s_con), ==, "br0");
-    g_assert_cmpstr(nm_setting_connection_get_slave_type(s_con),
-                    ==,
-                    NM_SETTING_BRIDGE_SETTING_NAME);
+    g_assert_cmpstr(nm_setting_connection_get_port_type(s_con), ==, NM_SETTING_BRIDGE_SETTING_NAME);
 
     s_port = nmtst_connection_assert_setting(connection, NM_TYPE_SETTING_BRIDGE_PORT);
     g_assert(nm_setting_bridge_port_get_hairpin_mode(s_port));
@@ -8259,7 +8262,7 @@ test_read_bond_slave(void)
 
     g_assert_cmpstr(nm_setting_connection_get_master(s_con), ==, "bond0");
 
-    g_assert_cmpstr(nm_setting_connection_get_slave_type(s_con), ==, NM_SETTING_BOND_SETTING_NAME);
+    g_assert_cmpstr(nm_setting_connection_get_port_type(s_con), ==, NM_SETTING_BOND_SETTING_NAME);
 }
 
 static void
@@ -8315,7 +8318,7 @@ test_read_bond_port(void)
 
     s_con = nmtst_connection_assert_setting(connection, NM_TYPE_SETTING_CONNECTION);
     g_assert_cmpstr(nm_setting_connection_get_master(s_con), ==, "bond99");
-    g_assert_cmpstr(nm_setting_connection_get_slave_type(s_con), ==, NM_SETTING_BOND_SETTING_NAME);
+    g_assert_cmpstr(nm_setting_connection_get_port_type(s_con), ==, NM_SETTING_BOND_SETTING_NAME);
 
     s_port = nmtst_connection_assert_setting(connection, NM_TYPE_SETTING_BOND_PORT);
     g_assert_cmpuint(nm_setting_bond_port_get_queue_id(s_port), ==, 1);
@@ -8352,6 +8355,7 @@ test_write_bond_port(void)
 
     s_bond_port = _nm_connection_new_setting(connection, NM_TYPE_SETTING_BOND_PORT);
     g_object_set(s_bond_port, NM_SETTING_BOND_PORT_QUEUE_ID, 1, NULL);
+    g_object_set(s_bond_port, NM_SETTING_BOND_PORT_PRIO, 10, NULL);
 
     nmtst_assert_connection_verifies(connection);
 
@@ -8363,8 +8367,9 @@ test_write_bond_port(void)
 }
 
 static void
-test_read_infiniband(void)
+test_read_infiniband(gconstpointer test_data)
 {
+    const guint                   TEST_IDX   = GPOINTER_TO_UINT(test_data);
     gs_unref_object NMConnection *connection = NULL;
     NMSettingInfiniband          *s_infiniband;
     char                         *unmanaged = NULL;
@@ -8373,11 +8378,15 @@ test_read_infiniband(void)
                                                          0x66, 0x77, 0x88, 0x99, 0xaa, 0xbb, 0xcc,
                                                          0xdd, 0xee, 0xff, 0x00, 0x11, 0x22};
     const char *transport_mode;
+    const char *test_files[] = {
+        TEST_IFCFG_DIR "/ifcfg-test-infiniband0",
+        TEST_IFCFG_DIR "/ifcfg-test-infiniband1",
+        TEST_IFCFG_DIR "/ifcfg-test-infiniband2",
+    };
 
-    connection = _connection_from_file(TEST_IFCFG_DIR "/ifcfg-test-infiniband",
-                                       NULL,
-                                       TYPE_INFINIBAND,
-                                       &unmanaged);
+    g_assert(TEST_IDX < G_N_ELEMENTS(test_files));
+
+    connection = _connection_from_file(test_files[TEST_IDX], NULL, TYPE_INFINIBAND, &unmanaged);
     g_assert(!unmanaged);
 
     s_infiniband = nmtst_connection_assert_setting(connection, NM_TYPE_SETTING_INFINIBAND);
@@ -8389,6 +8398,25 @@ test_read_infiniband(void)
     transport_mode = nm_setting_infiniband_get_transport_mode(s_infiniband);
     g_assert(transport_mode);
     g_assert_cmpstr(transport_mode, ==, "connected");
+
+    nmtst_assert_connection_verifies_without_normalization(connection);
+
+    switch (TEST_IDX) {
+    case 0:
+        g_assert_cmpint(nm_setting_infiniband_get_p_key(s_infiniband), ==, -1);
+        g_assert_cmpstr(nm_setting_infiniband_get_parent(s_infiniband), ==, NULL);
+        g_assert_cmpstr(nm_connection_get_interface_name(connection), ==, "ib0");
+        break;
+    case 1:
+    case 2:
+        g_assert_cmpint(nm_setting_infiniband_get_p_key(s_infiniband), ==, 0x80c1);
+        g_assert_cmpstr(nm_setting_infiniband_get_parent(s_infiniband), ==, "ib0");
+        g_assert_cmpstr(nm_connection_get_interface_name(connection), ==, "ib0.80c1");
+        break;
+    default:
+        g_assert_not_reached();
+        break;
+    }
 }
 
 static void
@@ -8409,21 +8437,20 @@ test_read_ipoib(void)
     s_infiniband = nmtst_connection_assert_setting(connection, NM_TYPE_SETTING_INFINIBAND);
 
     pkey = nm_setting_infiniband_get_p_key(s_infiniband);
-    g_assert(pkey);
-    g_assert_cmpint(pkey, ==, 12);
+    g_assert_cmpint(pkey, ==, 0x800c);
 
     transport_mode = nm_setting_infiniband_get_transport_mode(s_infiniband);
-    g_assert(transport_mode);
     g_assert_cmpstr(transport_mode, ==, "connected");
 }
 
 static void
 test_write_infiniband(gconstpointer test_data)
 {
-    const int                     TEST_IDX   = GPOINTER_TO_INT(test_data);
-    nmtst_auto_unlinkfile char   *testfile   = NULL;
-    gs_unref_object NMConnection *connection = NULL;
-    gs_unref_object NMConnection *reread     = NULL;
+    const int                     TEST_IDX    = GPOINTER_TO_INT(test_data);
+    nmtst_auto_unlinkfile char   *testfile    = NULL;
+    gs_unref_object NMConnection *connection  = NULL;
+    gs_unref_object NMConnection *reread      = NULL;
+    gboolean                      reread_same = FALSE;
     NMSettingConnection          *s_con;
     NMSettingInfiniband          *s_infiniband;
     NMSettingIPConfig            *s_ip4;
@@ -8433,6 +8460,7 @@ test_write_infiniband(gconstpointer test_data)
     NMIPAddress *addr;
     GError      *error          = NULL;
     const char  *interface_name = NULL;
+    int          p_key;
 
     connection = nm_simple_connection_new();
 
@@ -8448,14 +8476,21 @@ test_write_infiniband(gconstpointer test_data)
                  NM_SETTING_INFINIBAND_SETTING_NAME,
                  NULL);
 
-    if (NM_IN_SET(TEST_IDX, 1, 3))
-        interface_name = "ib0.000c";
+    if (NM_IN_SET(TEST_IDX, 1, 2))
+        p_key = nmtst_get_rand_bool() ? 0x000c : 0x800c;
+    else
+        p_key = -1;
+
+    if (NM_IN_SET(TEST_IDX, 1, 3)) {
+        if (p_key >= 0x8000)
+            interface_name = "ib0.800c";
+    }
 
     g_object_set(s_con, NM_SETTING_CONNECTION_INTERFACE_NAME, interface_name, NULL);
 
     s_infiniband = _nm_connection_new_setting(connection, NM_TYPE_SETTING_INFINIBAND);
     g_object_set(s_infiniband, NM_SETTING_INFINIBAND_TRANSPORT_MODE, "connected", NULL);
-    if (NM_IN_SET(TEST_IDX, 1, 2)) {
+    if (p_key == -1) {
         g_object_set(s_infiniband,
                      NM_SETTING_INFINIBAND_MAC_ADDRESS,
                      mac,
@@ -8465,7 +8500,7 @@ test_write_infiniband(gconstpointer test_data)
     } else {
         g_object_set(s_infiniband,
                      NM_SETTING_INFINIBAND_P_KEY,
-                     12,
+                     p_key,
                      NM_SETTING_INFINIBAND_PARENT,
                      "ib0",
                      NULL);
@@ -8494,13 +8529,20 @@ test_write_infiniband(gconstpointer test_data)
 
     nmtst_assert_connection_verifies(connection);
 
-    _writer_new_connection(connection, TEST_SCRATCH_DIR, &testfile);
-
-    reread = _connection_from_file(testfile, NULL, TYPE_INFINIBAND, NULL);
-
-    nmtst_assert_connection_equals(connection, TRUE, reread, FALSE);
+    _writer_new_connection_reread(connection,
+                                  TEST_SCRATCH_DIR,
+                                  &testfile,
+                                  NO_EXPECTED,
+                                  &reread,
+                                  &reread_same);
+    _assert_reread_same(connection, reread);
+    g_assert(reread_same);
 
     g_assert_cmpstr(interface_name, ==, nm_connection_get_interface_name(reread));
+    g_assert_cmpint(nm_setting_infiniband_get_p_key(
+                        _nm_connection_get_setting(reread, NM_TYPE_SETTING_INFINIBAND)),
+                    ==,
+                    p_key);
 }
 
 static void
@@ -8515,7 +8557,7 @@ test_read_bond_slave_ib(void)
     s_con = nmtst_connection_assert_setting(connection, NM_TYPE_SETTING_CONNECTION);
 
     g_assert_cmpstr(nm_setting_connection_get_master(s_con), ==, "bond0");
-    g_assert_cmpstr(nm_setting_connection_get_slave_type(s_con), ==, NM_SETTING_BOND_SETTING_NAME);
+    g_assert_cmpstr(nm_setting_connection_get_port_type(s_con), ==, NM_SETTING_BOND_SETTING_NAME);
 }
 
 static void
@@ -10672,7 +10714,9 @@ main(int argc, char **argv)
 
     g_test_add_func(TPATH "wifi/read/wep-no-keys", test_read_wifi_wep_no_keys);
     g_test_add_func(TPATH "wifi/read/wep-agent-keys", test_read_wifi_wep_agent_keys);
-    g_test_add_func(TPATH "infiniband/read", test_read_infiniband);
+    g_test_add_data_func(TPATH "infiniband/read/0", GUINT_TO_POINTER(0), test_read_infiniband);
+    g_test_add_data_func(TPATH "infiniband/read/1", GUINT_TO_POINTER(1), test_read_infiniband);
+    g_test_add_data_func(TPATH "infiniband/read/2", GUINT_TO_POINTER(2), test_read_infiniband);
     g_test_add_func(TPATH "ipoib/read", test_read_ipoib);
     g_test_add_func(TPATH "vlan/read", test_read_vlan_interface);
     g_test_add_func(TPATH "vlan/read-flags-1", test_read_vlan_flags_1);

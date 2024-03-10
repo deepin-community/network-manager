@@ -143,7 +143,7 @@ nm_vpn_plugin_info_check_file_full(const char               *filename,
  *   other users.
  * @check_file: pass a callback to do your own validation.
  * @user_data: user data for @check_file.
- * @error: (allow-none) (out): the error reason if the check fails.
+ * @error: the error reason if the check fails.
  *
  * Check whether the file exists and is a valid name file (in keyfile format).
  * Additionally, also check for file permissions.
@@ -181,8 +181,8 @@ _sort_files(LoadDirInfo *a, LoadDirInfo *b)
 {
     time_t ta, tb;
 
-    ta = MAX(a->stat.st_mtime, a->stat.st_ctime);
-    tb = MAX(b->stat.st_mtime, b->stat.st_ctime);
+    ta = NM_MAX(a->stat.st_mtime, a->stat.st_ctime);
+    tb = NM_MAX(b->stat.st_mtime, b->stat.st_ctime);
     if (ta < tb)
         return 1;
     if (ta > tb)
@@ -236,7 +236,7 @@ _nm_vpn_plugin_info_get_default_dir_user(void)
  * @check_owner: if set to a non-negative number, check that the file
  *   owner is either the same uid or 0. In that case, also check
  *   that the file is not writable by group or other.
- * @check_file: (allow-none): callback to check whether the file is valid.
+ * @check_file: (nullable): callback to check whether the file is valid.
  * @user_data: data for @check_file
  *
  * Iterate over the content of @dirname and load name files.
@@ -337,7 +337,7 @@ nm_vpn_plugin_info_list_load(void)
     uid = getuid();
 
     for (i = 0; i < G_N_ELEMENTS(dir); i++) {
-        if (!dir[i] || nm_strv_find_first(dir, i, dir[i]) >= 0)
+        if (!dir[i] || nm_strv_contains(dir, i, dir[i]))
             continue;
 
         infos = _nm_vpn_plugin_info_list_load_dir(dir[i], TRUE, uid, NULL, NULL);
@@ -352,16 +352,16 @@ nm_vpn_plugin_info_list_load(void)
 
 /**
  * nm_vpn_plugin_info_new_search_file:
- * @name: (allow-none): the name to search for. Either @name or @service
+ * @name: (nullable): the name to search for. Either @name or @service
  *   must be present.
- * @service: (allow-none): the service to search for. Either @name  or
+ * @service: (nullable): the service to search for. Either @name  or
  *   @service must be present.
  *
  * This has the same effect as doing a full nm_vpn_plugin_info_list_load()
  * followed by a search for the first matching VPN plugin info that has the
  * given @name and/or @service.
  *
- * Returns: (transfer full): a newly created instance of plugin info
+ * Returns: (transfer full) (nullable): a newly created instance of plugin info
  *   or %NULL if no matching value was found.
  *
  * Since: 1.4
@@ -552,7 +552,7 @@ _list_find_by_service(GSList *list, const char *name, const char *service)
         if (name && !nm_streq(name, priv->name))
             continue;
         if (service && !nm_streq(priv->service, service)
-            && (nm_strv_find_first(priv->aliases, -1, service) < 0))
+            && !nm_strv_contains(priv->aliases, -1, service))
             continue;
 
         return list->data;
@@ -639,7 +639,7 @@ nm_vpn_plugin_info_list_find_service_type(GSList *list, const char *name)
 
     /* check the hard-coded list of short-names. They all have the same
      * well-known prefix org.freedesktop.NetworkManager and the name. */
-    if (nm_strv_find_first(known_names, G_N_ELEMENTS(known_names), name) >= 0)
+    if (nm_strv_contains(known_names, G_N_ELEMENTS(known_names), name))
         return g_strdup_printf("%s.%s", NM_DBUS_INTERFACE, name);
 
     /* try, if there exists a plugin with @name under org.freedesktop.NetworkManager.
@@ -728,7 +728,7 @@ nm_vpn_plugin_info_list_get_service_types(GSList  *list,
 
     if (l->len <= 0) {
         g_ptr_array_free(l, TRUE);
-        return g_new0(char *, 1);
+        return nm_strv_empty_new();
     }
 
     /* sort the result and remove duplicates. */
@@ -987,7 +987,7 @@ nm_vpn_plugin_info_get_editor_plugin(NMVpnPluginInfo *self)
 /**
  * nm_vpn_plugin_info_set_editor_plugin:
  * @self: plugin info instance
- * @plugin: (allow-none): plugin instance
+ * @plugin: (nullable): plugin instance
  *
  * Set the internal plugin instance. If %NULL, only clear the previous instance.
  *

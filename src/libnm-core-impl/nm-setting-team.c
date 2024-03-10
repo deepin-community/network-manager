@@ -123,6 +123,7 @@ nm_team_link_watcher_new_ethtool(int delay_up, int delay_down, GError **error)
     }
 
     NM_PRAGMA_WARNING_DISABLE("-Warray-bounds")
+    NM_PRAGMA_WARNING_DISABLE("-Walloc-size")
 
     watcher = g_malloc(nm_offsetofend(NMTeamLinkWatcher, ethtool));
 
@@ -131,6 +132,7 @@ nm_team_link_watcher_new_ethtool(int delay_up, int delay_down, GError **error)
     watcher->ethtool.delay_up   = delay_up;
     watcher->ethtool.delay_down = delay_down;
 
+    NM_PRAGMA_WARNING_REENABLE
     NM_PRAGMA_WARNING_REENABLE
 
     return watcher;
@@ -143,7 +145,7 @@ nm_team_link_watcher_new_ethtool(int delay_up, int delay_down, GError **error)
  * @missed_max: missed_max value
  * @target_host: the host name or the ipv6 address that will be used as
  *   target address in the NS packet
- * @error: (out) (allow-none): location to store the error on failure
+ * @error: location to store the error on failure
  *
  * Creates a new nsna_ping #NMTeamLinkWatcher object
  *
@@ -223,7 +225,7 @@ nm_team_link_watcher_new_nsna_ping(int         init_wait,
  * @source_host: the host name or the ip address that will be used as source
  *   address in the arp request
  * @flags: the watcher #NMTeamLinkWatcherArpPingFlags
- * @error: (out) (allow-none): location to store the error on failure
+ * @error: location to store the error on failure
  *
  * Creates a new arp_ping #NMTeamLinkWatcher object
  *
@@ -261,7 +263,7 @@ nm_team_link_watcher_new_arp_ping(int                           init_wait,
  * @source_host: the host name or the ip address that will be used as source
  *   address in the arp request
  * @flags: the watcher #NMTeamLinkWatcherArpPingFlags
- * @error: (out) (allow-none): location to store the error on failure
+ * @error: location to store the error on failure
  *
  * Creates a new arp_ping #NMTeamLinkWatcher object
  *
@@ -745,20 +747,18 @@ typedef struct {
  * Teaming Settings
  */
 struct _NMSettingTeam {
-    NMSetting parent;
-    /* In the past, this struct was public API. Preserve ABI! */
+    NMSetting            parent;
+    NMSettingTeamPrivate _priv;
 };
 
 struct _NMSettingTeamClass {
     NMSettingClass parent;
-    /* In the past, this struct was public API. Preserve ABI! */
-    gpointer padding[4];
 };
 
 G_DEFINE_TYPE(NMSettingTeam, nm_setting_team, NM_TYPE_SETTING)
 
 #define NM_SETTING_TEAM_GET_PRIVATE(o) \
-    (G_TYPE_INSTANCE_GET_PRIVATE((o), NM_TYPE_SETTING_TEAM, NMSettingTeamPrivate))
+    _NM_GET_PRIVATE(o, NMSettingTeam, NM_IS_SETTING_TEAM, NMSetting)
 
 /*****************************************************************************/
 
@@ -1386,8 +1386,7 @@ get_property(GObject *object, guint prop_id, GValue *value, GParamSpec *pspec)
         break;
     case NM_TEAM_ATTRIBUTE_MASTER_RUNNER_TX_HASH:
         v_ptrarr = priv->team_setting->d.master.runner_tx_hash;
-        g_value_take_boxed(value,
-                           v_ptrarr ? _nm_utils_ptrarray_to_strv((GPtrArray *) v_ptrarr) : NULL);
+        g_value_take_boxed(value, nm_strv_ptrarray_to_strv_full(v_ptrarr, FALSE));
         break;
     case NM_TEAM_ATTRIBUTE_LINK_WATCHERS:
         g_value_take_boxed(value,
@@ -1497,8 +1496,6 @@ nm_setting_team_class_init(NMSettingTeamClass *klass)
     GObjectClass   *object_class        = G_OBJECT_CLASS(klass);
     NMSettingClass *setting_class       = NM_SETTING_CLASS(klass);
     GArray         *properties_override = _nm_sett_info_property_override_create_array();
-
-    g_type_class_add_private(klass, sizeof(NMSettingTeamPrivate));
 
     object_class->get_property = get_property;
     object_class->set_property = set_property;
@@ -1842,5 +1839,5 @@ nm_setting_team_class_init(NMSettingTeamClass *klass)
                              NM_META_SETTING_TYPE_TEAM,
                              NULL,
                              properties_override,
-                             NM_SETT_INFO_PRIVATE_OFFSET_FROM_CLASS);
+                             G_STRUCT_OFFSET(NMSettingTeam, _priv));
 }

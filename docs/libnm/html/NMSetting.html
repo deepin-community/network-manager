@@ -58,14 +58,6 @@
 </tr>
 <tr>
 <td class="function_type">
-<a href="https://developer.gnome.org/glib/unstable/glib-Basic-Types.html#gboolean"><span class="returnvalue">gboolean</span></a>
-</td>
-<td class="function_name">
-<span class="c_punctuation">(</span><a class="link" href="NMSetting.html#NMConnectionForEachSecretFunc" title="_NMConnectionForEachSecretFunc ()">*_NMConnectionForEachSecretFunc</a><span class="c_punctuation">)</span> <span class="c_punctuation">()</span>
-</td>
-</tr>
-<tr>
-<td class="function_type">
 <a href="https://developer.gnome.org/gobject/unstable/gobject-Type-Information.html#GType"><span class="returnvalue">GType</span></a>
 </td>
 <td class="function_name">
@@ -219,6 +211,14 @@
 </td>
 <td class="function_name">
 <a class="link" href="NMSetting.html#nm-setting-get-dbus-property-type" title="nm_setting_get_dbus_property_type ()">nm_setting_get_dbus_property_type</a> <span class="c_punctuation">()</span>
+</td>
+</tr>
+<tr>
+<td class="function_type">
+<a href="https://developer.gnome.org/gobject/unstable/gobject-Type-Information.html#GType"><span class="returnvalue">GType</span></a>
+</td>
+<td class="function_name">
+<a class="link" href="NMSetting.html#nm-setting-get-enum-property-type" title="nm_setting_get_enum_property_type ()">nm_setting_get_enum_property_type</a> <span class="c_punctuation">()</span>
 </td>
 </tr>
 <tr>
@@ -440,13 +440,6 @@ of properties and allowed values.</p>
 </div>
 <hr>
 <div class="refsect2">
-<a name="NMConnectionForEachSecretFunc"></a><h3>_NMConnectionForEachSecretFunc ()</h3>
-<pre class="programlisting"><a href="https://developer.gnome.org/glib/unstable/glib-Basic-Types.html#gboolean"><span class="returnvalue">gboolean</span></a>
-<span class="c_punctuation">(</span>*_NMConnectionForEachSecretFunc<span class="c_punctuation">)</span> (<em class="parameter"><code><a class="link" href="NMSetting.html#NMSettingSecretFlags" title="enum NMSettingSecretFlags"><span class="type">NMSettingSecretFlags</span></a> flags</code></em>,
-                                   <em class="parameter"><code><a href="https://developer.gnome.org/glib/unstable/glib-Basic-Types.html#gpointer"><span class="type">gpointer</span></a> user_data</code></em>);</pre>
-</div>
-<hr>
-<div class="refsect2">
 <a name="nm-setting-lookup-type"></a><h3>nm_setting_lookup_type ()</h3>
 <pre class="programlisting"><a href="https://developer.gnome.org/gobject/unstable/gobject-Type-Information.html#GType"><span class="returnvalue">GType</span></a>
 nm_setting_lookup_type (<em class="parameter"><code>const <span class="type">char</span> *name</code></em>);</pre>
@@ -560,7 +553,7 @@ failed validation, and in what way that property failed validation.</p>
 came from, or
 <a href="https://developer.gnome.org/glib/unstable/glib-Standard-Macros.html#NULL:CAPS"><code class="literal">NULL</code></a> if <em class="parameter"><code>setting</code></em>
 is being verified in isolation. </p></td>
-<td class="parameter_annotations"><span class="annotation">[<acronym title="NULL is OK, both for passing and for returning."><span class="acronym">allow-none</span></acronym>]</span></td>
+<td class="parameter_annotations"><span class="annotation">[<acronym title="NULL may be passed as the value in, out, in-out; or as a return value."><span class="acronym">nullable</span></acronym>]</span></td>
 </tr>
 <tr>
 <td class="parameter_name"><p>error</p></td>
@@ -607,7 +600,7 @@ in some cases connection failure is not desired just for the secrets.</p>
 came from, or
 <a href="https://developer.gnome.org/glib/unstable/glib-Standard-Macros.html#NULL:CAPS"><code class="literal">NULL</code></a> if <em class="parameter"><code>setting</code></em>
 is being verified in isolation. </p></td>
-<td class="parameter_annotations"><span class="annotation">[<acronym title="NULL is OK, both for passing and for returning."><span class="acronym">allow-none</span></acronym>]</span></td>
+<td class="parameter_annotations"><span class="annotation">[<acronym title="NULL may be passed as the value in, out, in-out; or as a return value."><span class="acronym">nullable</span></acronym>]</span></td>
 </tr>
 <tr>
 <td class="parameter_name"><p>error</p></td>
@@ -958,7 +951,7 @@ nm_setting_option_get_boolean (<em class="parameter"><code><a class="link" href=
 <td class="parameter_name"><p>out_value</p></td>
 <td class="parameter_description"><p>the optional output value.
 If the option is unset, <a href="https://developer.gnome.org/glib/unstable/glib-Standard-Macros.html#FALSE:CAPS"><code class="literal">FALSE</code></a> will be returned. </p></td>
-<td class="parameter_annotations"><span class="annotation">[<acronym title="NULL is OK, both for passing and for returning."><span class="acronym">allow-none</span></acronym>][<acronym title="Parameter for returning results. Default is transfer full."><span class="acronym">out</span></acronym>]</span></td>
+<td class="parameter_annotations"><span class="annotation">[<acronym title="Parameter for returning results. Default is transfer full."><span class="acronym">out</span></acronym>][<acronym title="NULL may be passed as the value in, out, in-out; or as a return value."><span class="acronym">nullable</span></acronym>]</span></td>
 </tr>
 </tbody>
 </table></div>
@@ -1000,7 +993,7 @@ nm_setting_option_get_uint32 (<em class="parameter"><code><a class="link" href="
 <td class="parameter_name"><p>out_value</p></td>
 <td class="parameter_description"><p>the optional output value.
 If the option is unset, 0 will be returned. </p></td>
-<td class="parameter_annotations"><span class="annotation">[<acronym title="NULL is OK, both for passing and for returning."><span class="acronym">allow-none</span></acronym>][<acronym title="Parameter for returning results. Default is transfer full."><span class="acronym">out</span></acronym>]</span></td>
+<td class="parameter_annotations"><span class="annotation">[<acronym title="Parameter for returning results. Default is transfer full."><span class="acronym">out</span></acronym>][<acronym title="NULL may be passed as the value in, out, in-out; or as a return value."><span class="acronym">nullable</span></acronym>]</span></td>
 </tr>
 </tbody>
 </table></div>
@@ -1050,7 +1043,7 @@ Currently, only <a class="link" href="NMSettingEthtool.html" title="NMSettingEth
 <tr>
 <td class="parameter_name"><p>variant</p></td>
 <td class="parameter_description"><p>the variant to set. </p></td>
-<td class="parameter_annotations"><span class="annotation">[<acronym title="NULL is OK, both for passing and for returning."><span class="acronym">allow-none</span></acronym>]</span></td>
+<td class="parameter_annotations"><span class="annotation">[<acronym title="NULL may be passed as the value in, out, in-out; or as a return value."><span class="acronym">nullable</span></acronym>]</span></td>
 </tr>
 </tbody>
 </table></div>
@@ -1145,7 +1138,7 @@ nm_setting_option_get_all_names (<em class="parameter"><code><a class="link" hre
 <tr>
 <td class="parameter_name"><p>out_len</p></td>
 <td class="parameter_description"><p>. </p></td>
-<td class="parameter_annotations"><span class="annotation">[<acronym title="NULL is OK, both for passing and for returning."><span class="acronym">allow-none</span></acronym>][<acronym title="Parameter for returning results. Default is transfer full."><span class="acronym">out</span></acronym>]</span></td>
+<td class="parameter_annotations"><span class="annotation">[<acronym title="Parameter for returning results. Default is transfer full."><span class="acronym">out</span></acronym>][<acronym title="NULL may be passed instead of a pointer to a location."><span class="acronym">optional</span></acronym>]</span></td>
 </tr>
 </tbody>
 </table></div>
@@ -1155,7 +1148,7 @@ nm_setting_option_get_all_names (<em class="parameter"><code><a class="link" hre
 <p>A <a href="https://developer.gnome.org/glib/unstable/glib-Standard-Macros.html#NULL:CAPS"><code class="literal">NULL</code></a> terminated array of key names. If no names are present, this returns
 <a href="https://developer.gnome.org/glib/unstable/glib-Standard-Macros.html#NULL:CAPS"><code class="literal">NULL</code></a>. The returned array and the names are owned by <a class="link" href="NMSetting.html" title="NMSetting"><code class="literal">NMSetting</code></a> and might be invalidated
 by the next operation. </p>
-<p><span class="annotation">[<acronym title="Parameter points to an array of items."><span class="acronym">array</span></acronym> length=out_len zero-terminated=1][<acronym title="The data is owned by the callee, which is responsible of freeing it."><span class="acronym">transfer none</span></acronym>]</span></p>
+<p><span class="annotation">[<acronym title="Parameter points to an array of items."><span class="acronym">array</span></acronym> length=out_len zero-terminated=1][<acronym title="The data is owned by the callee, which is responsible of freeing it."><span class="acronym">transfer none</span></acronym>][<acronym title="NULL may be passed as the value in, out, in-out; or as a return value."><span class="acronym">nullable</span></acronym>]</span></p>
 </div>
 <p class="since">Since: 1.26</p>
 </div>
@@ -1185,7 +1178,7 @@ nm_setting_option_clear_by_name (<em class="parameter"><code><a class="link" hre
 should be clear.
 If the predicate returns <a href="https://developer.gnome.org/glib/unstable/glib-Standard-Macros.html#TRUE:CAPS"><code class="literal">TRUE</code></a> for an option name, the option
 gets removed. If <a href="https://developer.gnome.org/glib/unstable/glib-Standard-Macros.html#NULL:CAPS"><code class="literal">NULL</code></a>, all options will be removed. </p></td>
-<td class="parameter_annotations"><span class="annotation">[<acronym title="NULL is OK, both for passing and for returning."><span class="acronym">allow-none</span></acronym>][<acronym title="The callback is valid only during the call to the method."><span class="acronym">scope call</span></acronym>]</span></td>
+<td class="parameter_annotations"><span class="annotation">[<acronym title="NULL may be passed as the value in, out, in-out; or as a return value."><span class="acronym">nullable</span></acronym>][<acronym title="The callback is valid only during the call to the method."><span class="acronym">scope call</span></acronym>]</span></td>
 </tr>
 </tbody>
 </table></div>
@@ -1230,6 +1223,47 @@ to get the type of</p></td>
 on <em class="parameter"><code>setting</code></em>
 .</p>
 </div>
+</div>
+<hr>
+<div class="refsect2">
+<a name="nm-setting-get-enum-property-type"></a><h3>nm_setting_get_enum_property_type ()</h3>
+<pre class="programlisting"><a href="https://developer.gnome.org/gobject/unstable/gobject-Type-Information.html#GType"><span class="returnvalue">GType</span></a>
+nm_setting_get_enum_property_type (<em class="parameter"><code><a href="https://developer.gnome.org/gobject/unstable/gobject-Type-Information.html#GType"><span class="type">GType</span></a> setting_type</code></em>,
+                                   <em class="parameter"><code>const <span class="type">char</span> *property_name</code></em>);</pre>
+<p>Get the type of the enum that defines the values that the property accepts. It is only
+useful for properties configured to accept values from certain enum type, otherwise
+it will return <a href="https://developer.gnome.org/gobject/unstable/gobject-Type-Information.html#G-TYPE-INVALID:CAPS"><code class="literal">G_TYPE_INVALID</code></a>. Note that flags (children of G_TYPE_FLAGS) are also
+considered enums.</p>
+<p>Note that the GObject property might be implemented as an integer, actually, and not
+as enum. Find out what underlying type is used, checking the <a href="https://developer.gnome.org/gobject/unstable/gobject-GParamSpec.html#GParamSpec"><span class="type">GParamSpec</span></a>, before
+setting the GObject property.</p>
+<div class="refsect3">
+<a name="nm-setting-get-enum-property-type.parameters"></a><h4>Parameters</h4>
+<div class="informaltable"><table class="informaltable" width="100%" border="0">
+<colgroup>
+<col width="150px" class="parameters_name">
+<col class="parameters_description">
+<col width="200px" class="parameters_annotations">
+</colgroup>
+<tbody>
+<tr>
+<td class="parameter_name"><p>setting_type</p></td>
+<td class="parameter_description"><p>the GType of the NMSetting instance</p></td>
+<td class="parameter_annotations"> </td>
+</tr>
+<tr>
+<td class="parameter_name"><p>property_name</p></td>
+<td class="parameter_description"><p>the name of the property</p></td>
+<td class="parameter_annotations"> </td>
+</tr>
+</tbody>
+</table></div>
+</div>
+<div class="refsect3">
+<a name="nm-setting-get-enum-property-type.returns"></a><h4>Returns</h4>
+<p> the enum's GType, or <a href="https://developer.gnome.org/gobject/unstable/gobject-Type-Information.html#G-TYPE-INVALID:CAPS"><code class="literal">G_TYPE_INVALID</code></a> if the property is not of enum type</p>
+</div>
+<p class="since">Since: 1.46</p>
 </div>
 <hr>
 <div class="refsect2">
@@ -1457,8 +1491,8 @@ instance.</p>
 </tr>
 <tr>
 <td class="parameter_name"><p>error</p></td>
-<td class="parameter_description"><p>location to store the error on failure. </p></td>
-<td class="parameter_annotations"><span class="annotation">[<acronym title="Parameter for returning results. Default is transfer full."><span class="acronym">out</span></acronym>][<acronym title="NULL is OK, both for passing and for returning."><span class="acronym">allow-none</span></acronym>]</span></td>
+<td class="parameter_description"><p>location to store the error on failure</p></td>
+<td class="parameter_annotations"> </td>
 </tr>
 </tbody>
 </table></div>

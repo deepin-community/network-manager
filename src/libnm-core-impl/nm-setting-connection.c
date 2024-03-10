@@ -56,8 +56,11 @@ NM_GOBJECT_PROPERTIES_DEFINE(NMSettingConnection,
                              PROP_READ_ONLY,
                              PROP_ZONE,
                              PROP_MASTER,
+                             PROP_CONTROLLER,
                              PROP_SLAVE_TYPE,
+                             PROP_PORT_TYPE,
                              PROP_AUTOCONNECT_SLAVES,
+                             PROP_AUTOCONNECT_PORTS,
                              PROP_SECONDARIES,
                              PROP_GATEWAY_PING_TIMEOUT,
                              PROP_METERED,
@@ -80,12 +83,12 @@ typedef struct {
     char       *stable_id;
     char       *interface_name;
     char       *type;
-    char       *master;
-    char       *slave_type;
+    char       *controller;
+    char       *port_type;
     char       *zone;
     char       *mud_url;
     guint64     timestamp;
-    int         autoconnect_slaves;
+    int         autoconnect_ports;
     int         metered;
     gint32      autoconnect_priority;
     gint32      autoconnect_retries;
@@ -109,20 +112,18 @@ typedef struct {
  * General Connection Profile Settings
  */
 struct _NMSettingConnection {
-    NMSetting parent;
-    /* In the past, this struct was public API. Preserve ABI! */
+    NMSetting                  parent;
+    NMSettingConnectionPrivate _priv;
 };
 
 struct _NMSettingConnectionClass {
     NMSettingClass parent;
-    /* In the past, this struct was public API. Preserve ABI! */
-    gpointer padding[4];
 };
 
 G_DEFINE_TYPE(NMSettingConnection, nm_setting_connection, NM_TYPE_SETTING)
 
 #define NM_SETTING_CONNECTION_GET_PRIVATE(o) \
-    (G_TYPE_INSTANCE_GET_PRIVATE((o), NM_TYPE_SETTING_CONNECTION, NMSettingConnectionPrivate))
+    _NM_GET_PRIVATE(o, NMSettingConnection, NM_IS_SETTING_CONNECTION, NMSetting)
 
 /*****************************************************************************/
 
@@ -357,6 +358,44 @@ invalid:
     return TRUE;
 }
 
+static gboolean
+_permissions_user_allowed(NMSettingConnection *setting, const char *uname, gulong uid)
+{
+    gs_free struct passwd      *pw = NULL;
+    NMSettingConnectionPrivate *priv;
+    guint                       i;
+
+    nm_assert(NM_IS_SETTING_CONNECTION(setting));
+
+    priv = NM_SETTING_CONNECTION_GET_PRIVATE(setting);
+
+    if (nm_g_array_len(priv->permissions) == 0) {
+        /* If no permissions, visible to all */
+        return TRUE;
+    }
+
+    for (i = 0; i < priv->permissions->len; i++) {
+        const Permission *permission = &nm_g_array_index(priv->permissions, Permission, i);
+
+        if (permission->ptype != PERM_TYPE_USER)
+            continue;
+
+        if (!uname) {
+            if (uid != G_MAXULONG) {
+                pw    = nm_getpwuid(uid);
+                uname = nm_passwd_name(pw);
+            }
+            if (!uname)
+                return FALSE;
+        }
+
+        if (nm_streq(permission->item, uname))
+            return TRUE;
+    }
+
+    return FALSE;
+}
+
 /**
  * nm_setting_connection_permissions_user_allowed:
  * @setting: the #NMSettingConnection
@@ -370,27 +409,18 @@ invalid:
 gboolean
 nm_setting_connection_permissions_user_allowed(NMSettingConnection *setting, const char *uname)
 {
-    NMSettingConnectionPrivate *priv;
-    guint                       i;
-
     g_return_val_if_fail(NM_IS_SETTING_CONNECTION(setting), FALSE);
     g_return_val_if_fail(uname != NULL, FALSE);
 
-    priv = NM_SETTING_CONNECTION_GET_PRIVATE(setting);
+    return _permissions_user_allowed(setting, uname, G_MAXULONG);
+}
 
-    if (nm_g_array_len(priv->permissions) == 0) {
-        /* If no permissions, visible to all */
-        return TRUE;
-    }
+gboolean
+nm_setting_connection_permissions_user_allowed_by_uid(NMSettingConnection *setting, gulong uid)
+{
+    g_return_val_if_fail(NM_IS_SETTING_CONNECTION(setting), FALSE);
 
-    for (i = 0; i < priv->permissions->len; i++) {
-        const Permission *permission = &nm_g_array_index(priv->permissions, Permission, i);
-
-        if (permission->ptype == PERM_TYPE_USER && nm_streq(permission->item, uname))
-            return TRUE;
-    }
-
-    return FALSE;
+    return _permissions_user_allowed(setting, NULL, uid);
 }
 
 /**
@@ -398,7 +428,7 @@ nm_setting_connection_permissions_user_allowed(NMSettingConnection *setting, con
  * @setting: the #NMSettingConnection
  * @ptype: the permission type; at this time only "user" is supported
  * @pitem: the permission item formatted as required for @ptype
- * @detail: (allow-none): unused at this time; must be %NULL
+ * @detail: (nullable): unused at this time; must be %NULL
  *
  * Adds a permission to the connection's permission list.  At this time, only
  * the "user" permission type is supported, and @pitem must be a username. See
@@ -481,7 +511,7 @@ nm_setting_connection_remove_permission(NMSettingConnection *setting, guint32 id
  * @setting: the #NMSettingConnection
  * @ptype: the permission type; at this time only "user" is supported
  * @pitem: the permission item formatted as required for @ptype
- * @detail: (allow-none): unused at this time; must be %NULL
+ * @detail: (nullable): unused at this time; must be %NULL
  *
  * Removes the permission from the connection.
  * At this time, only the "user" permission type is supported, and @pitem must
@@ -647,6 +677,8 @@ _to_dbus_fcn_timestamp(_NM_SETT_INFO_PROP_TO_DBUS_FCN_ARGS _nm_nil)
  * Returns the #NMSettingConnection:read-only property of the connection.
  *
  * Returns: %TRUE if the connection is read-only, %FALSE if it is not
+ *
+ * Deprecated: 1.44: This property is deprecated and has no meaning.
  **/
 gboolean
 nm_setting_connection_get_read_only(NMSettingConnection *setting)
@@ -680,13 +712,51 @@ nm_setting_connection_get_zone(NMSettingConnection *setting)
  *
  * Returns: interface name of the master device or UUID of the master
  * connection.
+ *
+ * Deprecated: 1.46. Use nm_setting_connection_get_controller() instead which
+ * is just an alias.
  */
 const char *
 nm_setting_connection_get_master(NMSettingConnection *setting)
 {
+    return nm_setting_connection_get_controller(setting);
+}
+
+/**
+ * nm_setting_connection_get_controller:
+ * @setting: the #NMSettingConnection
+ *
+ * Returns the #NMSettingConnection:controller property of the connection.
+ *
+ * Returns: interface name of the controller device or UUID of the controller
+ * connection.
+ *
+ * Since: 1.46
+ */
+const char *
+nm_setting_connection_get_controller(NMSettingConnection *setting)
+{
     g_return_val_if_fail(NM_IS_SETTING_CONNECTION(setting), NULL);
 
-    return NM_SETTING_CONNECTION_GET_PRIVATE(setting)->master;
+    return NM_SETTING_CONNECTION_GET_PRIVATE(setting)->controller;
+}
+
+/**
+ * nm_setting_connection_get_port_type:
+ * @setting: the #NMSettingConnection
+ *
+ * Returns the #NMSettingConnection:port-type property of the connection.
+ *
+ * Returns: the type of port this connection is, if any.
+ *
+ * Since: 1.46
+ */
+const char *
+nm_setting_connection_get_port_type(NMSettingConnection *setting)
+{
+    g_return_val_if_fail(NM_IS_SETTING_CONNECTION(setting), NULL);
+
+    return NM_SETTING_CONNECTION_GET_PRIVATE(setting)->port_type;
 }
 
 /**
@@ -696,13 +766,14 @@ nm_setting_connection_get_master(NMSettingConnection *setting)
  * Returns the #NMSettingConnection:slave-type property of the connection.
  *
  * Returns: the type of slave this connection is, if any
+ *
+ * Deprecated: 1.46. Use nm_setting_connection_get_port_type() instead which
+ * is just an alias.
  */
 const char *
 nm_setting_connection_get_slave_type(NMSettingConnection *setting)
 {
-    g_return_val_if_fail(NM_IS_SETTING_CONNECTION(setting), NULL);
-
-    return NM_SETTING_CONNECTION_GET_PRIVATE(setting)->slave_type;
+    return nm_setting_connection_get_port_type(setting);
 }
 
 /**
@@ -712,13 +783,15 @@ nm_setting_connection_get_slave_type(NMSettingConnection *setting)
  * against @setting's slave type
  *
  * Returns: %TRUE if connection is of the given slave @type
+ *
+ * Deprecated: 1.46.
  */
 gboolean
 nm_setting_connection_is_slave_type(NMSettingConnection *setting, const char *type)
 {
     g_return_val_if_fail(NM_IS_SETTING_CONNECTION(setting), FALSE);
 
-    return !g_strcmp0(NM_SETTING_CONNECTION_GET_PRIVATE(setting)->slave_type, type);
+    return nm_streq0(NM_SETTING_CONNECTION_GET_PRIVATE(setting)->port_type, type);
 }
 
 /**
@@ -756,6 +829,25 @@ nm_setting_connection_get_wait_activation_delay(NMSettingConnection *setting)
 }
 
 /**
+ * nm_setting_connection_get_autoconnect_ports:
+ * @setting: the #NMSettingConnection
+ *
+ * Returns the #NMSettingConnection:autoconnect-ports property of the connection.
+ *
+ * Returns: whether ports of the connection should be activated together
+ *          with the connection.
+ *
+ * Since: 1.46
+ **/
+NMTernary
+nm_setting_connection_get_autoconnect_ports(NMSettingConnection *setting)
+{
+    g_return_val_if_fail(NM_IS_SETTING_CONNECTION(setting), NM_TERNARY_DEFAULT);
+
+    return NM_SETTING_CONNECTION_GET_PRIVATE(setting)->autoconnect_ports;
+}
+
+/**
  * nm_setting_connection_get_autoconnect_slaves:
  * @setting: the #NMSettingConnection
  *
@@ -765,14 +857,15 @@ nm_setting_connection_get_wait_activation_delay(NMSettingConnection *setting)
  *          with the connection.
  *
  * Since: 1.2
+ *
+ * Deprecated: 1.46. Use nm_setting_connection_get_autoconnect_ports() instead, this
+ * is just an alias.
  **/
 NMSettingConnectionAutoconnectSlaves
 nm_setting_connection_get_autoconnect_slaves(NMSettingConnection *setting)
 {
-    g_return_val_if_fail(NM_IS_SETTING_CONNECTION(setting),
-                         NM_SETTING_CONNECTION_AUTOCONNECT_SLAVES_DEFAULT);
-
-    return NM_SETTING_CONNECTION_GET_PRIVATE(setting)->autoconnect_slaves;
+    return (NMSettingConnectionAutoconnectSlaves) nm_setting_connection_get_autoconnect_ports(
+        setting);
 }
 
 GArray *
@@ -808,21 +901,11 @@ nm_setting_connection_get_num_secondaries(NMSettingConnection *setting)
 const char *
 nm_setting_connection_get_secondary(NMSettingConnection *setting, guint32 idx)
 {
-    NMSettingConnectionPrivate *priv;
-    guint                       secondaries_len;
-
     g_return_val_if_fail(NM_IS_SETTING_CONNECTION(setting), NULL);
 
-    priv = NM_SETTING_CONNECTION_GET_PRIVATE(setting);
-
-    secondaries_len = nm_g_array_len(priv->secondaries.arr);
-    if (idx >= secondaries_len) {
-        /* access one past the length is OK. */
-        g_return_val_if_fail(idx == secondaries_len, NULL);
-        return NULL;
-    }
-
-    return nm_strvarray_get_idx(priv->secondaries.arr, idx);
+    return nm_strvarray_get_idxnull_or_greturn(
+        NM_SETTING_CONNECTION_GET_PRIVATE(setting)->secondaries.arr,
+        idx);
 }
 
 /**
@@ -862,10 +945,9 @@ nm_setting_connection_add_secondary(NMSettingConnection *setting, const char *se
 
     priv = NM_SETTING_CONNECTION_GET_PRIVATE(setting);
 
-    if (nm_strvarray_find_first(priv->secondaries.arr, sec_uuid) >= 0)
+    if (!nm_strvarray_ensure_and_add_unique(&priv->secondaries.arr, sec_uuid))
         return FALSE;
 
-    nm_strvarray_add(nm_strvarray_ensure(&priv->secondaries.arr), sec_uuid);
     _notify(setting, PROP_SECONDARIES);
     return TRUE;
 }
@@ -888,7 +970,7 @@ nm_setting_connection_remove_secondary(NMSettingConnection *setting, guint32 idx
 
     g_return_if_fail(idx < nm_g_array_len(priv->secondaries.arr));
 
-    g_array_remove_index(priv->secondaries.arr, idx);
+    nm_strvarray_remove_index(priv->secondaries.arr, idx);
     _notify(setting, PROP_SECONDARIES);
 }
 
@@ -911,11 +993,11 @@ nm_setting_connection_remove_secondary_by_value(NMSettingConnection *setting, co
 
     priv = NM_SETTING_CONNECTION_GET_PRIVATE(setting);
 
-    if (nm_strvarray_remove_first(priv->secondaries.arr, sec_uuid)) {
-        _notify(setting, PROP_SECONDARIES);
-        return TRUE;
-    }
-    return FALSE;
+    if (!nm_strvarray_remove_first(priv->secondaries.arr, sec_uuid))
+        return FALSE;
+
+    _notify(setting, PROP_SECONDARIES);
+    return TRUE;
 }
 
 /**
@@ -1063,7 +1145,7 @@ _nm_connection_detect_slave_type_full(NMSettingConnection *s_con,
 
     is_slave           = FALSE;
     slave_setting_type = NULL;
-    slave_type         = priv->slave_type;
+    slave_type         = priv->port_type;
     if (slave_type) {
         is_slave = _nm_setting_slave_type_is_valid(slave_type, &slave_setting_type);
         if (!is_slave) {
@@ -1075,22 +1157,22 @@ _nm_connection_detect_slave_type_full(NMSettingConnection *s_con,
             g_prefix_error(error,
                            "%s.%s: ",
                            NM_SETTING_CONNECTION_SETTING_NAME,
-                           NM_SETTING_CONNECTION_SLAVE_TYPE);
+                           NM_SETTING_CONNECTION_PORT_TYPE);
             return FALSE;
         }
     }
 
     if (is_slave) {
-        if (!priv->master) {
+        if (!priv->controller) {
             g_set_error(error,
                         NM_CONNECTION_ERROR,
                         NM_CONNECTION_ERROR_MISSING_PROPERTY,
                         _("Slave connections need a valid '%s' property"),
-                        NM_SETTING_CONNECTION_MASTER);
+                        NM_SETTING_CONNECTION_CONTROLLER);
             g_prefix_error(error,
                            "%s.%s: ",
                            NM_SETTING_CONNECTION_SETTING_NAME,
-                           NM_SETTING_CONNECTION_MASTER);
+                           NM_SETTING_CONNECTION_CONTROLLER);
             return FALSE;
         }
         if (slave_setting_type && connection
@@ -1098,7 +1180,7 @@ _nm_connection_detect_slave_type_full(NMSettingConnection *s_con,
             normerr_slave_setting_type = slave_setting_type;
     } else {
         nm_assert(!slave_type);
-        if (priv->master) {
+        if (priv->controller) {
             NMSetting *s_port;
 
             if (connection
@@ -1110,12 +1192,12 @@ _nm_connection_detect_slave_type_full(NMSettingConnection *s_con,
                             NM_CONNECTION_ERROR,
                             NM_CONNECTION_ERROR_MISSING_PROPERTY,
                             _("Cannot set '%s' without '%s'"),
-                            NM_SETTING_CONNECTION_MASTER,
-                            NM_SETTING_CONNECTION_SLAVE_TYPE);
+                            NM_SETTING_CONNECTION_CONTROLLER,
+                            NM_SETTING_CONNECTION_PORT_TYPE);
                 g_prefix_error(error,
                                "%s.%s: ",
                                NM_SETTING_CONNECTION_SETTING_NAME,
-                               NM_SETTING_CONNECTION_SLAVE_TYPE);
+                               NM_SETTING_CONNECTION_PORT_TYPE);
                 return FALSE;
             }
         }
@@ -1326,7 +1408,7 @@ after_interface_name:
         g_prefix_error(error,
                        "%s.%s: ",
                        NM_SETTING_CONNECTION_SETTING_NAME,
-                       NM_SETTING_CONNECTION_SLAVE_TYPE);
+                       NM_SETTING_CONNECTION_PORT_TYPE);
         return FALSE;
     }
 
@@ -1543,8 +1625,8 @@ after_interface_name:
         g_set_error(error,
                     NM_CONNECTION_ERROR,
                     NM_CONNECTION_ERROR_MISSING_SETTING,
-                    _("slave-type '%s' requires a '%s' setting in the connection"),
-                    priv->slave_type,
+                    _("port-type '%s' requires a '%s' setting in the connection"),
+                    priv->port_type,
                     normerr_slave_setting_type);
         g_prefix_error(error, "%s: ", normerr_slave_setting_type);
         return NM_SETTING_VERIFY_NORMALIZABLE_ERROR;
@@ -1556,39 +1638,39 @@ after_interface_name:
                     NM_CONNECTION_ERROR_MISSING_PROPERTY,
                     _("Detect a slave connection with '%s' set and a port type '%s'. '%s' should "
                       "be set to '%s'"),
-                    NM_SETTING_CONNECTION_MASTER,
+                    NM_SETTING_CONNECTION_CONTROLLER,
                     normerr_missing_slave_type_port,
-                    NM_SETTING_CONNECTION_SLAVE_TYPE,
+                    NM_SETTING_CONNECTION_PORT_TYPE,
                     normerr_missing_slave_type);
         g_prefix_error(error,
                        "%s.%s: ",
                        NM_SETTING_CONNECTION_SETTING_NAME,
-                       NM_SETTING_CONNECTION_SLAVE_TYPE);
+                       NM_SETTING_CONNECTION_PORT_TYPE);
         return NM_SETTING_VERIFY_NORMALIZABLE_ERROR;
     }
 
     if (connection) {
         gboolean has_bridge_port = FALSE;
 
-        if ((!nm_streq0(priv->slave_type, NM_SETTING_BRIDGE_SETTING_NAME)
+        if ((!nm_streq0(priv->port_type, NM_SETTING_BRIDGE_SETTING_NAME)
              && (has_bridge_port =
                      !!nm_connection_get_setting_by_name(connection,
                                                          NM_SETTING_BRIDGE_PORT_SETTING_NAME)))
-            || (!nm_streq0(priv->slave_type, NM_SETTING_TEAM_SETTING_NAME)
+            || (!nm_streq0(priv->port_type, NM_SETTING_TEAM_SETTING_NAME)
                 && nm_connection_get_setting_by_name(connection,
                                                      NM_SETTING_TEAM_PORT_SETTING_NAME))) {
             g_set_error(error,
                         NM_CONNECTION_ERROR,
                         NM_CONNECTION_ERROR_INVALID_SETTING,
                         _("A slave connection with '%s' set to '%s' cannot have a '%s' setting"),
-                        NM_SETTING_CONNECTION_SLAVE_TYPE,
-                        priv->slave_type ?: "",
+                        NM_SETTING_CONNECTION_PORT_TYPE,
+                        priv->port_type ?: "",
                         has_bridge_port ? NM_SETTING_BRIDGE_PORT_SETTING_NAME
                                         : NM_SETTING_TEAM_PORT_SETTING_NAME);
             g_prefix_error(error,
                            "%s.%s: ",
                            NM_SETTING_CONNECTION_SETTING_NAME,
-                           NM_SETTING_CONNECTION_SLAVE_TYPE);
+                           NM_SETTING_CONNECTION_PORT_TYPE);
             return NM_SETTING_VERIFY_NORMALIZABLE_ERROR;
         }
     }
@@ -1607,6 +1689,18 @@ after_interface_name:
 
     if (!_nm_setting_connection_verify_secondaries(priv->secondaries.arr, error))
         return NM_SETTING_VERIFY_NORMALIZABLE;
+
+    if (priv->read_only) {
+        g_set_error_literal(error,
+                            NM_CONNECTION_ERROR,
+                            NM_CONNECTION_ERROR_MISSING_PROPERTY,
+                            _("read-only is deprecated and not settable for the user"));
+        g_prefix_error(error,
+                       "%s.%s: ",
+                       NM_SETTING_CONNECTION_SETTING_NAME,
+                       NM_SETTING_CONNECTION_READ_ONLY);
+        return NM_SETTING_VERIFY_NORMALIZABLE;
+    }
 
     return TRUE;
 }
@@ -1761,6 +1855,183 @@ set_property(GObject *object, guint prop_id, const GValue *value, GParamSpec *ps
 
 /*****************************************************************************/
 
+gboolean
+_nm_setting_connection_master_from_dbus(_NM_SETT_INFO_PROP_FROM_DBUS_FCN_ARGS _nm_nil)
+{
+    const char *str;
+
+    if (!_nm_setting_use_legacy_property(setting,
+                                         connection_dict,
+                                         NM_SETTING_CONNECTION_MASTER,
+                                         NM_SETTING_CONNECTION_CONTROLLER)) {
+        *out_is_modified = FALSE;
+        return TRUE;
+    }
+    str = g_variant_get_string(value, NULL);
+
+    g_object_set(setting, NM_SETTING_CONNECTION_MASTER, str, NULL);
+    return TRUE;
+}
+
+GVariant *
+_nm_setting_connection_controller_to_dbus(_NM_SETT_INFO_PROP_TO_DBUS_FCN_ARGS _nm_nil)
+{
+    const char *controller;
+
+    /* FIXME: `controller` is an alias of `master` property. Serializing the
+     * property to the clients would break them as they won't be able to drop
+     * it if they are not aware of the existance of `controller`. In order to
+     * give them time to adapt their code, NetworkManager is not serializing
+     * `controller` on DBus.
+     */
+    if (_nm_utils_is_manager_process) {
+        return NULL;
+    }
+
+    controller = nm_setting_connection_get_controller(NM_SETTING_CONNECTION(setting));
+    if (!controller)
+        return NULL;
+
+    return g_variant_new_string(controller);
+}
+
+gboolean
+_nm_setting_connection_controller_from_dbus(_NM_SETT_INFO_PROP_FROM_DBUS_FCN_ARGS _nm_nil)
+{
+    const char *str;
+
+    /* Ignore 'controller' if we're going to process 'master' */
+    if (_nm_setting_use_legacy_property(setting,
+                                        connection_dict,
+                                        NM_SETTING_CONNECTION_MASTER,
+                                        NM_SETTING_CONNECTION_CONTROLLER)) {
+        *out_is_modified = FALSE;
+        return TRUE;
+    }
+    str = g_variant_get_string(value, NULL);
+
+    g_object_set(setting, NM_SETTING_CONNECTION_CONTROLLER, str, NULL);
+    return TRUE;
+}
+
+gboolean
+_nm_setting_connection_slave_type_from_dbus(_NM_SETT_INFO_PROP_FROM_DBUS_FCN_ARGS _nm_nil)
+{
+    const char *str;
+
+    if (!_nm_setting_use_legacy_property(setting,
+                                         connection_dict,
+                                         NM_SETTING_CONNECTION_SLAVE_TYPE,
+                                         NM_SETTING_CONNECTION_PORT_TYPE)) {
+        *out_is_modified = FALSE;
+        return TRUE;
+    }
+    str = g_variant_get_string(value, NULL);
+
+    g_object_set(setting, NM_SETTING_CONNECTION_SLAVE_TYPE, str, NULL);
+    return TRUE;
+}
+
+gboolean
+_nm_setting_connection_autoconnect_slaves_from_dbus(_NM_SETT_INFO_PROP_FROM_DBUS_FCN_ARGS _nm_nil)
+{
+    gint32 autoconnect;
+
+    if (!_nm_setting_use_legacy_property(setting,
+                                         connection_dict,
+                                         NM_SETTING_CONNECTION_AUTOCONNECT_SLAVES,
+                                         NM_SETTING_CONNECTION_AUTOCONNECT_PORTS)) {
+        *out_is_modified = FALSE;
+        return TRUE;
+    }
+    autoconnect = g_variant_get_int32(value);
+
+    g_object_set(setting, NM_SETTING_CONNECTION_AUTOCONNECT_SLAVES, autoconnect, NULL);
+    return TRUE;
+}
+
+GVariant *
+_nm_setting_connection_port_type_to_dbus(_NM_SETT_INFO_PROP_TO_DBUS_FCN_ARGS _nm_nil)
+{
+    const char *port_type;
+
+    /* FIXME: `port-type` is an alias of `slave-type` property. Serializing the
+     * property to the clients would break them as they won't be able to drop
+     * it if they are not aware of the existance of `port-type`. In order to
+     * give them time to adapt their code, NetworkManager is not serializing
+     * `port-type` on DBus.
+     */
+    if (_nm_utils_is_manager_process) {
+        return NULL;
+    }
+
+    port_type = nm_setting_connection_get_port_type(NM_SETTING_CONNECTION(setting));
+    if (!port_type)
+        return NULL;
+
+    return g_variant_new_string(port_type);
+}
+
+gboolean
+_nm_setting_connection_port_type_from_dbus(_NM_SETT_INFO_PROP_FROM_DBUS_FCN_ARGS _nm_nil)
+{
+    const char *str;
+
+    /* Ignore 'port-type' if we're going to process 'slave-type' */
+    if (_nm_setting_use_legacy_property(setting,
+                                        connection_dict,
+                                        NM_SETTING_CONNECTION_SLAVE_TYPE,
+                                        NM_SETTING_CONNECTION_PORT_TYPE)) {
+        *out_is_modified = FALSE;
+        return TRUE;
+    }
+    str = g_variant_get_string(value, NULL);
+
+    g_object_set(setting, NM_SETTING_CONNECTION_PORT_TYPE, str, NULL);
+    return TRUE;
+}
+
+GVariant *
+_nm_setting_connection_autoconnect_ports_to_dbus(_NM_SETT_INFO_PROP_TO_DBUS_FCN_ARGS _nm_nil)
+{
+    NMTernary autoconnect;
+
+    /* FIXME: `autoconnect-ports` is an alias of `autoconnect-slaves` property.
+     * Serializing the property to the clients would break them as they won't
+     * be able to drop it if they are not aware of the existance of
+     * `autoconnect-ports`. In order to give them time to adapt their code,
+     * NetworkManager is not serializing `autoconnect-ports` on DBus.
+     */
+    if (_nm_utils_is_manager_process) {
+        return NULL;
+    }
+
+    autoconnect = nm_setting_connection_get_autoconnect_ports(NM_SETTING_CONNECTION(setting));
+
+    return g_variant_new_int32(autoconnect);
+}
+
+gboolean
+_nm_setting_connection_autoconnect_ports_from_dbus(_NM_SETT_INFO_PROP_FROM_DBUS_FCN_ARGS _nm_nil)
+{
+    NMTernary autoconnect;
+
+    /* Ignore 'autoconnect-ports' if we're going to process 'autoconnect-slaves' */
+    if (_nm_setting_use_legacy_property(setting,
+                                        connection_dict,
+                                        NM_SETTING_CONNECTION_AUTOCONNECT_SLAVES,
+                                        NM_SETTING_CONNECTION_AUTOCONNECT_PORTS)) {
+        *out_is_modified = FALSE;
+        return TRUE;
+    }
+    autoconnect = g_variant_get_int32(value);
+
+    g_object_set(setting, NM_SETTING_CONNECTION_AUTOCONNECT_PORTS, autoconnect, NULL);
+    return TRUE;
+}
+
+/*****************************************************************************/
+
 static void
 nm_setting_connection_init(NMSettingConnection *setting)
 {}
@@ -1784,7 +2055,6 @@ finalize(GObject *object)
     NMSettingConnectionPrivate *priv = NM_SETTING_CONNECTION_GET_PRIVATE(object);
 
     nm_clear_pointer(&priv->permissions, g_array_unref);
-    nm_clear_pointer(&priv->secondaries.arr, g_array_unref);
 
     G_OBJECT_CLASS(nm_setting_connection_parent_class)->finalize(object);
 }
@@ -1794,9 +2064,8 @@ nm_setting_connection_class_init(NMSettingConnectionClass *klass)
 {
     GObjectClass   *object_class        = G_OBJECT_CLASS(klass);
     NMSettingClass *setting_class       = NM_SETTING_CLASS(klass);
-    GArray         *properties_override = _nm_sett_info_property_override_create_array();
-
-    g_type_class_add_private(klass, sizeof(NMSettingConnectionPrivate));
+    GArray         *properties_override = _nm_sett_info_property_override_create_array_sized(35);
+    guint           prop_idx;
 
     object_class->get_property = get_property;
     object_class->set_property = set_property;
@@ -1883,12 +2152,13 @@ nm_setting_connection_class_init(NMSettingConnectionClass *klass)
      * the stable-id can contain placeholders that are substituted dynamically and
      * deterministically depending on the context.
      *
-     * The stable-id is used for generating IPv6 stable private addresses
-     * with ipv6.addr-gen-mode=stable-privacy. It is also used to seed the
-     * generated cloned MAC address for ethernet.cloned-mac-address=stable
-     * and wifi.cloned-mac-address=stable. It is also used as DHCP client
-     * identifier with ipv4.dhcp-client-id=stable and to derive the DHCP
-     * DUID with ipv6.dhcp-duid=stable-[llt,ll,uuid].
+     * The stable-id is used for generating IPv6 stable private addresses with
+     * ipv6.addr-gen-mode=stable-privacy. It is also used to seed the generated
+     * cloned MAC address for ethernet.cloned-mac-address=stable and
+     * wifi.cloned-mac-address=stable. It is also used to derive the DHCP
+     * client identifier with ipv4.dhcp-client-id=stable, the DHCPv6 DUID with
+     * ipv6.dhcp-duid=stable-[llt,ll,uuid] and the DHCP IAID with
+     * ipv4.iaid=stable and ipv6.iaid=stable.
      *
      * Note that depending on the context where it is used, other parameters are
      * also seeded into the generation algorithm. For example, a per-host key
@@ -1898,22 +2168,23 @@ nm_setting_connection_class_init(NMSettingConnectionClass *klass)
      * The per-host key is the identity of your machine and stored in /var/lib/NetworkManager/secret_key.
      * See NetworkManager(8) manual about the secret-key and the host identity.
      *
-     * The '$' character is treated special to perform dynamic substitutions
-     * at runtime. Currently, supported are "${CONNECTION}", "${DEVICE}", "${MAC}",
-     * "${BOOT}", "${RANDOM}".
-     * These effectively create unique IDs per-connection, per-device, per-boot,
-     * or every time. Note that "${DEVICE}" corresponds to the interface name of the
-     * device and "${MAC}" is the permanent MAC address of the device.
-     * Any unrecognized patterns following '$' are treated verbatim, however
-     * are reserved for future use. You are thus advised to avoid '$' or
-     * escape it as "$$".
-     * For example, set it to "${CONNECTION}-${BOOT}-${DEVICE}" to create a unique id for
-     * this connection that changes with every reboot and differs depending on the
-     * interface where the profile activates.
+     * The '$' character is treated special to perform dynamic substitutions at
+     * activation time. Currently, supported are "${CONNECTION}", "${DEVICE}",
+     * "${MAC}", "${NETWORK_SSID}", "${BOOT}", "${RANDOM}".  These effectively
+     * create unique IDs per-connection, per-device, per-SSID, per-boot, or
+     * every time.  The "${CONNECTION}" uses the profile's connection.uuid, the
+     * "${DEVICE}" uses the interface name of the device and "${MAC}" the
+     * permanent MAC address of the device. "${NETWORK_SSID}" uses the SSID for
+     * Wi-Fi networks and falls back to "${CONNECTION}" on other networks. Any
+     * unrecognized patterns following '$' are treated verbatim, however are
+     * reserved for future use. You are thus advised to avoid '$' or escape it
+     * as "$$".  For example, set it to "${CONNECTION}-${BOOT}-${DEVICE}" to
+     * create a unique id for this connection that changes with every reboot
+     * and differs depending on the interface where the profile activates.
      *
      * If the value is unset, a global connection default is consulted. If the
-     * value is still unset, the default is similar to "${CONNECTION}" and uses
-     * a unique, fixed ID for the connection.
+     * value is still unset, the default is "default${CONNECTION}" go generate
+     * an ID unique per connection profile.
      *
      * Since: 1.4
      **/
@@ -1929,7 +2200,8 @@ nm_setting_connection_class_init(NMSettingConnectionClass *klass)
                                               PROP_STABLE_ID,
                                               NM_SETTING_PARAM_FUZZY_IGNORE,
                                               NMSettingConnectionPrivate,
-                                              stable_id);
+                                              stable_id,
+                                              .direct_string_allow_empty = TRUE);
 
     /**
      * NMSettingConnection:interface-name:
@@ -1970,7 +2242,8 @@ nm_setting_connection_class_init(NMSettingConnectionClass *klass)
                                        .from_dbus_is_full                = TRUE,
                                        .from_dbus_direct_allow_transform = TRUE),
         NMSettingConnectionPrivate,
-        interface_name);
+        interface_name,
+        .direct_string_allow_empty = TRUE);
 
     /**
      * NMSettingConnection:type:
@@ -1997,7 +2270,8 @@ nm_setting_connection_class_init(NMSettingConnectionClass *klass)
                                               NM_SETTING_PARAM_INFERRABLE,
                                               NMSettingConnectionPrivate,
                                               type,
-                                              .direct_string_is_refstr = TRUE);
+                                              .direct_string_is_refstr   = TRUE,
+                                              .direct_string_allow_empty = TRUE);
 
     /**
      * NMSettingConnection:permissions:
@@ -2024,12 +2298,11 @@ nm_setting_connection_class_init(NMSettingConnectionClass *klass)
      * example: USERS="joe bob"
      * ---end---
      */
-    obj_properties[PROP_PERMISSIONS] =
-        g_param_spec_boxed(NM_SETTING_CONNECTION_PERMISSIONS,
-                           "",
-                           "",
-                           G_TYPE_STRV,
-                           G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS);
+    _nm_setting_property_define_gprop_strv_oldstyle(properties_override,
+                                                    obj_properties,
+                                                    NM_SETTING_CONNECTION_PERMISSIONS,
+                                                    PROP_PERMISSIONS,
+                                                    NM_SETTING_PARAM_NONE);
 
     /**
      * NMSettingConnection:autoconnect:
@@ -2190,9 +2463,9 @@ nm_setting_connection_class_init(NMSettingConnectionClass *klass)
     /**
      * NMSettingConnection:read-only:
      *
-     * %FALSE if the connection can be modified using the provided settings
-     * service's D-Bus interface with the right privileges, or %TRUE if the
-     * connection is read-only and cannot be modified.
+     * This property is deprecated and has no meaning.
+     *
+     * Deprecated: 1.44: This property is deprecated and has no meaning.
      **/
     _nm_setting_property_define_direct_boolean(properties_override,
                                                obj_properties,
@@ -2201,7 +2474,8 @@ nm_setting_connection_class_init(NMSettingConnectionClass *klass)
                                                FALSE,
                                                NM_SETTING_PARAM_FUZZY_IGNORE,
                                                NMSettingConnectionPrivate,
-                                               read_only);
+                                               read_only,
+                                               .is_deprecated = TRUE, );
 
     /**
      * NMSettingConnection:zone:
@@ -2229,12 +2503,15 @@ nm_setting_connection_class_init(NMSettingConnectionClass *klass)
                                               NM_SETTING_PARAM_FUZZY_IGNORE
                                                   | NM_SETTING_PARAM_REAPPLY_IMMEDIATELY,
                                               NMSettingConnectionPrivate,
-                                              zone);
+                                              zone,
+                                              .direct_string_allow_empty = TRUE);
 
     /**
      * NMSettingConnection:master:
      *
      * Interface name of the master device or UUID of the master connection.
+     *
+     * Deprecated 1.46. Use #NMSettingConnection:controller instead, this is just an alias.
      **/
     /* ---ifcfg-rh---
      * property: master
@@ -2245,14 +2522,47 @@ nm_setting_connection_class_init(NMSettingConnectionClass *klass)
      *   for compatibility with legacy tooling.
      * ---end---
      */
-    _nm_setting_property_define_direct_string(properties_override,
-                                              obj_properties,
-                                              NM_SETTING_CONNECTION_MASTER,
-                                              PROP_MASTER,
-                                              NM_SETTING_PARAM_FUZZY_IGNORE
-                                                  | NM_SETTING_PARAM_INFERRABLE,
-                                              NMSettingConnectionPrivate,
-                                              master);
+    prop_idx = _nm_setting_property_define_direct_string_full(
+        properties_override,
+        obj_properties,
+        NM_SETTING_CONNECTION_MASTER,
+        PROP_MASTER,
+        NM_SETTING_PARAM_INFERRABLE | NM_SETTING_PARAM_FUZZY_IGNORE,
+        NM_SETT_INFO_PROPERT_TYPE_DBUS(G_VARIANT_TYPE_STRING,
+                                       .direct_type   = NM_VALUE_TYPE_STRING,
+                                       .compare_fcn   = _nm_setting_property_compare_fcn_direct,
+                                       .to_dbus_fcn   = _nm_setting_property_to_dbus_fcn_direct,
+                                       .from_dbus_fcn = _nm_setting_connection_master_from_dbus, ),
+        NMSettingConnectionPrivate,
+        controller,
+        .direct_string_allow_empty = TRUE,
+        .is_deprecated             = TRUE,
+        .direct_is_aliased_field   = TRUE, );
+
+    /**
+     * NMSettingConnection:controller:
+     *
+     * Interface name of the controller device or UUID of the controller connection.
+     **/
+    _nm_setting_property_define_direct_string_full(
+        properties_override,
+        obj_properties,
+        NM_SETTING_CONNECTION_CONTROLLER,
+        PROP_CONTROLLER,
+        NM_SETTING_PARAM_INFERRABLE | NM_SETTING_PARAM_FUZZY_IGNORE,
+        NM_SETT_INFO_PROPERT_TYPE_DBUS(G_VARIANT_TYPE_STRING,
+                                       .direct_type = NM_VALUE_TYPE_STRING,
+                                       .compare_fcn = _nm_setting_property_compare_fcn_direct,
+                                       .to_dbus_fcn = _nm_setting_connection_controller_to_dbus,
+                                       .from_dbus_fcn =
+                                           _nm_setting_connection_controller_from_dbus),
+        NMSettingConnectionPrivate,
+        controller,
+        .direct_string_allow_empty = TRUE,
+        .direct_also_notify        = obj_properties[PROP_MASTER]);
+
+    nm_g_array_index(properties_override, NMSettInfoProperty, prop_idx).direct_also_notify =
+        obj_properties[PROP_CONTROLLER];
 
     /**
      * NMSettingConnection:slave-type:
@@ -2260,6 +2570,8 @@ nm_setting_connection_class_init(NMSettingConnectionClass *klass)
      * Setting name of the device type of this slave's master connection (eg,
      * %NM_SETTING_BOND_SETTING_NAME), or %NULL if this connection is not a
      * slave.
+     *
+     * Deprecated 1.46. Use #NMSettingConnection:port-type instead, this is just an alias.
      **/
     /* ---ifcfg-rh---
      * property: slave-type
@@ -2271,14 +2583,52 @@ nm_setting_connection_class_init(NMSettingConnectionClass *klass)
      *   and BRIDGE_UUID for bridging.
      * ---end---
      */
-    _nm_setting_property_define_direct_string(properties_override,
-                                              obj_properties,
-                                              NM_SETTING_CONNECTION_SLAVE_TYPE,
-                                              PROP_SLAVE_TYPE,
-                                              NM_SETTING_PARAM_FUZZY_IGNORE
-                                                  | NM_SETTING_PARAM_INFERRABLE,
-                                              NMSettingConnectionPrivate,
-                                              slave_type);
+    prop_idx = _nm_setting_property_define_direct_string_full(
+        properties_override,
+        obj_properties,
+        NM_SETTING_CONNECTION_SLAVE_TYPE,
+        PROP_SLAVE_TYPE,
+        NM_SETTING_PARAM_FUZZY_IGNORE | NM_SETTING_PARAM_INFERRABLE,
+        NM_SETT_INFO_PROPERT_TYPE_DBUS(G_VARIANT_TYPE_STRING,
+                                       .direct_type = NM_VALUE_TYPE_STRING,
+                                       .compare_fcn = _nm_setting_property_compare_fcn_direct,
+                                       .to_dbus_fcn = _nm_setting_property_to_dbus_fcn_direct,
+                                       .from_dbus_fcn =
+                                           _nm_setting_connection_slave_type_from_dbus, ),
+        NMSettingConnectionPrivate,
+        port_type,
+        .is_deprecated             = TRUE,
+        .direct_string_allow_empty = TRUE,
+        .direct_is_aliased_field   = TRUE, );
+
+    /**
+     * NMSettingConnection:port-type:
+     *
+     * Setting name of the device type of this port's controller connection (eg,
+     * %NM_SETTING_BOND_SETTING_NAME), or %NULL if this connection is not a
+     * port.
+     *
+     * Since: 1.46
+     **/
+    _nm_setting_property_define_direct_string_full(
+        properties_override,
+        obj_properties,
+        NM_SETTING_CONNECTION_PORT_TYPE,
+        PROP_PORT_TYPE,
+        NM_SETTING_PARAM_FUZZY_IGNORE | NM_SETTING_PARAM_INFERRABLE,
+        NM_SETT_INFO_PROPERT_TYPE_DBUS(G_VARIANT_TYPE_STRING,
+                                       .direct_type = NM_VALUE_TYPE_STRING,
+                                       .compare_fcn = _nm_setting_property_compare_fcn_direct,
+                                       .to_dbus_fcn = _nm_setting_connection_port_type_to_dbus,
+                                       .from_dbus_fcn =
+                                           _nm_setting_connection_port_type_from_dbus, ),
+        NMSettingConnectionPrivate,
+        port_type,
+        .direct_string_allow_empty = TRUE,
+        .direct_also_notify        = obj_properties[PROP_SLAVE_TYPE]);
+
+    nm_g_array_index(properties_override, NMSettInfoProperty, prop_idx).direct_also_notify =
+        obj_properties[PROP_PORT_TYPE];
 
     /**
      * NMSettingConnection:autoconnect-slaves:
@@ -2294,6 +2644,8 @@ nm_setting_connection_class_init(NMSettingConnectionClass *klass)
      * determine the real value. If it is default as well, this fallbacks to 0.
      *
      * Since: 1.2
+     *
+     * Deprecated 1.46. Use #NMSettingConnection:autoconnect-ports instead, this is just an alias.
      **/
     /* ---ifcfg-rh---
      * property: autoconnect-slaves
@@ -2303,15 +2655,60 @@ nm_setting_connection_class_init(NMSettingConnectionClass *klass)
      *   when this connection is activated.
      * ---end---
      */
-    _nm_setting_property_define_direct_enum(properties_override,
-                                            obj_properties,
-                                            NM_SETTING_CONNECTION_AUTOCONNECT_SLAVES,
-                                            PROP_AUTOCONNECT_SLAVES,
-                                            NM_TYPE_SETTING_CONNECTION_AUTOCONNECT_SLAVES,
-                                            NM_SETTING_CONNECTION_AUTOCONNECT_SLAVES_DEFAULT,
-                                            NM_SETTING_PARAM_FUZZY_IGNORE,
-                                            NMSettingConnectionPrivate,
-                                            autoconnect_slaves);
+    prop_idx = _nm_setting_property_define_direct_real_enum(
+        properties_override,
+        obj_properties,
+        NM_SETTING_CONNECTION_AUTOCONNECT_SLAVES,
+        PROP_AUTOCONNECT_SLAVES,
+        NM_TYPE_SETTING_CONNECTION_AUTOCONNECT_SLAVES,
+        NM_SETTING_CONNECTION_AUTOCONNECT_SLAVES_DEFAULT,
+        NM_SETTING_PARAM_FUZZY_IGNORE,
+        NM_SETT_INFO_PROPERT_TYPE_DBUS(G_VARIANT_TYPE_INT32,
+                                       .direct_type = NM_VALUE_TYPE_ENUM,
+                                       .compare_fcn = _nm_setting_property_compare_fcn_direct,
+                                       .to_dbus_fcn = _nm_setting_property_to_dbus_fcn_direct,
+                                       .from_dbus_fcn =
+                                           _nm_setting_connection_autoconnect_slaves_from_dbus, ),
+        NMSettingConnectionPrivate,
+        autoconnect_ports,
+        .is_deprecated           = 1,
+        .direct_is_aliased_field = TRUE, );
+
+    /**
+     * NMSettingConnection:autoconnect-ports:
+     *
+     * Whether or not ports of this connection should be automatically brought up
+     * when NetworkManager activates this connection. This only has a real effect
+     * for controller connections. The properties #NMSettingConnection:autoconnect,
+     * #NMSettingConnection:autoconnect-priority and #NMSettingConnection:autoconnect-retries
+     * are unrelated to this setting.
+     * The permitted values are: 0: leave port connections untouched,
+     * 1: activate all the port connections with this connection, -1: default.
+     * If -1 (default) is set, global connection.autoconnect-ports is read to
+     * determine the real value. If it is default as well, this fallbacks to 0.
+     *
+     * Since: 1.46
+     **/
+    _nm_setting_property_define_direct_enum(
+        properties_override,
+        obj_properties,
+        NM_SETTING_CONNECTION_AUTOCONNECT_PORTS,
+        PROP_AUTOCONNECT_PORTS,
+        NM_TYPE_TERNARY,
+        NM_TERNARY_DEFAULT,
+        NM_SETTING_PARAM_FUZZY_IGNORE,
+        NM_SETT_INFO_PROPERT_TYPE_DBUS(
+            G_VARIANT_TYPE_INT32,
+            .direct_type   = NM_VALUE_TYPE_ENUM,
+            .compare_fcn   = _nm_setting_property_compare_fcn_direct,
+            .to_dbus_fcn   = _nm_setting_connection_autoconnect_ports_to_dbus,
+            .from_dbus_fcn = _nm_setting_connection_autoconnect_ports_from_dbus, ),
+        NMSettingConnectionPrivate,
+        autoconnect_ports,
+        .direct_also_notify = obj_properties[PROP_AUTOCONNECT_SLAVES]);
+
+    nm_g_array_index(properties_override, NMSettInfoProperty, prop_idx).direct_also_notify =
+        obj_properties[PROP_AUTOCONNECT_PORTS];
 
     /**
      * NMSettingConnection:secondaries:
@@ -2379,15 +2776,16 @@ nm_setting_connection_class_init(NMSettingConnectionClass *klass)
      * example: CONNECTION_METERED=yes
      * ---end---
      */
-    _nm_setting_property_define_direct_enum(properties_override,
-                                            obj_properties,
-                                            NM_SETTING_CONNECTION_METERED,
-                                            PROP_METERED,
-                                            NM_TYPE_METERED,
-                                            NM_METERED_UNKNOWN,
-                                            NM_SETTING_PARAM_REAPPLY_IMMEDIATELY,
-                                            NMSettingConnectionPrivate,
-                                            metered);
+    _nm_setting_property_define_direct_real_enum(properties_override,
+                                                 obj_properties,
+                                                 NM_SETTING_CONNECTION_METERED,
+                                                 PROP_METERED,
+                                                 NM_TYPE_METERED,
+                                                 NM_METERED_UNKNOWN,
+                                                 NM_SETTING_PARAM_REAPPLY_IMMEDIATELY,
+                                                 NULL,
+                                                 NMSettingConnectionPrivate,
+                                                 metered);
 
     /**
      * NMSettingConnection:lldp:
@@ -2725,7 +3123,8 @@ nm_setting_connection_class_init(NMSettingConnectionClass *klass)
                                               PROP_MUD_URL,
                                               NM_SETTING_PARAM_NONE,
                                               NMSettingConnectionPrivate,
-                                              mud_url);
+                                              mud_url,
+                                              .direct_string_allow_empty = TRUE);
 
     /**
      * NMSettingConnection:wait-activation-delay:
@@ -2764,5 +3163,5 @@ nm_setting_connection_class_init(NMSettingConnectionClass *klass)
                              NM_META_SETTING_TYPE_CONNECTION,
                              NULL,
                              properties_override,
-                             NM_SETT_INFO_PRIVATE_OFFSET_FROM_CLASS);
+                             G_STRUCT_OFFSET(NMSettingConnection, _priv));
 }

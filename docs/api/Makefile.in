@@ -121,6 +121,7 @@ ACLOCAL_M4 = $(top_srcdir)/aclocal.m4
 am__aclocal_m4_deps = $(top_srcdir)/m4/attributes.m4 \
 	$(top_srcdir)/m4/ax_lib_readline.m4 \
 	$(top_srcdir)/m4/ax_pthread.m4 \
+	$(top_srcdir)/m4/build-to-host.m4 \
 	$(top_srcdir)/m4/compiler_options.m4 \
 	$(top_srcdir)/m4/gettext.m4 $(top_srcdir)/m4/git-sha-record.m4 \
 	$(top_srcdir)/m4/gnome-code-coverage.m4 \
@@ -167,7 +168,6 @@ ACLOCAL = @ACLOCAL@
 AMTAR = @AMTAR@
 AM_CFLAGS = @AM_CFLAGS@
 AM_DEFAULT_VERBOSITY = @AM_DEFAULT_VERBOSITY@
-AM_TESTS_FD_REDIRECT = @AM_TESTS_FD_REDIRECT@
 AR = @AR@
 AUTOCONF = @AUTOCONF@
 AUTOHEADER = @AUTOHEADER@
@@ -286,6 +286,7 @@ MM_GLIB_LIBS = @MM_GLIB_LIBS@
 MOBILE_BROADBAND_PROVIDER_INFO_CFLAGS = @MOBILE_BROADBAND_PROVIDER_INFO_CFLAGS@
 MOBILE_BROADBAND_PROVIDER_INFO_LIBS = @MOBILE_BROADBAND_PROVIDER_INFO_LIBS@
 MOC = @MOC@
+MODPROBE_PATH = @MODPROBE_PATH@
 MSGFMT = @MSGFMT@
 MSGMERGE = @MSGMERGE@
 MSGMERGE_FOR_MSGFMT_OPTION = @MSGMERGE_FOR_MSGFMT_OPTION@
@@ -298,6 +299,7 @@ NM_CONFIG_DEFAULT_LOGGING_AUDIT_TEXT = @NM_CONFIG_DEFAULT_LOGGING_AUDIT_TEXT@
 NM_CONFIG_DEFAULT_LOGGING_BACKEND_TEXT = @NM_CONFIG_DEFAULT_LOGGING_BACKEND_TEXT@
 NM_CONFIG_DEFAULT_MAIN_AUTH_POLKIT_TEXT = @NM_CONFIG_DEFAULT_MAIN_AUTH_POLKIT_TEXT@
 NM_CONFIG_DEFAULT_MAIN_DHCP = @NM_CONFIG_DEFAULT_MAIN_DHCP@
+NM_CONFIG_DEFAULT_MAIN_MIGRATE_IFCFG_RH_TEXT = @NM_CONFIG_DEFAULT_MAIN_MIGRATE_IFCFG_RH_TEXT@
 NM_CONFIG_DEFAULT_MAIN_RC_MANAGER = @NM_CONFIG_DEFAULT_MAIN_RC_MANAGER@
 NM_CONFIG_DEFAULT_WIFI_BACKEND_TEXT = @NM_CONFIG_DEFAULT_WIFI_BACKEND_TEXT@
 NM_DIST_VERSION = @NM_DIST_VERSION@
@@ -326,6 +328,7 @@ PKG_CONFIG = @PKG_CONFIG@
 PKG_CONFIG_LIBDIR = @PKG_CONFIG_LIBDIR@
 PKG_CONFIG_PATH = @PKG_CONFIG_PATH@
 POSUB = @POSUB@
+PPPD_CFLAGS = @PPPD_CFLAGS@
 PPPD_PATH = @PPPD_PATH@
 PPPD_PLUGIN_DIR = @PPPD_PLUGIN_DIR@
 PTHREAD_CC = @PTHREAD_CC@
@@ -353,8 +356,6 @@ SELINUX_LIBS = @SELINUX_LIBS@
 SET_MAKE = @SET_MAKE@
 SHELL = @SHELL@
 STRIP = @STRIP@
-SYSTEMD_200_CFLAGS = @SYSTEMD_200_CFLAGS@
-SYSTEMD_200_LIBS = @SYSTEMD_200_LIBS@
 SYSTEMD_INHIBIT_CFLAGS = @SYSTEMD_INHIBIT_CFLAGS@
 SYSTEMD_INHIBIT_LIBS = @SYSTEMD_INHIBIT_LIBS@
 SYSTEMD_JOURNAL_CFLAGS = @SYSTEMD_JOURNAL_CFLAGS@
@@ -415,6 +416,8 @@ install_sh = @install_sh@
 libdir = @libdir@
 libexecdir = @libexecdir@
 localedir = @localedir@
+localedir_c = @localedir_c@
+localedir_c_make = @localedir_c_make@
 localstatedir = @localstatedir@
 mandir = @mandir@
 mkdir_p = @mkdir_p@
@@ -486,6 +489,7 @@ content_files = $(GENERATED_FILES) \
 	dbus-org.freedesktop.NetworkManager.Device.Bridge.xml \
 	dbus-org.freedesktop.NetworkManager.Device.Dummy.xml \
 	dbus-org.freedesktop.NetworkManager.Device.Generic.xml \
+	dbus-org.freedesktop.NetworkManager.Device.Hsr.xml \
 	dbus-org.freedesktop.NetworkManager.Device.IPTunnel.xml \
 	dbus-org.freedesktop.NetworkManager.Device.Infiniband.xml \
 	dbus-org.freedesktop.NetworkManager.Device.Loopback.xml \

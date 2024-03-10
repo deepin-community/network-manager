@@ -72,14 +72,22 @@ create_and_realize(NMDevice              *device,
     s_6lowpan = NM_SETTING_6LOWPAN(nm_connection_get_setting(connection, NM_TYPE_SETTING_6LOWPAN));
     g_return_val_if_fail(s_6lowpan, FALSE);
 
-    parent_ifindex = parent ? nm_device_get_ifindex(parent) : 0;
+    if (!parent) {
+        g_set_error(error,
+                    NM_DEVICE_ERROR,
+                    NM_DEVICE_ERROR_MISSING_DEPENDENCIES,
+                    "6LoWPAN device can not be created without a parent interface");
+        return FALSE;
+    }
 
+    parent_ifindex = nm_device_get_ifindex(parent);
     if (parent_ifindex <= 0) {
         g_set_error(error,
                     NM_DEVICE_ERROR,
                     NM_DEVICE_ERROR_MISSING_DEPENDENCIES,
-                    "6LoWPAN devices can not be created without a parent interface");
-        g_return_val_if_fail(!parent, FALSE);
+                    "cannot retrieve ifindex of interface %s (%s)",
+                    nm_device_get_iface(parent),
+                    nm_device_get_type_desc(parent));
         return FALSE;
     }
 
@@ -204,7 +212,11 @@ static const NMDBusInterfaceInfoExtended interface_info_device_6lowpan = {
     .parent = NM_DEFINE_GDBUS_INTERFACE_INFO_INIT(
         NM_DBUS_INTERFACE_DEVICE_6LOWPAN,
         .properties = NM_DEFINE_GDBUS_PROPERTY_INFOS(
-            NM_DEFINE_DBUS_PROPERTY_INFO_EXTENDED_READABLE("HwAddress", "s", NM_DEVICE_HW_ADDRESS),
+            NM_DEFINE_DBUS_PROPERTY_INFO_EXTENDED_READABLE(
+                "HwAddress",
+                "s",
+                NM_DEVICE_HW_ADDRESS,
+                .annotations = NM_GDBUS_ANNOTATION_INFO_LIST_DEPRECATED(), ),
             NM_DEFINE_DBUS_PROPERTY_INFO_EXTENDED_READABLE("Parent", "o", NM_DEVICE_PARENT), ), ),
 };
 

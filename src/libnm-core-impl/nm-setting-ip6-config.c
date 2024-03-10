@@ -44,13 +44,15 @@ NM_GOBJECT_PROPERTIES_DEFINE_BASE(PROP_IP6_PRIVACY,
                                   PROP_TOKEN,
                                   PROP_DHCP_DUID,
                                   PROP_RA_TIMEOUT,
-                                  PROP_MTU, );
+                                  PROP_MTU,
+                                  PROP_DHCP_PD_HINT, );
 
 typedef struct {
     NMSettingIPConfigPrivate parent;
 
     char   *token;
     char   *dhcp_duid;
+    char   *dhcp_pd_hint;
     int     ip6_privacy;
     gint32  addr_gen_mode;
     gint32  ra_timeout;
@@ -63,20 +65,18 @@ typedef struct {
  * IPv6 Settings
  */
 struct _NMSettingIP6Config {
-    NMSettingIPConfig parent;
-    /* In the past, this struct was public API. Preserve ABI! */
+    NMSettingIPConfig         parent;
+    NMSettingIP6ConfigPrivate _priv;
 };
 
 struct _NMSettingIP6ConfigClass {
     NMSettingIPConfigClass parent;
-    /* In the past, this struct was public API. Preserve ABI! */
-    gpointer padding[4];
 };
 
 G_DEFINE_TYPE(NMSettingIP6Config, nm_setting_ip6_config, NM_TYPE_SETTING_IP_CONFIG)
 
 #define NM_SETTING_IP6_CONFIG_GET_PRIVATE(o) \
-    (G_TYPE_INSTANCE_GET_PRIVATE((o), NM_TYPE_SETTING_IP6_CONFIG, NMSettingIP6ConfigPrivate))
+    _NM_GET_PRIVATE(o, NMSettingIP6Config, NM_IS_SETTING_IP6_CONFIG, NMSettingIPConfig, NMSetting)
 
 /*****************************************************************************/
 
@@ -95,6 +95,26 @@ nm_setting_ip6_config_get_ip6_privacy(NMSettingIP6Config *setting)
     g_return_val_if_fail(NM_IS_SETTING_IP6_CONFIG(setting), NM_SETTING_IP6_CONFIG_PRIVACY_UNKNOWN);
 
     return NM_SETTING_IP6_CONFIG_GET_PRIVATE(setting)->ip6_privacy;
+}
+
+/**
+ * nm_setting_ip6_config_get_dhcp_pd_hint:
+ * @setting: the #NMSettingIP6Config
+ *
+ * Returns the value contained in the #NMSettingIP6Config:dhcp-pd-hint
+ * property.
+ *
+ * Returns: a string containing an address and prefix length to be used
+ * as hint for DHCPv6 prefix delegation.
+ *
+ * Since: 1.44
+ **/
+const char *
+nm_setting_ip6_config_get_dhcp_pd_hint(NMSettingIP6Config *setting)
+{
+    g_return_val_if_fail(NM_IS_SETTING_IP6_CONFIG(setting), NULL);
+
+    return NM_SETTING_IP6_CONFIG_GET_PRIVATE(setting)->dhcp_pd_hint;
 }
 
 /**
@@ -208,17 +228,17 @@ verify(NMSetting *setting, NMConnection *connection, GError **error)
     g_assert(method);
 
     if (nm_streq(method, NM_SETTING_IP6_CONFIG_METHOD_MANUAL)) {
-        if (nm_setting_ip_config_get_num_addresses(s_ip) == 0) {
+        if (nm_setting_ip_config_get_num_addresses(s_ip) == 0
+            && nm_setting_ip_config_get_num_routes(s_ip) == 0) {
             g_set_error(error,
                         NM_CONNECTION_ERROR,
                         NM_CONNECTION_ERROR_MISSING_PROPERTY,
-                        _("this property cannot be empty for '%s=%s'"),
-                        NM_SETTING_IP_CONFIG_METHOD,
+                        _("method '%s' requires at least an address or a route"),
                         method);
             g_prefix_error(error,
                            "%s.%s: ",
                            NM_SETTING_IP6_CONFIG_SETTING_NAME,
-                           NM_SETTING_IP_CONFIG_ADDRESSES);
+                           NM_SETTING_IP_CONFIG_METHOD);
             return FALSE;
         }
     } else if (NM_IN_STRSET(method,
@@ -349,6 +369,35 @@ verify(NMSetting *setting, NMConnection *connection, GError **error)
         }
     }
 
+    if (priv->dhcp_pd_hint) {
+        int prefix;
+
+        if (!nm_inet_parse_with_prefix_bin(AF_INET6, priv->dhcp_pd_hint, NULL, NULL, &prefix)
+            || prefix < 1 || prefix > 128) {
+            g_set_error_literal(error,
+                                NM_CONNECTION_ERROR,
+                                NM_CONNECTION_ERROR_INVALID_PROPERTY,
+                                _("must be a valid IPv6 address with prefix"));
+            g_prefix_error(error,
+                           "%s.%s: ",
+                           NM_SETTING_IP6_CONFIG_SETTING_NAME,
+                           NM_SETTING_IP6_CONFIG_DHCP_PD_HINT);
+            return FALSE;
+        }
+    }
+
+    if (nm_setting_ip_config_get_dhcp_dscp(s_ip)) {
+        g_set_error_literal(error,
+                            NM_CONNECTION_ERROR,
+                            NM_CONNECTION_ERROR_INVALID_PROPERTY,
+                            _("DHCP DSCP is not supported for IPv6"));
+        g_prefix_error(error,
+                       "%s.%s: ",
+                       NM_SETTING_IP6_CONFIG_SETTING_NAME,
+                       NM_SETTING_IP_CONFIG_DHCP_DSCP);
+        return FALSE;
+    }
+
     /* Failures from here on, are NORMALIZABLE_ERROR... */
 
     if (token_needs_normalization) {
@@ -398,14 +447,18 @@ ip6_dns_to_dbus(_NM_SETT_INFO_PROP_TO_DBUS_FCN_ARGS _nm_nil)
 static gboolean
 ip6_dns_from_dbus(_NM_SETT_INFO_PROP_FROM_DBUS_FCN_ARGS _nm_nil)
 {
-    gs_strfreev char **strv = NULL;
+    gs_strfreev char **strv   = NULL;
+    bool               strict = NM_FLAGS_HAS(parse_flags, NM_SETTING_PARSE_FLAGS_STRICT);
 
     if (!_nm_setting_use_legacy_property(setting, connection_dict, "dns", "dns-data")) {
         *out_is_modified = FALSE;
         return TRUE;
     }
 
-    strv = nm_utils_ip6_dns_from_variant(value);
+    strv = _nm_utils_ip6_dns_from_variant(value, strict, error);
+    if (!strv)
+        return FALSE;
+
     g_object_set(setting, NM_SETTING_IP_CONFIG_DNS, strv, NULL);
     return TRUE;
 }
@@ -426,13 +479,16 @@ ip6_addresses_from_dbus(_NM_SETT_INFO_PROP_FROM_DBUS_FCN_ARGS _nm_nil)
 {
     gs_unref_ptrarray GPtrArray *addrs   = NULL;
     gs_free char                *gateway = NULL;
+    bool                         strict  = NM_FLAGS_HAS(parse_flags, NM_SETTING_PARSE_FLAGS_STRICT);
 
     if (!_nm_setting_use_legacy_property(setting, connection_dict, "addresses", "address-data")) {
         *out_is_modified = FALSE;
         return TRUE;
     }
 
-    addrs = nm_utils_ip6_addresses_from_variant(value, &gateway);
+    addrs = _nm_utils_ip6_addresses_from_variant(value, &gateway, strict, error);
+    if (!addrs)
+        return FALSE;
 
     g_object_set(setting,
                  NM_SETTING_IP_CONFIG_ADDRESSES,
@@ -458,7 +514,8 @@ ip6_address_data_to_dbus(_NM_SETT_INFO_PROP_TO_DBUS_FCN_ARGS _nm_nil)
 static gboolean
 ip6_address_data_from_dbus(_NM_SETT_INFO_PROP_FROM_DBUS_FCN_ARGS _nm_nil)
 {
-    gs_unref_ptrarray GPtrArray *addrs = NULL;
+    gs_unref_ptrarray GPtrArray *addrs  = NULL;
+    bool                         strict = NM_FLAGS_HAS(parse_flags, NM_SETTING_PARSE_FLAGS_STRICT);
 
     /* Ignore 'address-data' if we're going to process 'addresses' */
     if (_nm_setting_use_legacy_property(setting, connection_dict, "addresses", "address-data")) {
@@ -466,7 +523,10 @@ ip6_address_data_from_dbus(_NM_SETT_INFO_PROP_FROM_DBUS_FCN_ARGS _nm_nil)
         return TRUE;
     }
 
-    addrs = nm_utils_ip_addresses_from_variant(value, AF_INET6);
+    addrs = _nm_utils_ip_addresses_from_variant(value, AF_INET6, strict, error);
+    if (!addrs)
+        return FALSE;
+
     g_object_set(setting, NM_SETTING_IP_CONFIG_ADDRESSES, addrs, NULL);
     return TRUE;
 }
@@ -484,13 +544,17 @@ static gboolean
 ip6_routes_from_dbus(_NM_SETT_INFO_PROP_FROM_DBUS_FCN_ARGS _nm_nil)
 {
     gs_unref_ptrarray GPtrArray *routes = NULL;
+    bool                         strict = NM_FLAGS_HAS(parse_flags, NM_SETTING_PARSE_FLAGS_STRICT);
 
     if (!_nm_setting_use_legacy_property(setting, connection_dict, "routes", "route-data")) {
         *out_is_modified = FALSE;
         return TRUE;
     }
 
-    routes = nm_utils_ip6_routes_from_variant(value);
+    routes = _nm_utils_ip6_routes_from_variant(value, strict, error);
+    if (!routes)
+        return FALSE;
+
     g_object_set(setting, property_info->name, routes, NULL);
     return TRUE;
 }
@@ -511,6 +575,7 @@ static gboolean
 ip6_route_data_from_dbus(_NM_SETT_INFO_PROP_FROM_DBUS_FCN_ARGS _nm_nil)
 {
     gs_unref_ptrarray GPtrArray *routes = NULL;
+    bool                         strict = NM_FLAGS_HAS(parse_flags, NM_SETTING_PARSE_FLAGS_STRICT);
 
     /* Ignore 'route-data' if we're going to process 'routes' */
     if (_nm_setting_use_legacy_property(setting, connection_dict, "routes", "route-data")) {
@@ -518,9 +583,47 @@ ip6_route_data_from_dbus(_NM_SETT_INFO_PROP_FROM_DBUS_FCN_ARGS _nm_nil)
         return TRUE;
     }
 
-    routes = nm_utils_ip_routes_from_variant(value, AF_INET6);
+    routes = _nm_utils_ip_routes_from_variant(value, AF_INET6, strict, error);
+    if (!routes)
+        return FALSE;
+
     g_object_set(setting, NM_SETTING_IP_CONFIG_ROUTES, routes, NULL);
     return TRUE;
+}
+
+static gboolean
+_set_string_fcn_dhcp_pd_hint(const NMSettInfoSetting  *sett_info,
+                             const NMSettInfoProperty *property_info,
+                             NMSetting                *setting,
+                             const char               *str)
+{
+    NMSettingIP6ConfigPrivate *priv = NM_SETTING_IP6_CONFIG_GET_PRIVATE(setting);
+    char                       buf[NM_INET_ADDRSTRLEN];
+    char                       bufp[NM_INET_ADDRSTRLEN + 16];
+    gs_free char              *old = NULL;
+    NMIPAddr                   addr;
+    int                        prefix;
+
+    if (!str)
+        goto do_set;
+
+    if (!nm_inet_parse_with_prefix_bin(AF_INET6, str, NULL, &addr, &prefix)) {
+        /* address not valid, set as is */
+        goto do_set;
+    }
+
+    /* address valid, normalize */
+    nm_inet6_ntop(&addr.addr6, buf);
+    nm_sprintf_buf(bufp, "%s/%d", buf, prefix);
+    str = bufp;
+
+do_set:
+    if (!nm_streq0(priv->dhcp_pd_hint, str)) {
+        old                = priv->dhcp_pd_hint;
+        priv->dhcp_pd_hint = g_strdup(str);
+        return TRUE;
+    }
+    return FALSE;
 }
 
 /*****************************************************************************/
@@ -554,14 +657,12 @@ nm_setting_ip6_config_class_init(NMSettingIP6ConfigClass *klass)
     NMSettingIPConfigClass *setting_ip_config_class = NM_SETTING_IP_CONFIG_CLASS(klass);
     GArray *properties_override = _nm_sett_info_property_override_create_array_ip_config(AF_INET6);
 
-    g_type_class_add_private(klass, sizeof(NMSettingIP6ConfigPrivate));
-
     object_class->get_property = _nm_setting_property_get_property_direct;
     object_class->set_property = _nm_setting_property_set_property_direct;
 
     setting_class->verify = verify;
 
-    setting_ip_config_class->private_offset = g_type_class_get_instance_private_offset(klass);
+    setting_ip_config_class->private_offset = G_STRUCT_OFFSET(NMSettingIP6Config, _priv);
     setting_ip_config_class->is_ipv4        = FALSE;
     setting_ip_config_class->addr_family    = AF_INET6;
 
@@ -640,11 +741,30 @@ nm_setting_ip6_config_class_init(NMSettingIP6ConfigClass *klass)
      * example: route1=2001:4860:4860::/64,2620:52:0:2219:222:68ff:fe11:5403
      * ---end---
      */
+    /* ---keyfile---
+     * property: routes (attributes)
+     * variable: route1_options, route2_options, ...
+     * format: key=val[,key=val...]
+     * description: Attributes defined for the routes, if any. The supported
+     *   attributes are explained in ipv6.routes entry in `man nm-settings-nmcli`.
+     * example: route1_options=mtu=1000,onlink=true
+     * ---end---
+     */
     /* ---ifcfg-rh---
      * property: routes
      * variable: (none)
      * description: List of static routes. They are not stored in ifcfg-* file,
      *   but in route6-* file instead in the form of command line for 'ip route add'.
+     * ---end---
+     */
+
+    /* ---keyfile---
+     * property: routing-rules
+     * variable: routing-rule1, routing-rule2, ...
+     * format: routing rule string
+     * description: Routing rules as defined with `ip rule add`, but with mandatory
+     *    fixed priority.
+     * example: routing-rule1=priority 5 from 2001:4860:4860::/64 table 45
      * ---end---
      */
 
@@ -733,6 +853,35 @@ nm_setting_ip6_config_class_init(NMSettingIP6ConfigClass *klass)
      * ---end---
      */
 
+    /* ---nmcli---
+     * property: dns-options
+     * format: a comma separated list of DNS options
+     * description:
+     *   DNS options for /etc/resolv.conf as described in resolv.conf(5) manual.
+     *
+     *   The currently supported options are "attempts", "debug", "edns0",
+     *   "ndots", "no-aaaa", "no-check-names", "no-reload", "no-tld-query",
+     *   "rotate", "single-request", "single-request-reopen", "timeout",
+     *   "trust-ad", "use-vc" and "inet6", "ip6-bytestring", "ip6-dotint",
+     *   "no-ip6-dotint". See the resolv.conf(5) manual.
+     *
+     *   Note that there is a distinction between an unset (default) list
+     *   and an empty list. In nmcli, to unset the list set the value to
+     *   "". To set an empty list, set it to " ". Currently, an unset list
+     *   has the same meaning as an empty list. That might change in the future.
+     *
+     *   The "trust-ad" setting is only honored if the profile contributes
+     *   name servers to resolv.conf, and if all contributing profiles have
+     *   "trust-ad" enabled.
+     *
+     *   When using a caching DNS plugin (dnsmasq or systemd-resolved in
+     *   NetworkManager.conf) then "edns0" and "trust-ad" are automatically
+     *   added.
+     *
+     *   The valid "ipv4.dns-options" and "ipv6.dns-options" get merged together.
+     * ---end---
+     */
+
     /* ---ifcfg-rh---
      * property: dns-options
      * variable: IPV6_RES_OPTIONS(+)
@@ -792,50 +941,56 @@ nm_setting_ip6_config_class_init(NMSettingIP6ConfigClass *klass)
      * example: IPV6_PRIVACY=rfc3041 IPV6_PRIVACY_PREFER_PUBLIC_IP=yes
      * ---end---
      */
-    _nm_setting_property_define_direct_enum(properties_override,
-                                            obj_properties,
-                                            NM_SETTING_IP6_CONFIG_IP6_PRIVACY,
-                                            PROP_IP6_PRIVACY,
-                                            NM_TYPE_SETTING_IP6_CONFIG_PRIVACY,
-                                            NM_SETTING_IP6_CONFIG_PRIVACY_UNKNOWN,
-                                            NM_SETTING_PARAM_NONE,
-                                            NMSettingIP6ConfigPrivate,
-                                            ip6_privacy);
+    _nm_setting_property_define_direct_real_enum(properties_override,
+                                                 obj_properties,
+                                                 NM_SETTING_IP6_CONFIG_IP6_PRIVACY,
+                                                 PROP_IP6_PRIVACY,
+                                                 NM_TYPE_SETTING_IP6_CONFIG_PRIVACY,
+                                                 NM_SETTING_IP6_CONFIG_PRIVACY_UNKNOWN,
+                                                 NM_SETTING_PARAM_NONE,
+                                                 NULL,
+                                                 NMSettingIP6ConfigPrivate,
+                                                 ip6_privacy);
 
     /**
      * NMSettingIP6Config:addr-gen-mode:
      *
-     * Configure method for creating the address for use with RFC4862 IPv6
-     * Stateless Address Autoconfiguration. The permitted values are:
-     * %NM_SETTING_IP6_CONFIG_ADDR_GEN_MODE_EUI64,
+     * Configure the method for creating the IPv6 interface identifier of
+     * addresses for RFC4862 IPv6 Stateless Address Autoconfiguration and IPv6
+     * Link Local.
+     *
+     * The permitted values are: %NM_SETTING_IP6_CONFIG_ADDR_GEN_MODE_EUI64,
      * %NM_SETTING_IP6_CONFIG_ADDR_GEN_MODE_STABLE_PRIVACY.
-     * %NM_SETTING_IP6_CONFIG_ADDR_GEN_MODE_DEFAULT_OR_EUI64
-     * or %NM_SETTING_IP6_CONFIG_ADDR_GEN_MODE_DEFAULT.
+     * %NM_SETTING_IP6_CONFIG_ADDR_GEN_MODE_DEFAULT_OR_EUI64 or
+     * %NM_SETTING_IP6_CONFIG_ADDR_GEN_MODE_DEFAULT.
      *
-     * If the property is set to EUI64, the addresses will be generated
-     * using the interface tokens derived from hardware address. This makes
-     * the host part of the address to stay constant, making it possible
-     * to track host's presence when it changes networks. The address changes
-     * when the interface hardware is replaced.
+     * If the property is set to "eui64", the addresses will be generated using
+     * the interface token derived from the hardware address. This makes the
+     * host part of the address constant, making it possible to track the
+     * host's presence when it changes networks. The address changes when the
+     * interface hardware is replaced. If a duplicate address is detected,
+     * there is no fallback to generate another address. When configured, the
+     * "ipv6.token" is used instead of the MAC address to generate addresses
+     * for stateless autoconfiguration.
      *
-     * The value of stable-privacy enables use of cryptographically
-     * secure hash of a secret host-specific key along with the connection's
-     * stable-id and the network address as specified by RFC7217.
-     * This makes it impossible to use the address track host's presence,
-     * and makes the address stable when the network interface hardware is
-     * replaced.
+     * If the property is set to "stable-privacy", the interface identifier is
+     * generated as specified by RFC7217. This works by hashing a host specific
+     * key (see NetworkManager(8) manual), the interface name, the connection's
+     * "connection.stable-id" property and the address prefix.  This improves
+     * privacy by making it harder to use the address to track the host's
+     * presence as every prefix and network has a different identifier. Also,
+     * the address is stable when the network interface hardware is replaced.
      *
-     * The special values "default" and "default-or-eui64" will fallback to the global
-     * connection default in as documented in NetworkManager.conf(5) manual. If the
-     * global default is not specified, the fallback value is "stable-privacy"
-     * or "eui64", respectively.
+     * The special values "default" and "default-or-eui64" will fallback to the
+     * global connection default as documented in the NetworkManager.conf(5)
+     * manual. If the global default is not specified, the fallback value is
+     * "stable-privacy" or "eui64", respectively.
      *
-     * For libnm, the property defaults to "default" since 1.40.
-     * Previously it defaulted to "stable-privacy".
-     * On D-Bus, the absence of an addr-gen-mode setting equals
-     * "default". For keyfile plugin, the absence of the setting
-     * on disk means "default-or-eui64" so that the property doesn't change on upgrade
-     * from older versions.
+     * For libnm, the property defaults to "default" since 1.40.  Previously it
+     * used to default to "stable-privacy".  On D-Bus, the absence of an
+     * addr-gen-mode setting equals "default". For keyfile plugin, the absence
+     * of the setting on disk means "default-or-eui64" so that the property
+     * doesn't change on upgrade from older versions.
      *
      * Note that this setting is distinct from the Privacy Extensions as
      * configured by "ip6-privacy" property and it does not affect the
@@ -850,6 +1005,45 @@ nm_setting_ip6_config_class_init(NMSettingIP6ConfigClass *klass)
      * default: "default-or-eui64"
      * description: Configure IPv6 Stable Privacy addressing for SLAAC (RFC7217).
      * example: IPV6_ADDR_GEN_MODE=stable-privacy
+     * ---end---
+     */
+    /* ---nmcli---
+     * property: addr-gen-mode
+     * format: one of "eui64" (0), "stable-privacy" (1), "default" (3) or "default-or-eui64" (2)
+     * description: Configure method for creating the
+     * IPv6 interface identifer of addresses with RFC4862 IPv6 Stateless
+     * Address Autoconfiguration and Link Local addresses.
+     *
+     * The permitted values are: "eui64" (0), "stable-privacy" (1), "default"
+     * (3) or "default-or-eui64" (2).
+     *
+     * If the property is set to "eui64", the addresses will be generated using
+     * the interface token derived from hardware address. This makes the host
+     * part of the address to stay constant, making it possible to track the
+     * host's presence when it changes networks. The address changes when the
+     * interface hardware is replaced. If a duplicate address is detected,
+     * there is also no fallback to generate another address. When configured,
+     * the "ipv6.token" is used instead of the MAC address to generate
+     * addresses for stateless autoconfiguration.
+     *
+     * If the property is set to "stable-privacy", the interface identifier is
+     * generated as specified by RFC7217. This works by hashing a host specific
+     * key (see NetworkManager(8) manual), the interface name, the connection's
+     * "connection.stable-id" property and the address prefix.  This improves
+     * privacy by making it harder to use the address to track the host's
+     * presence and the address is stable when the network interface hardware
+     * is replaced.
+     *
+     * The special values "default" and "default-or-eui64" will fallback to the
+     * global connection default as documented in the NetworkManager.conf(5)
+     * manual. If the global default is not specified, the fallback value is
+     * "stable-privacy" or "eui64", respectively.
+     *
+     * If not specified, when creating a new profile the default is "default".
+     *
+     * Note that this setting is distinct from the Privacy Extensions as
+     * configured by "ip6-privacy" property and it does not affect the
+     * temporary addresses configured with this option.
      * ---end---
      */
     _nm_setting_property_define_direct_int32(properties_override,
@@ -869,6 +1063,10 @@ nm_setting_ip6_config_class_init(NMSettingIP6ConfigClass *klass)
      * Configure the token for draft-chown-6man-tokenised-ipv6-identifiers-02
      * IPv6 tokenized interface identifiers. Useful with eui64 addr-gen-mode.
      *
+     * When set, the token is used as IPv6 interface identifier instead of the
+     * hardware address. This only applies to addresses from stateless
+     * autoconfiguration, not to IPv6 link local addresses.
+     *
      * Since: 1.4
      **/
     /* ---ifcfg-rh---
@@ -884,7 +1082,8 @@ nm_setting_ip6_config_class_init(NMSettingIP6ConfigClass *klass)
                                               PROP_TOKEN,
                                               NM_SETTING_PARAM_INFERRABLE,
                                               NMSettingIP6ConfigPrivate,
-                                              token);
+                                              token,
+                                              .direct_string_allow_empty = TRUE);
 
     /**
      * NMSettingIP6Config:ra-timeout:
@@ -987,7 +1186,38 @@ nm_setting_ip6_config_class_init(NMSettingIP6ConfigClass *klass)
                                               PROP_DHCP_DUID,
                                               NM_SETTING_PARAM_NONE,
                                               NMSettingIP6ConfigPrivate,
-                                              dhcp_duid);
+                                              dhcp_duid,
+                                              .direct_string_allow_empty = TRUE);
+
+    /**
+     * NMSettingIP6Config:dhcp-pd-hint:
+     *
+     * A IPv6 address followed by a slash and a prefix length. If set, the value is
+     * sent to the DHCPv6 server as hint indicating the prefix delegation (IA_PD) we
+     * want to receive.
+     * To only hint a prefix length without prefix, set the address part to the
+     * zero address (for example "::/60").
+     *
+     * Since: 1.44
+     **/
+    /* ---ifcfg-rh---
+     * property: dhcp-pd-hint
+     * variable: DHCPV6_PD_HINT(+)
+     * description: Hint for DHCPv6 prefix delegation
+     * example: DHCPV6_PD_HINT=2001:db8:1111:2220::/60
+     *          DHCPV6_PD_HINT=::/60
+     * ---end---
+     */
+    _nm_setting_property_define_direct_string(properties_override,
+                                              obj_properties,
+                                              NM_SETTING_IP6_CONFIG_DHCP_PD_HINT,
+                                              PROP_DHCP_PD_HINT,
+                                              NM_SETTING_PARAM_NONE,
+                                              NMSettingIP6ConfigPrivate,
+                                              dhcp_pd_hint,
+                                              .direct_data.set_string =
+                                                  _set_string_fcn_dhcp_pd_hint,
+                                              .direct_string_allow_empty = TRUE);
 
     /* IP6-specific property overrides */
 
@@ -1075,6 +1305,7 @@ nm_setting_ip6_config_class_init(NMSettingIP6ConfigClass *klass)
     /* ---nmcli---
      * property: routes
      * format: a comma separated list of routes
+     * description: Array of IP routes.
      * description-docbook:
      *   <para>
      *     A list of IPv6 destination addresses, prefix length, optional IPv6
@@ -1199,11 +1430,50 @@ nm_setting_ip6_config_class_init(NMSettingIP6ConfigClass *klass)
      * ---end---
      */
 
+    /* ---nmcli---
+     * property: method
+     * format: string
+     * description: The IPv6 connection method.
+     * description-docbook:
+     *   <para>
+     *     Sets the IPv6 connection method. You can set one of the following values:
+     *   </para>
+     *   <para>
+     *     <itemizedlist>
+     *        <listitem>
+     *          <para><literal>"auto"</literal> - Enables IPv6 auto-configuration. By default, NetworkManager uses Router Advertisements and, if the router announces the "managed" flag, NetworkManager requests an IPv6 address and prefix from a DHCPv6 server.</para>
+     *        </listitem>
+     *        <listitem>
+     *          <para><literal>"dhcp"</literal> - Requests an IPv6 address and prefix from a DHCPv6 server. Note that DHCPv6 does not have options to provide routes and the default gateway. As a consequence, by using the "dhcp" method, connections are limited to their own subnet.</para>
+     *        </listitem>
+     *        <listitem>
+     *          <para><literal>"manual"</literal> - Enables the configuration of static IPv6 addresses on the interface. Note that you must set at least one IP address and prefix in the "ipv6.addresses" property.</para>
+     *        </listitem>
+     *        <listitem>
+     *          <para><literal>"disabled"</literal> - Disables the IPv6 protocol in this connection profile.</para>
+     *        </listitem>
+     *        <listitem>
+     *          <para><literal>"ignore"</literal> - Configures NetworkManager to make no changes to the IPv6 configuration on the interface. For example, you can then use the "accept_ra" feature of the kernel to accept Router Advertisements.</para>
+     *        </listitem>
+     *        <listitem>
+     *          <para><literal>"shared"</literal> - Provides network access to other computers. NetworkManager requests a prefix from an upstream DHCPv6 server, assigns an address to the interface, and announces the prefix to clients that connect to this interface.</para>
+     *        </listitem>
+     *        <listitem>
+     *          <para><literal>"link-local"</literal> - Assigns a random link-local address from the fe80::/64 subnet to the interface.</para>
+     *        </listitem>
+     *     </itemizedlist>
+     *     <para>
+     *       If you set <literal>"auto"</literal>, <literal>"dhcp"</literal>, <literal>"manual"</literal>, <literal>"ignore"</literal>, or <literal>"shared"</literal>, NetworkManager assigns, in addition to the global address, an IPv6 link-local address to the interface. This is compliant with RFC 4291.
+     *     </para>
+     *   </para>
+     * ---end---
+     */
+
     g_object_class_install_properties(object_class, _PROPERTY_ENUMS_LAST, obj_properties);
 
     _nm_setting_class_commit(setting_class,
                              NM_META_SETTING_TYPE_IP6_CONFIG,
                              NULL,
                              properties_override,
-                             setting_ip_config_class->private_offset);
+                             G_STRUCT_OFFSET(NMSettingIP6Config, _priv));
 }

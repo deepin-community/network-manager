@@ -47,8 +47,11 @@ G_BEGIN_DECLS
 #define NM_SETTING_CONNECTION_PERMISSIONS           "permissions"
 #define NM_SETTING_CONNECTION_ZONE                  "zone"
 #define NM_SETTING_CONNECTION_MASTER                "master"
+#define NM_SETTING_CONNECTION_CONTROLLER            "controller"
 #define NM_SETTING_CONNECTION_SLAVE_TYPE            "slave-type"
+#define NM_SETTING_CONNECTION_PORT_TYPE             "port-type"
 #define NM_SETTING_CONNECTION_AUTOCONNECT_SLAVES    "autoconnect-slaves"
+#define NM_SETTING_CONNECTION_AUTOCONNECT_PORTS     "autoconnect-ports"
 #define NM_SETTING_CONNECTION_SECONDARIES           "secondaries"
 #define NM_SETTING_CONNECTION_GATEWAY_PING_TIMEOUT  "gateway-ping-timeout"
 #define NM_SETTING_CONNECTION_METERED               "metered"
@@ -75,7 +78,10 @@ G_BEGIN_DECLS
  * should be activated when master is activated.
  *
  * Since: 1.2
+ *
+ * Deprecated: 1.46
  */
+NM_DEPRECATED_IN_1_46
 typedef enum {
     NM_SETTING_CONNECTION_AUTOCONNECT_SLAVES_DEFAULT = -1,
     NM_SETTING_CONNECTION_AUTOCONNECT_SLAVES_NO      = 0,
@@ -170,7 +176,9 @@ int nm_setting_connection_get_autoconnect_retries(NMSettingConnection *setting);
 NM_AVAILABLE_IN_1_14
 NMConnectionMultiConnect nm_setting_connection_get_multi_connect(NMSettingConnection *setting);
 guint64                  nm_setting_connection_get_timestamp(NMSettingConnection *setting);
-gboolean                 nm_setting_connection_get_read_only(NMSettingConnection *setting);
+
+NM_DEPRECATED_IN_1_44
+gboolean nm_setting_connection_get_read_only(NMSettingConnection *setting);
 
 guint32     nm_setting_connection_get_num_permissions(NMSettingConnection *setting);
 gboolean    nm_setting_connection_get_permission(NMSettingConnection *setting,
@@ -191,12 +199,28 @@ gboolean    nm_setting_connection_remove_permission_by_value(NMSettingConnection
                                                              const char          *pitem,
                                                              const char          *detail);
 
+NM_DEPRECATED_IN_1_46
 const char *nm_setting_connection_get_master(NMSettingConnection *setting);
-gboolean    nm_setting_connection_is_slave_type(NMSettingConnection *setting, const char *type);
+
+NM_AVAILABLE_IN_1_46
+const char *nm_setting_connection_get_controller(NMSettingConnection *setting);
+
+NM_DEPRECATED_IN_1_46
+gboolean nm_setting_connection_is_slave_type(NMSettingConnection *setting, const char *type);
+
+NM_DEPRECATED_IN_1_46
 const char *nm_setting_connection_get_slave_type(NMSettingConnection *setting);
+
+NM_AVAILABLE_IN_1_46
+const char *nm_setting_connection_get_port_type(NMSettingConnection *setting);
+
 NM_AVAILABLE_IN_1_2
+NM_DEPRECATED_IN_1_46
 NMSettingConnectionAutoconnectSlaves
 nm_setting_connection_get_autoconnect_slaves(NMSettingConnection *setting);
+
+NM_AVAILABLE_IN_1_46
+NMTernary nm_setting_connection_get_autoconnect_ports(NMSettingConnection *setting);
 
 guint32     nm_setting_connection_get_num_secondaries(NMSettingConnection *setting);
 const char *nm_setting_connection_get_secondary(NMSettingConnection *setting, guint32 idx);

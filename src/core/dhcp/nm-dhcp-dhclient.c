@@ -148,56 +148,6 @@ get_dhclient_leasefile(int         addr_family,
     return NULL;
 }
 
-static gboolean
-merge_dhclient_config(NMDhcpDhclient     *self,
-                      int                 addr_family,
-                      const char         *iface,
-                      const char         *conf_file,
-                      GBytes             *client_id,
-                      const char         *anycast_address,
-                      const char         *hostname,
-                      guint32             timeout,
-                      gboolean            use_fqdn,
-                      NMDhcpHostnameFlags hostname_flags,
-                      const char         *mud_url,
-                      const char *const  *reject_servers,
-                      const char         *orig_path,
-                      GBytes            **out_new_client_id,
-                      GError            **error)
-{
-    gs_free char *orig = NULL;
-    gs_free char *new  = NULL;
-
-    g_return_val_if_fail(iface, FALSE);
-    g_return_val_if_fail(conf_file, FALSE);
-
-    if (orig_path && g_file_test(orig_path, G_FILE_TEST_EXISTS)) {
-        GError *read_error = NULL;
-
-        if (!g_file_get_contents(orig_path, &orig, NULL, &read_error)) {
-            _LOGW("error reading dhclient configuration %s: %s", orig_path, read_error->message);
-            g_error_free(read_error);
-        }
-    }
-
-    new = nm_dhcp_dhclient_create_config(iface,
-                                         addr_family,
-                                         client_id,
-                                         anycast_address,
-                                         hostname,
-                                         timeout,
-                                         use_fqdn,
-                                         hostname_flags,
-                                         mud_url,
-                                         reject_servers,
-                                         orig_path,
-                                         orig,
-                                         out_new_client_id);
-    nm_assert(new);
-
-    return g_file_set_contents(conf_file, new, -1, error);
-}
-
 static char *
 find_existing_config(NMDhcpDhclient *self, int addr_family, const char *iface, const char *uuid)
 {
@@ -283,6 +233,7 @@ create_dhclient_config(NMDhcpDhclient     *self,
                        const char         *iface,
                        const char         *uuid,
                        GBytes             *client_id,
+                       gboolean            send_client_id,
                        const char         *anycast_address,
                        const char         *hostname,
                        guint32             timeout,
@@ -292,44 +243,56 @@ create_dhclient_config(NMDhcpDhclient     *self,
                        const char *const  *reject_servers,
                        GBytes            **out_new_client_id)
 {
-    gs_free char *orig = NULL;
-    char *new          = NULL;
-    GError *error      = NULL;
+    gs_free char *orig_path    = NULL;
+    gs_free char *orig_content = NULL;
+    char         *new_path     = NULL;
+    gs_free char *new_content  = NULL;
+    GError       *error        = NULL;
 
     g_return_val_if_fail(iface != NULL, NULL);
 
-    new = g_strdup_printf(NMSTATEDIR "/dhclient%s-%s.conf",
-                          _addr_family_to_path_part(addr_family),
-                          iface);
+    new_path = g_strdup_printf(NMSTATEDIR "/dhclient%s-%s.conf",
+                               _addr_family_to_path_part(addr_family),
+                               iface);
+    _LOGD("creating composite dhclient config %s", new_path);
 
-    _LOGD("creating composite dhclient config %s", new);
-
-    orig = find_existing_config(self, addr_family, iface, uuid);
-    if (orig)
-        _LOGD("merging existing dhclient config %s", orig);
+    orig_path = find_existing_config(self, addr_family, iface, uuid);
+    if (orig_path)
+        _LOGD("merging existing dhclient config %s", orig_path);
     else
         _LOGD("no existing dhclient configuration to merge");
 
-    if (!merge_dhclient_config(self,
-                               addr_family,
-                               iface,
-                               new,
-                               client_id,
-                               anycast_address,
-                               hostname,
-                               timeout,
-                               use_fqdn,
-                               hostname_flags,
-                               mud_url,
-                               reject_servers,
-                               orig,
-                               out_new_client_id,
-                               &error)) {
-        _LOGW("error creating dhclient configuration: %s", error->message);
-        g_clear_error(&error);
+    if (orig_path && g_file_test(orig_path, G_FILE_TEST_EXISTS)) {
+        if (!g_file_get_contents(orig_path, &orig_content, NULL, &error)) {
+            _LOGW("error reading dhclient configuration %s: %s", orig_path, error->message);
+            g_error_free(error);
+        }
     }
 
-    return new;
+    new_content = nm_dhcp_dhclient_create_config(iface,
+                                                 addr_family,
+                                                 client_id,
+                                                 send_client_id,
+                                                 anycast_address,
+                                                 hostname,
+                                                 timeout,
+                                                 use_fqdn,
+                                                 hostname_flags,
+                                                 mud_url,
+                                                 reject_servers,
+                                                 orig_path,
+                                                 orig_content,
+                                                 out_new_client_id);
+    nm_assert(new_content);
+
+    if (!g_file_set_contents(new_path, new_content, -1, &error)) {
+        _LOGW("error creating dhclient configuration: %s", error->message);
+        g_error_free(error);
+        g_free(new_path);
+        return NULL;
+    }
+
+    return new_path;
 }
 
 static gboolean
@@ -356,6 +319,7 @@ dhclient_start(NMDhcpClient *client,
     gs_free char                *preferred_leasefile_path = NULL;
     int                          addr_family;
     const NMDhcpClientConfig    *client_config;
+    char                         pd_length_str[16];
 
     g_return_val_if_fail(!priv->pid_file, FALSE);
     client_config = nm_dhcp_client_get_config(client);
@@ -463,6 +427,17 @@ dhclient_start(NMDhcpClient *client,
 
         if (mode_opt)
             g_ptr_array_add(argv, (gpointer) mode_opt);
+
+        if (prefixes > 0 && client_config->v6.pd_hint_length > 0) {
+            if (!IN6_IS_ADDR_UNSPECIFIED(&client_config->v6.pd_hint_addr)) {
+                _LOGW("dhclient only supports a length as prefix delegation hint, not a prefix");
+            }
+
+            nm_sprintf_buf(pd_length_str, "%u", client_config->v6.pd_hint_length);
+            g_ptr_array_add(argv, "--prefix-len-hint");
+            g_ptr_array_add(argv, pd_length_str);
+        }
+
         while (prefixes--)
             g_ptr_array_add(argv, (gpointer) "-P");
     }
@@ -480,6 +455,11 @@ dhclient_start(NMDhcpClient *client,
     if (priv->conf_file) {
         g_ptr_array_add(argv, (gpointer) "-cf"); /* Set interface config file */
         g_ptr_array_add(argv, (gpointer) priv->conf_file);
+    }
+
+    if (client_config->v4.dscp_explicit) {
+        _LOGW("dhclient does not support specifying a custom DSCP value; the TOS field will be set "
+              "to LOWDELAY (0x10).");
     }
 
     /* Usually the system bus address is well-known; but if it's supposed
@@ -535,11 +515,14 @@ ip4_start(NMDhcpClient *client, GError **error)
 
     client_config = nm_dhcp_client_get_config(client);
 
+    nm_assert(client_config->addr_family == AF_INET);
+
     priv->conf_file = create_dhclient_config(self,
                                              AF_INET,
                                              client_config->iface,
                                              client_config->uuid,
                                              client_config->client_id,
+                                             client_config->v4.send_client_id,
                                              client_config->anycast_address,
                                              client_config->hostname,
                                              client_config->timeout,
@@ -572,6 +555,8 @@ ip6_start(NMDhcpClient *client, const struct in6_addr *ll_addr, GError **error)
 
     config = nm_dhcp_client_get_config(client);
 
+    nm_assert(config->addr_family == AF_INET6);
+
     if (config->v6.iaid_explicit)
         _LOGW("dhclient does not support specifying an IAID for DHCPv6, it will be ignored");
 
@@ -580,6 +565,7 @@ ip6_start(NMDhcpClient *client, const struct in6_addr *ll_addr, GError **error)
                                              config->iface,
                                              config->uuid,
                                              NULL,
+                                             TRUE,
                                              config->anycast_address,
                                              config->hostname,
                                              config->timeout,

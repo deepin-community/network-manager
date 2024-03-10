@@ -20,7 +20,9 @@
 
 #include "c-list/src/c-list.h"
 #include "nm-errno.h"
+#include "nm-time-utils.h"
 #include "nm-str-buf.h"
+#include "nm-time-utils.h"
 
 G_STATIC_ASSERT(sizeof(NMEtherAddr) == 6);
 G_STATIC_ASSERT(_nm_alignof(NMEtherAddr) == 1);
@@ -64,7 +66,7 @@ nm_ether_addr_from_string(NMEtherAddr *addr, const char *str)
  *
  * Checks if only the bottom 64bits of the address are set.
  *
- * Return value: %TRUE or %FALSE
+ * Returns: %TRUE or %FALSE
  */
 gboolean
 _nm_utils_inet6_is_token(const struct in6_addr *in6addr)
@@ -437,7 +439,7 @@ nm_g_bytes_new_from_variant_ay(GVariant *var)
 
 /**
  * nm_g_bytes_equal_mem:
- * @bytes: (allow-none): a #GBytes array to compare. Note that
+ * @bytes: (nullable): a #GBytes array to compare. Note that
  *   %NULL is treated like an #GBytes array of length zero.
  * @mem_data: the data pointer with @mem_len bytes
  * @mem_len: the length of the data pointer
@@ -621,6 +623,149 @@ nm_g_variant_maybe_singleton_i(gint32 value)
 
 /*****************************************************************************/
 
+static int
+_variant_type_cmp(const GVariantType *type1, const GVariantType *type2)
+{
+    const char *string1;
+    const char *string2;
+    gsize       size;
+
+    NM_CMP_SELF(type1, type2);
+
+    size = g_variant_type_get_string_length(type1);
+
+    NM_CMP_DIRECT(size, g_variant_type_get_string_length(type2));
+
+    string1 = g_variant_type_peek_string(type1);
+    string2 = g_variant_type_peek_string(type2);
+
+    NM_CMP_DIRECT_MEMCMP(string1, string2, size);
+    return 0;
+}
+
+int
+nm_g_variant_type_cmp(const GVariantType *type1, const GVariantType *type2)
+{
+    int r;
+
+    r = _variant_type_cmp(type1, type2);
+    nm_assert((!!g_variant_type_equal(type1, type2)) == (r == 0));
+    return r;
+}
+
+/*****************************************************************************/
+
+typedef enum {
+    VARIANT_CMP_TYPE_VARIANT,
+    VARIANT_CMP_TYPE_STRDICT,
+    VARIANT_CMP_TYPE_VARDICT,
+} VariantCmpType;
+
+static int
+_variant_cmp_array(GVariant *value1, GVariant *value2, VariantCmpType type)
+{
+    gsize len;
+    gsize i;
+
+    len = g_variant_n_children(value1);
+
+    NM_CMP_DIRECT(len, g_variant_n_children(value2));
+
+    for (i = 0; i < len; i++) {
+        gs_unref_variant GVariant *child1 = g_variant_get_child_value(value1, i);
+        gs_unref_variant GVariant *child2 = g_variant_get_child_value(value2, i);
+        const char                *key1;
+        const char                *key2;
+        const char                *val1_str;
+        const char                *val2_str;
+
+        nm_assert(child1);
+        nm_assert(child2);
+
+        switch (type) {
+        case VARIANT_CMP_TYPE_VARIANT:
+            NM_CMP_RETURN(nm_g_variant_cmp(child1, child2));
+            break;
+        case VARIANT_CMP_TYPE_STRDICT:
+            g_variant_get(child1, "{&s&s}", &key1, &val1_str);
+            g_variant_get(child2, "{&s&s}", &key2, &val2_str);
+            NM_CMP_DIRECT_STRCMP(key1, key2);
+            NM_CMP_DIRECT_STRCMP(val1_str, val2_str);
+            break;
+        case VARIANT_CMP_TYPE_VARDICT:
+        {
+            gs_unref_variant GVariant *val1_var = NULL;
+            gs_unref_variant GVariant *val2_var = NULL;
+
+            g_variant_get(child1, "{&sv}", &key1, &val1_var);
+            g_variant_get(child2, "{&sv}", &key2, &val2_var);
+            NM_CMP_DIRECT_STRCMP(key1, key2);
+            NM_CMP_RETURN(nm_g_variant_cmp(val1_var, val2_var));
+            break;
+        }
+        }
+    }
+
+    return 0;
+}
+
+static int
+_variant_cmp_generic(GVariant *value1, GVariant *value2)
+{
+    gs_free char *str1 = NULL;
+    gs_free char *str2 = NULL;
+
+    /* This is like g_variant_equal(), which also resorts to pretty-printing
+     * the variants for comparison.
+     *
+     * Note that the variant types are already checked and equal. We thus don't
+     * need to include the type annotation. */
+    str1 = g_variant_print(value1, FALSE);
+    str2 = g_variant_print(value2, FALSE);
+
+    NM_CMP_DIRECT_STRCMP(str1, str2);
+    return 0;
+}
+
+static int
+_variant_cmp(GVariant *value1, GVariant *value2)
+{
+    const GVariantType *type;
+
+    NM_CMP_SELF(value1, value2);
+
+    type = g_variant_get_type(value1);
+
+    NM_CMP_RETURN(nm_g_variant_type_cmp(type, g_variant_get_type(value2)));
+
+    if (g_variant_type_is_basic(type))
+        NM_CMP_RETURN(g_variant_compare(value1, value2));
+    else if (g_variant_type_is_subtype_of(type, G_VARIANT_TYPE("a{ss}")))
+        NM_CMP_RETURN(_variant_cmp_array(value1, value2, VARIANT_CMP_TYPE_STRDICT));
+    else if (g_variant_type_is_subtype_of(type, G_VARIANT_TYPE("a{sv}")))
+        NM_CMP_RETURN(_variant_cmp_array(value1, value2, VARIANT_CMP_TYPE_VARDICT));
+    else if (g_variant_type_is_array(type) || g_variant_type_is_tuple(type))
+        NM_CMP_RETURN(_variant_cmp_array(value1, value2, VARIANT_CMP_TYPE_VARIANT));
+    else
+        NM_CMP_RETURN(_variant_cmp_generic(value1, value2));
+
+    return 0;
+}
+
+int
+nm_g_variant_cmp(GVariant *value1, GVariant *value2)
+{
+    int r;
+
+    r = _variant_cmp(value1, value2);
+
+    nm_assert((!!nm_g_variant_equal(value1, value2)) == (r == 0));
+
+    return r;
+}
+
+/*****************************************************************************/
+
 GHashTable *
 nm_strdict_clone(GHashTable *src)
 {
@@ -692,7 +837,7 @@ nm_strdict_to_variant_asv(GHashTable *strdict)
  * nm_strquote:
  * @buf: the output buffer of where to write the quoted @str argument.
  * @buf_len: the size of @buf.
- * @str: (allow-none): the string to quote.
+ * @str: (nullable): the string to quote.
  *
  * Writes @str to @buf with quoting. The resulting buffer
  * is always NUL terminated, unless @buf_len is zero.
@@ -1764,11 +1909,11 @@ nm_utils_escaped_tokens_escape_full(const char                     *str,
  * nm_utils_escaped_tokens_options_split:
  * @str: the src string. This string will be modified in-place.
  *   The output values will point into @str.
- * @out_key: (allow-none): the returned output key. This will always be set to @str
- *   itself. @str will be modified to contain only the unescaped, truncated
- *   key name.
- * @out_val: returns the parsed (and unescaped) value or %NULL, if @str contains
- *   no '=' delimiter.
+ * @out_key: (out) (nullable): the returned output key. This will always be set
+ *   to @str itself. @str will be modified to contain only the unescaped,
+ *   truncated key name.
+ * @out_val: (out) (nullable): returns the parsed (and unescaped) value or
+ *   %NULL, if @str contains no '=' delimiter.
  *
  * Honors backslash escaping to parse @str as "key=value" pairs. Optionally, if no '='
  * is present, @out_val will be returned as %NULL. Backslash can be used to escape
@@ -1935,7 +2080,7 @@ nm_utils_strsplit_quoted(const char *str)
     }
 
     if (!arr)
-        return g_new0(char *, 1);
+        return nm_strv_empty_new();
 
     /* We want to return an optimally sized strv array, with no excess
      * memory allocated. Hence, clone once more. */
@@ -1962,8 +2107,6 @@ nm_utils_strsplit_quoted(const char *str)
  * Searches @list for @needle and returns the index of the first match (based
  * on strcmp()).
  *
- * For convenience, @list has type 'char**' instead of 'const char **'.
- *
  * Returns: index of first occurrence or -1 if @needle is not found in @list.
  */
 gssize
@@ -1982,7 +2125,7 @@ _nm_strv_find_first(const char *const *list, gssize len, const char *needle)
             }
         } else {
             for (i = 0; i < len; i++) {
-                if (list[i] && !strcmp(needle, list[i]))
+                if (list[i] && nm_streq(needle, list[i]))
                     return i;
             }
         }
@@ -1991,7 +2134,7 @@ _nm_strv_find_first(const char *const *list, gssize len, const char *needle)
 
         if (list) {
             for (i = 0; list[i]; i++) {
-                if (strcmp(needle, list[i]) == 0)
+                if (nm_streq(needle, list[i]))
                     return i;
             }
         }
@@ -2076,7 +2219,7 @@ nm_strv_is_same_unordered(const char *const *strv1,
 }
 
 const char **
-nm_strv_cleanup_const(const char **strv, gboolean skip_empty, gboolean skip_repeated)
+nm_strv_cleanup_const(const char **strv, gboolean no_empty, gboolean no_duplicates)
 {
     gsize i;
     gsize j;
@@ -2084,13 +2227,12 @@ nm_strv_cleanup_const(const char **strv, gboolean skip_empty, gboolean skip_repe
     if (!strv || !*strv)
         return strv;
 
-    if (!skip_empty && !skip_repeated)
+    if (!no_empty && !no_duplicates)
         return strv;
 
     j = 0;
     for (i = 0; strv[i]; i++) {
-        if ((skip_empty && !*strv[i])
-            || (skip_repeated && nm_strv_find_first(strv, j, strv[i]) >= 0))
+        if ((no_empty && !*strv[i]) || (no_duplicates && nm_strv_contains(strv, j, strv[i])))
             continue;
         strv[j++] = strv[i];
     }
@@ -2099,7 +2241,7 @@ nm_strv_cleanup_const(const char **strv, gboolean skip_empty, gboolean skip_repe
 }
 
 char **
-nm_strv_cleanup(char **strv, gboolean strip_whitespace, gboolean skip_empty, gboolean skip_repeated)
+nm_strv_cleanup(char **strv, gboolean strip_whitespace, gboolean no_empty, gboolean no_duplicates)
 {
     gsize i;
     gsize j;
@@ -2113,12 +2255,11 @@ nm_strv_cleanup(char **strv, gboolean strip_whitespace, gboolean skip_empty, gbo
         for (i = 0; strv[i]; i++)
             g_strstrip(strv[i]);
     }
-    if (!skip_empty && !skip_repeated)
+    if (!no_empty && !no_duplicates)
         return strv;
     j = 0;
     for (i = 0; strv[i]; i++) {
-        if ((skip_empty && !*strv[i])
-            || (skip_repeated && nm_strv_find_first(strv, j, strv[i]) >= 0))
+        if ((no_empty && !*strv[i]) || (no_duplicates && nm_strv_contains(strv, j, strv[i])))
             g_free(strv[i]);
         else
             strv[j++] = strv[i];
@@ -2219,12 +2360,50 @@ nm_utils_error_is_notfound(GError *error)
 
 /*****************************************************************************/
 
+void
+nm_gobject_notify_together_by_pspec_v(gpointer                 obj,
+                                      const GParamSpec *const *param_specs,
+                                      gsize                    param_specs_len)
+{
+    GObject *const    gobj        = obj;
+    gboolean          frozen      = FALSE;
+    const GParamSpec *pspec_first = NULL;
+
+    nm_assert(G_IS_OBJECT(gobj));
+    nm_assert(param_specs_len > 0);
+
+    while (param_specs_len-- > 0) {
+        const GParamSpec *pspec = (param_specs++)[0];
+
+        if (!pspec)
+            continue;
+
+        if (!frozen) {
+            if (!pspec_first) {
+                pspec_first = pspec;
+                continue;
+            }
+            frozen = TRUE;
+            g_object_freeze_notify(gobj);
+            g_object_notify_by_pspec(gobj, (GParamSpec *) pspec_first);
+        }
+        g_object_notify_by_pspec(gobj, (GParamSpec *) pspec);
+    }
+
+    if (frozen)
+        g_object_thaw_notify(gobj);
+    else if (pspec_first)
+        g_object_notify_by_pspec(gobj, (GParamSpec *) pspec_first);
+}
+
+/*****************************************************************************/
+
 /**
  * nm_g_object_set_property:
  * @object: the target object
  * @property_name: the property name
  * @value: the #GValue to set
- * @error: (allow-none): optional error argument
+ * @error: optional error argument
  *
  * A reimplementation of g_object_set_property(), but instead
  * returning an error instead of logging a warning. All g_object_set*()
@@ -2524,7 +2703,7 @@ _str_buf_append_c_escape_octal(NMStrBuf *strbuf, char ch)
 
 /**
  * nm_utils_buf_utf8safe_unescape:
- * @str: (allow-none): the string to unescape. The string itself is a NUL terminated
+ * @str: (nullable): the string to unescape. The string itself is a NUL terminated
  *   ASCII string, that can have C-style backslash escape sequences (which
  *   are to be unescaped). Non-ASCII characters (e.g. UTF-8) are taken verbatim, so
  *   it doesn't care that this string is UTF-8. However, usually this is a UTF-8 encoded
@@ -2755,13 +2934,16 @@ nm_utils_buf_utf8safe_escape(gconstpointer           buf,
     if (g_utf8_validate(str, buflen, &p) && nul_terminated) {
         /* note that g_utf8_validate() does not allow NUL character inside @str. Good.
          * We can treat @str like a NUL terminated string. */
-        if (!NM_STRCHAR_ANY(str,
-                            ch,
-                            (ch == '\\'
-                             || (NM_FLAGS_HAS(flags, NM_UTILS_STR_UTF8_SAFE_FLAG_ESCAPE_CTRL)
-                                 && nm_ascii_is_ctrl_or_del(ch))
-                             || (NM_FLAGS_HAS(flags, NM_UTILS_STR_UTF8_SAFE_FLAG_ESCAPE_NON_ASCII)
-                                 && nm_ascii_is_non_ascii(ch)))))
+        if (!NM_STRCHAR_ANY(
+                str,
+                ch,
+                (ch == '\\'
+                 || (NM_FLAGS_HAS(flags, NM_UTILS_STR_UTF8_SAFE_FLAG_ESCAPE_CTRL)
+                     && nm_ascii_is_ctrl_or_del(ch))
+                 || (NM_FLAGS_HAS(flags, NM_UTILS_STR_UTF8_SAFE_FLAG_ESCAPE_NON_ASCII)
+                     && nm_ascii_is_non_ascii(ch))
+                 || (NM_FLAGS_HAS(flags, NM_UTILS_STR_UTF8_SAFE_FLAG_ESCAPE_DOUBLE_QUOTE)
+                     && ch == '"'))))
             return str;
     }
 
@@ -2781,7 +2963,9 @@ nm_utils_buf_utf8safe_escape(gconstpointer           buf,
             else if ((NM_FLAGS_HAS(flags, NM_UTILS_STR_UTF8_SAFE_FLAG_ESCAPE_CTRL)
                       && nm_ascii_is_ctrl_or_del(ch))
                      || (NM_FLAGS_HAS(flags, NM_UTILS_STR_UTF8_SAFE_FLAG_ESCAPE_NON_ASCII)
-                         && nm_ascii_is_non_ascii(ch)))
+                         && nm_ascii_is_non_ascii(ch))
+                     || (NM_FLAGS_HAS(flags, NM_UTILS_STR_UTF8_SAFE_FLAG_ESCAPE_DOUBLE_QUOTE)
+                         && ch == '"'))
                 _str_buf_append_c_escape_octal(&strbuf, ch);
             else
                 nm_str_buf_append_c(&strbuf, ch);
@@ -3332,9 +3516,9 @@ _utils_hashtable_equal(GHashTable      *hash_a,
 
 /**
  * nm_utils_hashtable_cmp_equal:
- * @a: (allow-none): the hash table or %NULL
- * @b: (allow-none): the other hash table or %NULL
- * @cmp_values: (allow-none): if %NULL, only the keys
+ * @a: (nullable): the hash table or %NULL
+ * @b: (nullable): the other hash table or %NULL
+ * @cmp_values: (nullable): if %NULL, only the keys
  *   will be compared. Otherwise, this function is used to
  *   check whether all keys are equal.
  * @user_data: the argument for @cmp_values.
@@ -3401,8 +3585,8 @@ _hashtable_cmp_func(gconstpointer a, gconstpointer b, gpointer user_data)
 
 /**
  * nm_utils_hashtable_cmp:
- * @a: (allow-none): the hash to compare. May be %NULL.
- * @b: (allow-none): the other hash to compare. May be %NULL.
+ * @a: (nullable): the hash to compare. May be %NULL.
+ * @b: (nullable): the other hash to compare. May be %NULL.
  * @do_fast_precheck: if %TRUE, assume that the hashes are equal
  *   and that it is worth calling nm_utils_hashtable_cmp_equal() first.
  *   That requires, that both hashes have the same equals function
@@ -3410,7 +3594,7 @@ _hashtable_cmp_func(gconstpointer a, gconstpointer b, gpointer user_data)
  * @cmp_keys: the compare function for keys. Usually, the hash/equal function
  *   of both hashes corresponds to this function. If you set @do_fast_precheck
  *   to false, then this is not a requirement.
- * @cmp_values: (allow-none): if %NULL, only the keys are compared.
+ * @cmp_values: (nullable): if %NULL, only the keys are compared.
  *   Otherwise, the values must are also compared with this function.
  *
  * Both hashes must have keys/values of the same domain, so that
@@ -3577,6 +3761,9 @@ nm_strv_make_deep_copied_n(const char **strv, gsize len)
  *   the returned array must be freed with g_strfreev(). Otherwise, the
  *   strings themself are not copied. You must take care of who owns the
  *   strings yourself.
+ * @preserved_empty: affects how to handle if the strv array is empty (length 0).
+ *   If TRUE, results in a non-NULL, empty, allocated strv array. If FALSE,
+ *   returns NULL instead of an empty strv array.
  *
  * Like g_strdupv(), with two differences:
  *
@@ -3595,7 +3782,10 @@ nm_strv_make_deep_copied_n(const char **strv, gsize len)
  *   cloned or not.
  */
 char **
-_nm_strv_dup(const char *const *strv, gssize len, gboolean deep_copied)
+_nm_strv_dup_full(const char *const *strv,
+                  gssize             len,
+                  gboolean           deep_copied,
+                  gboolean           preserve_empty)
 {
     gsize  i, l;
     char **v;
@@ -3604,13 +3794,16 @@ _nm_strv_dup(const char *const *strv, gssize len, gboolean deep_copied)
         l = NM_PTRARRAY_LEN(strv);
     else
         l = len;
-    if (l == 0) {
-        /* this function never returns an empty strv array. If you
-         * need that, handle it yourself. */
+
+    if (l == 0 && !preserve_empty) {
+        /* An empty strv array is not returned (as requested by
+         * !preserved_empty). Instead, return NULL. */
         return NULL;
     }
 
-    v = g_new(char *, l + 1);
+    nm_assert(l < G_MAXSIZE);
+
+    v = g_new(char *, l + 1u);
     for (i = 0; i < l; i++) {
         if (G_UNLIKELY(!strv[i])) {
             /* NULL strings are not allowed. Clear the remainder of the array
@@ -4839,6 +5032,50 @@ nm_g_child_watch_source_new(GPid            pid,
     return source;
 }
 
+gboolean
+nm_g_timeout_reschedule(GSource   **src,
+                        gint64     *p_expiry_msec,
+                        gint64      expiry_msec,
+                        GSourceFunc func,
+                        gpointer    user_data)
+{
+    gint64 now_msec;
+    gint64 timeout_msec;
+
+    /* (Re-)Schedules a timeout at "expiry_msec" (in
+     * nm_utils_get_monotonic_timestamp_msec() scale).
+     *
+     * If a source is already scheduled in "*src" and "*p_expiry_msec" is
+     * identical to "expiry_msec", then we assume the timer is already ticking,
+     * and nothing is rescheduled.
+     *
+     * Otherwise, "*src" gets cancelled (if any), a new timer is scheduled
+     * (assigned to "*src") and the new expiry is written to "*p_expiry_msec".
+     */
+
+    nm_assert(src);
+    nm_assert(p_expiry_msec);
+
+    if (*src) {
+        if (*p_expiry_msec == expiry_msec) {
+            /* already scheduled with same expiry. */
+            return FALSE;
+        }
+        nm_clear_g_source_inst(src);
+    }
+
+    now_msec = nm_utils_get_monotonic_timestamp_msec();
+
+    if (expiry_msec <= now_msec)
+        timeout_msec = 0;
+    else
+        timeout_msec = NM_MIN(expiry_msec - now_msec, (gint64) G_MAXUINT);
+
+    *p_expiry_msec = expiry_msec;
+    *src           = nm_g_timeout_add_source(timeout_msec, func, user_data);
+    return TRUE;
+}
+
 /*****************************************************************************/
 
 #define _CTX_LOG(fmt, ...)                                                                       \
@@ -5301,7 +5538,7 @@ nm_utils_ifname_valid_kernel(const char *name, GError **error)
 
         if (ch == '\0')
             return TRUE;
-        if (NM_IN_SET(ch, '/', ':') || g_ascii_isspace(ch)) {
+        if (NM_IN_SET(ch, '/', ':') || nm_ascii_is_space_kernel(ch)) {
             g_set_error_literal(error,
                                 NM_UTILS_ERROR,
                                 NM_UTILS_ERROR_UNKNOWN,
@@ -5724,38 +5961,79 @@ nm_utils_is_specific_hostname(const char *name)
 
 /*****************************************************************************/
 
-/* taken from systemd's uid_to_name(). */
-char *
-nm_utils_uid_to_name(uid_t uid)
-{
-    gs_free char *buf_heap = NULL;
-    char          buf_stack[4096];
-    gsize         bufsize;
-    char         *buf;
+typedef struct {
+    struct passwd pw;
+    _nm_alignas(max_align_t) char buf[];
+} GetPwuidData;
 
-    bufsize = sizeof(buf_stack);
-    buf     = buf_stack;
+/**
+ * nm_getpwuid:
+ * uid: the user Id to look up
+ *
+ * Calls getpwuid_r() to lookup the passwd entry. See the manual.
+ * Allocates and returns a suitable buffer.
+ *
+ * The returned buffer is likely much large than required. You don't want to
+ * keep this buffer around for longer than necessary.
+ *
+ * Returns: (transfer full): the passwd entry, if found or NULL on error
+ *   or if the entry was not found.
+ */
+struct passwd *
+nm_getpwuid(uid_t uid)
+{
+    gs_free GetPwuidData *data = NULL;
+    gsize                 bufsize;
+    const gsize           OFFSET = G_STRUCT_OFFSET(GetPwuidData, buf);
+    long int              size_max;
+
+    size_max = sysconf(_SC_GETPW_R_SIZE_MAX);
+    if (size_max > 0 && ((unsigned long int) size_max < G_MAXSIZE - OFFSET))
+        bufsize = size_max;
+    else
+        bufsize = 4096;
 
     for (;;) {
-        struct passwd  pwbuf;
         struct passwd *pw = NULL;
         int            r;
 
-        r = getpwuid_r(uid, &pwbuf, buf, bufsize, &pw);
-        if (r == 0 && pw)
-            return nm_strdup_not_empty(pw->pw_name);
+        if (bufsize >= G_MAXSIZE - OFFSET)
+            return NULL;
+
+        nm_clear_g_free(&data);
+        data = g_malloc(OFFSET + bufsize);
+
+        r = getpwuid_r(uid, &data->pw, data->buf, bufsize, &pw);
+        if (r == 0) {
+            if (!pw)
+                return NULL;
+            nm_assert(pw == (gpointer) data);
+            return (gpointer) g_steal_pointer(&data);
+        }
 
         if (r != ERANGE)
             return NULL;
 
         if (bufsize > G_MAXSIZE / 2u)
             return NULL;
-
         bufsize *= 2u;
-        g_free(buf_heap);
-        buf_heap = g_malloc(bufsize);
-        buf      = buf_heap;
     }
+}
+
+const char *
+nm_passwd_name(const struct passwd *pw)
+{
+    /* Normalize "pw->pw_name" and return it. */
+    return pw ? nm_str_not_empty(pw->pw_name) : NULL;
+}
+
+char *
+nm_utils_uid_to_name(uid_t uid)
+{
+    gs_free struct passwd *pw = NULL;
+
+    pw = nm_getpwuid(uid);
+    return g_strdup(nm_passwd_name(pw));
 }
 
 /* taken from systemd's nss_user_record_by_name() */
@@ -5835,6 +6113,9 @@ nm_utils_exp10(gint16 ex)
 gboolean
 _nm_utils_is_empty_ssid_arr(const guint8 *ssid, gsize len)
 {
+    if (len == 0)
+        return TRUE;
+
     /* Single white space is for Linksys APs */
     if (len == 1 && ssid[0] == ' ')
         return TRUE;
@@ -6729,7 +7010,7 @@ valid_ldh_char(char c)
  * @s: the hostname to check.
  * @trailing_dot: Accept trailing dot on multi-label names.
  *
- * Return: %TRUE if valid.
+ * Returns: %TRUE if valid.
  */
 gboolean
 nm_hostname_is_valid(const char *s, gboolean trailing_dot)
@@ -6786,6 +7067,377 @@ nm_hostname_is_valid(const char *s, gboolean trailing_dot)
      * 255 characters */
     if (p - s > NM_HOST_NAME_MAX)
         return FALSE;
+
+    return TRUE;
+}
+
+/*****************************************************************************/
+
+typedef struct {
+    GTask                    *task;
+    GSource                  *source_timeout;
+    GSource                  *source_next_poll;
+    GMainContext             *context;
+    GCancellable             *internal_cancellable;
+    NMUtilsPollProbeStartFcn  probe_start_fcn;
+    NMUtilsPollProbeFinishFcn probe_finish_fcn;
+    gpointer                  probe_user_data;
+    gulong                    cancellable_id;
+    gint64                    last_poll_start_ms;
+    int                       sleep_timeout_ms;
+    int                       ratelimit_timeout_ms;
+    bool                      completed : 1;
+} PollTaskData;
+
+static void
+_poll_task_data_free(gpointer data)
+{
+    PollTaskData *poll_task_data = data;
+
+    nm_assert(G_IS_TASK(poll_task_data->task));
+    nm_assert(!poll_task_data->source_next_poll);
+    nm_assert(!poll_task_data->source_timeout);
+    nm_assert(poll_task_data->cancellable_id == 0);
+
+    g_main_context_unref(poll_task_data->context);
+
+    nm_g_slice_free(poll_task_data);
+}
+
+static void
+_poll_return(PollTaskData *poll_task_data, GError *error_take)
+{
+    nm_clear_g_source_inst(&poll_task_data->source_next_poll);
+    nm_clear_g_source_inst(&poll_task_data->source_timeout);
+    nm_clear_g_cancellable_disconnect(g_task_get_cancellable(poll_task_data->task),
+                                      &poll_task_data->cancellable_id);
+
+    nm_clear_g_cancellable(&poll_task_data->internal_cancellable);
+
+    if (error_take)
+        g_task_return_error(poll_task_data->task, g_steal_pointer(&error_take));
+    else
+        g_task_return_boolean(poll_task_data->task, TRUE);
+
+    g_object_unref(poll_task_data->task);
+}
+
+static gboolean _poll_start_cb(gpointer user_data);
+
+static void
+_poll_done_cb(GObject *source, GAsyncResult *result, gpointer user_data)
+{
+    PollTaskData                     *poll_task_data = user_data;
+    _nm_unused gs_unref_object GTask *task =
+        poll_task_data->task; /* balance ref from _poll_start_cb() */
+    gs_free_error GError *error = NULL;
+    gint64                now_ms;
+    gint64                wait_ms;
+    gboolean              is_finished;
+
+    is_finished =
+        poll_task_data->probe_finish_fcn(source, result, poll_task_data->probe_user_data, &error);
+
+    if (nm_utils_error_is_cancelled(error)) {
+        /* we already handle this differently. Nothing to do. */
+        return;
+    }
+
+    if (error || is_finished) {
+        _poll_return(poll_task_data, g_steal_pointer(&error));
+        return;
+    }
+
+    now_ms = nm_utils_get_monotonic_timestamp_msec();
+    if (poll_task_data->ratelimit_timeout_ms > 0)
+        wait_ms =
+            (poll_task_data->last_poll_start_ms + poll_task_data->ratelimit_timeout_ms) - now_ms;
+    else
+        wait_ms = 0;
+    if (poll_task_data->sleep_timeout_ms > 0)
+        wait_ms = NM_MAX(wait_ms, poll_task_data->sleep_timeout_ms);
+
+    poll_task_data->source_next_poll =
+        nm_g_source_attach(nm_g_timeout_source_new(NM_MAX(1, wait_ms),
+                                                   G_PRIORITY_DEFAULT,
+                                                   _poll_start_cb,
+                                                   poll_task_data,
+                                                   NULL),
+                           poll_task_data->context);
+}
+
+static gboolean
+_poll_start_cb(gpointer user_data)
+{
+    PollTaskData *poll_task_data = user_data;
+
+    nm_clear_g_source_inst(&poll_task_data->source_next_poll);
+
+    poll_task_data->last_poll_start_ms = nm_utils_get_monotonic_timestamp_msec();
+
+    g_object_ref(poll_task_data->task); /* balanced by _poll_done_cb() */
+
+    poll_task_data->probe_start_fcn(poll_task_data->internal_cancellable,
+                                    poll_task_data->probe_user_data,
+                                    _poll_done_cb,
+                                    poll_task_data);
+
+    return G_SOURCE_CONTINUE;
+}
+
+static gboolean
+_poll_timeout_cb(gpointer user_data)
+{
+    PollTaskData *poll_task_data = user_data;
+
+    _poll_return(poll_task_data, nm_utils_error_new(NM_UTILS_ERROR_UNKNOWN, "timeout expired"));
+    return G_SOURCE_CONTINUE;
+}
+
+static void
+_poll_cancelled_cb(GObject *object, gpointer user_data)
+{
+    PollTaskData *poll_task_data = user_data;
+    GError       *error          = NULL;
+
+    nm_clear_g_signal_handler(g_task_get_cancellable(poll_task_data->task),
+                              &poll_task_data->cancellable_id);
+    nm_utils_error_set_cancelled(&error, FALSE, NULL);
+    _poll_return(poll_task_data, error);
+}
+
+/**
+ * nm_utils_poll:
+ * @poll_timeout_ms: if >= 0, then this is the overall timeout for how long we poll.
+ *   When this timeout expires, the request completes with failure (and error set).
+ * @ratelimit_timeout_ms: if > 0, we ratelimit the starts from one prope_start_fcn
+ *   call to the next. We will wait at least this time between two consecutive polls.
+ * @sleep_timeout_ms: if > 0, then we wait after a probe finished this timeout
+ *   before the next. Together with @ratelimit_timeout_ms this determines how
+ *   frequently we probe. We will wait at least this time between the end of the
+ *   previous poll and the next one.
+ * @probe_register_object_fcn: (allow-none): called by nm_utils_poll()
+ *   synchronously, with the new, internal GTask instance. The purpose of this
+ *   callback is a bit obscure, you may want to pass NULL here. It's used by some
+ *   caller to register a weak pointer on the internal GTask instance to track
+ *   the lifetime of the operation.
+ * @probe_start_fcn: used to start a (asynchronous) probe. A probe must be
+ *   completed by calling the provided callback. While a probe is in progress, we
+ *   will not start another. The function is called the first time on an idle
+ *   handler, afterwards it gets called again on each timeout for polling.
+ * @probe_finish_fcn: will be called from the callback of @probe_start_fcn. If the
+ *   function returns %TRUE (polling done) or an error, polling stops. Otherwise,
+ *   another poll will be started.
+ * @probe_user_data: user_data for the probe functions.
+ * @cancellable: cancellable for polling.
+ * @callback: when polling completes.
+ * @user_data: for @callback.
+ *
+ * This uses the current g_main_context_get_thread_default() for scheduling
+ * actions.
+ */
+void
+nm_utils_poll(int                               poll_timeout_ms,
+              int                               ratelimit_timeout_ms,
+              int                               sleep_timeout_ms,
+              NMUtilsPollProbeRegisterObjectFcn probe_register_object_fcn,
+              NMUtilsPollProbeStartFcn          probe_start_fcn,
+              NMUtilsPollProbeFinishFcn         probe_finish_fcn,
+              gpointer                          probe_user_data,
+              GCancellable                     *cancellable,
+              GAsyncReadyCallback               callback,
+              gpointer                          user_data)
+{
+    PollTaskData *poll_task_data;
+
+    poll_task_data  = g_slice_new(PollTaskData);
+    *poll_task_data = (PollTaskData){
+        .task             = nm_g_task_new(NULL, cancellable, nm_utils_poll, callback, user_data),
+        .probe_start_fcn  = probe_start_fcn,
+        .probe_finish_fcn = probe_finish_fcn,
+        .probe_user_data  = probe_user_data,
+        .completed        = FALSE,
+        .context          = g_main_context_ref_thread_default(),
+        .sleep_timeout_ms = sleep_timeout_ms,
+        .ratelimit_timeout_ms = ratelimit_timeout_ms,
+        .internal_cancellable = g_cancellable_new(),
+    };
+
+    g_task_set_task_data(poll_task_data->task, poll_task_data, _poll_task_data_free);
+
+    if (probe_register_object_fcn)
+        probe_register_object_fcn((GObject *) poll_task_data->task, probe_user_data);
+
+    if (poll_timeout_ms >= 0) {
+        poll_task_data->source_timeout =
+            nm_g_source_attach(nm_g_timeout_source_new(poll_timeout_ms,
+                                                       G_PRIORITY_DEFAULT,
+                                                       _poll_timeout_cb,
+                                                       poll_task_data,
+                                                       NULL),
+                               poll_task_data->context);
+    }
+
+    poll_task_data->source_next_poll = nm_g_source_attach(
+        nm_g_idle_source_new(G_PRIORITY_DEFAULT_IDLE, _poll_start_cb, poll_task_data, NULL),
+        poll_task_data->context);
+
+    if (cancellable) {
+        gulong signal_id;
+
+        signal_id = g_cancellable_connect(cancellable,
+                                          G_CALLBACK(_poll_cancelled_cb),
+                                          poll_task_data,
+                                          NULL);
+        if (signal_id == 0) {
+            /* the request is already cancelled. Return. */
+            return;
+        }
+        poll_task_data->cancellable_id = signal_id;
+    }
+}
+
+/**
+ * nm_utils_poll_finish:
+ * @result: the GAsyncResult from the GAsyncReadyCallback callback.
+ * @probe_user_data: the user data provided to nm_utils_poll().
+ * @error: the failure code.
+ *
+ * Returns: %TRUE if the polling completed with success. In that case,
+ *   the error won't be set.
+ *   If the request was cancelled, this is indicated by @error and
+ *   %FALSE will be returned.
+ *   If the probe returned a failure, this returns %FALSE and the error
+ *   provided by @probe_finish_fcn.
+ *   If the request times out, this returns %FALSE with error set.
+ *   Error is always set if (and only if) the function returns %FALSE.
+ */
+gboolean
+nm_utils_poll_finish(GAsyncResult *result, gpointer *probe_user_data, GError **error)
+{
+    GTask        *task;
+    PollTaskData *poll_task_data;
+
+    g_return_val_if_fail(nm_g_task_is_valid(result, NULL, nm_utils_poll), FALSE);
+    g_return_val_if_fail(!error || !*error, FALSE);
+
+    task = G_TASK(result);
+
+    if (probe_user_data) {
+        poll_task_data = g_task_get_task_data(task);
+        NM_SET_OUT(probe_user_data, poll_task_data->probe_user_data);
+    }
+
+    return g_task_propagate_boolean(task, error);
+}
+
+/*****************************************************************************/
+
+void
+nm_utils_env_var_encode_name(const char *key, GString *str_buffer)
+{
+    gsize i;
+
+    nm_assert(key);
+    nm_assert(str_buffer);
+
+    for (i = 0; key[i]; i++) {
+        char ch = key[i];
+
+        /* we encode the key in only upper case letters, digits, and underscore.
+         * As we expect lower-case letters to be more common, we encode lower-case
+         * letters as upper case, and upper-case letters with a leading underscore. */
+
+        if (ch >= '0' && ch <= '9') {
+            g_string_append_c(str_buffer, ch);
+            continue;
+        }
+        if (ch >= 'a' && ch <= 'z') {
+            g_string_append_c(str_buffer, ch - 'a' + 'A');
+            continue;
+        }
+        if (ch == '.') {
+            g_string_append(str_buffer, "__");
+            continue;
+        }
+        if (ch >= 'A' && ch <= 'Z') {
+            g_string_append_c(str_buffer, '_');
+            g_string_append_c(str_buffer, ch);
+            continue;
+        }
+        g_string_append_printf(str_buffer, "_%03o", (unsigned) ch);
+    }
+}
+
+gboolean
+nm_utils_env_var_decode_name(const char *name, GString *str_buffer)
+{
+    gsize i;
+
+    nm_assert(name);
+    nm_assert(str_buffer);
+
+    if (!name[0])
+        return FALSE;
+
+    for (i = 0; name[i];) {
+        char ch = name[i];
+
+        if (ch >= '0' && ch <= '9') {
+            g_string_append_c(str_buffer, ch);
+            i++;
+            continue;
+        }
+        if (ch >= 'A' && ch <= 'Z') {
+            g_string_append_c(str_buffer, ch - 'A' + 'a');
+            i++;
+            continue;
+        }
+
+        if (ch == '_') {
+            ch = name[i + 1];
+            if (ch == '_') {
+                g_string_append_c(str_buffer, '.');
+                i += 2;
+                continue;
+            }
+            if (ch >= 'A' && ch <= 'Z') {
+                g_string_append_c(str_buffer, ch);
+                i += 2;
+                continue;
+            }
+            if (ch >= '0' && ch <= '7') {
+                char     ch2, ch3;
+                unsigned v;
+
+                ch2 = name[i + 2];
+                if (!(ch2 >= '0' && ch2 <= '7'))
+                    return FALSE;
+
+                ch3 = name[i + 3];
+                if (!(ch3 >= '0' && ch3 <= '7'))
+                    return FALSE;
+
+#define OCTAL_VALUE(ch) ((unsigned) ((ch) - '0'))
+                v = (OCTAL_VALUE(ch) << 6) + (OCTAL_VALUE(ch2) << 3) + OCTAL_VALUE(ch3);
+                if (v > 0xFF || v == 0)
+                    return FALSE;
+                ch = (char) v;
+                if ((ch >= 'A' && ch <= 'Z') || (ch >= '0' && ch <= '9') || (ch == '.')
+                    || (ch >= 'a' && ch <= 'z')) {
+                    /* such characters are not expected to be encoded via
+                     * octal representation. The encoding is invalid. */
+                    return FALSE;
+                }
+                g_string_append_c(str_buffer, ch);
+                i += 4;
+                continue;
+            }
+            return FALSE;
+        }
+
+        return FALSE;
+    }
 
     return TRUE;
 }

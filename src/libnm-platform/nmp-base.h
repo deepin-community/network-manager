@@ -11,12 +11,6 @@
 
 /*****************************************************************************/
 
-/* IFNAMSIZ is both defined in <linux/if.h> and <net/if.h>. In the past, these
- * headers conflicted, so we cannot simply include either of them in a header-file.*/
-#define NMP_IFNAMSIZ 16
-
-/*****************************************************************************/
-
 /* Define of the IN6_ADDR_GEN_MODE_* values to workaround old kernel headers
  * that don't define it. */
 #define NM_IN6_ADDR_GEN_MODE_UNKNOWN        255 /* no corresponding value.  */
@@ -24,6 +18,15 @@
 #define NM_IN6_ADDR_GEN_MODE_NONE           1   /* IN6_ADDR_GEN_MODE_NONE */
 #define NM_IN6_ADDR_GEN_MODE_STABLE_PRIVACY 2   /* IN6_ADDR_GEN_MODE_STABLE_PRIVACY */
 #define NM_IN6_ADDR_GEN_MODE_RANDOM         3   /* IN6_ADDR_GEN_MODE_RANDOM */
+
+/*****************************************************************************/
+
+typedef enum {
+    NM_PLATFORM_SIGNAL_NONE,
+    NM_PLATFORM_SIGNAL_ADDED,
+    NM_PLATFORM_SIGNAL_CHANGED,
+    NM_PLATFORM_SIGNAL_REMOVED,
+} NMPlatformSignalChangeType;
 
 /*****************************************************************************/
 
@@ -90,15 +93,11 @@ typedef struct {
     const NMEthtoolFeatureState states_list[];
 } NMEthtoolFeatureStates;
 
-/*****************************************************************************/
-
 typedef struct {
     guint32
         s[_NM_ETHTOOL_ID_COALESCE_NUM /* indexed by (NMEthtoolID - _NM_ETHTOOL_ID_COALESCE_FIRST) */
     ];
 } NMEthtoolCoalesceState;
-
-/*****************************************************************************/
 
 typedef struct {
     guint32 rx_pending;
@@ -112,6 +111,17 @@ typedef struct {
     bool rx : 1;
     bool tx : 1;
 } NMEthtoolPauseState;
+
+typedef struct {
+    guint32 rx;
+    guint32 tx;
+    guint32 other;
+    guint32 combined;
+} NMEthtoolChannelsState;
+
+typedef struct {
+    bool enabled : 1;
+} NMEthtoolEEEState;
 
 /*****************************************************************************/
 
@@ -149,6 +159,7 @@ typedef enum _nm_packed {
     NMP_OBJECT_TYPE_LNK_BRIDGE,
     NMP_OBJECT_TYPE_LNK_GRE,
     NMP_OBJECT_TYPE_LNK_GRETAP,
+    NMP_OBJECT_TYPE_LNK_HSR,
     NMP_OBJECT_TYPE_LNK_INFINIBAND,
     NMP_OBJECT_TYPE_LNK_IP6TNL,
     NMP_OBJECT_TYPE_LNK_IP6GRE,

@@ -129,7 +129,7 @@ nm_vpn_editor_plugin_get_plugin_info(NMVpnEditorPlugin *plugin)
 /**
  * nm_vpn_editor_plugin_set_plugin_info:
  * @plugin: the #NMVpnEditorPlugin instance
- * @plugin_info: (allow-none): a #NMVpnPluginInfo instance or %NULL
+ * @plugin_info: (nullable): a #NMVpnPluginInfo instance or %NULL
  *
  * Set or clear the plugin-info instance.
  * This takes a weak reference on @plugin_info, to avoid circular
@@ -209,7 +209,7 @@ nm_vpn_editor_plugin_get_vt(NMVpnEditorPlugin *plugin, NMVpnEditorPluginVT *vt, 
         if (!p_vt)
             p_vt_size = 0;
         g_return_val_if_fail(p_vt_size, 0);
-        memcpy(vt, p_vt, MIN(vt_size, p_vt_size));
+        memcpy(vt, p_vt, NM_MIN(vt_size, p_vt_size));
     }
 
     return p_vt_size;

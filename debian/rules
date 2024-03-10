@@ -18,7 +18,6 @@ override_dh_autoreconf:
 
 override_dh_auto_configure:
 	dh_auto_configure -- \
-		--libexecdir=/usr/lib/NetworkManager \
 		--runstatedir=/run \
 		--with-pppd-plugin-dir=$(PPPD_PLUGIN_DIR) \
 		--with-pppd=/usr/sbin/pppd \
@@ -27,9 +26,10 @@ override_dh_auto_configure:
 		--with-resolvconf=/sbin/resolvconf \
 		--with-dhclient=/sbin/dhclient \
 		--with-dnsmasq=/usr/sbin/dnsmasq \
+		--with-modprobe=/sbin/modprobe \
 		--with-polkit-agent-helper-1=/usr/lib/policykit-1/polkit-agent-helper-1 \
-		--with-systemdsystemunitdir=/lib/systemd/system \
-		--with-udev-dir=/lib/udev \
+		--with-systemdsystemunitdir=/usr/lib/systemd/system \
+		--with-udev-dir=/usr/lib/udev \
 		--with-dbus-sys-dir=/usr/share/dbus-1/system.d \
 		--with-crypto=gnutls \
 		--with-session-tracking=systemd \

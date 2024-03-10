@@ -37,6 +37,7 @@
 #define NM_DBUS_INTERFACE_DEVICE_DUMMY         NM_DBUS_INTERFACE_DEVICE ".Dummy"
 #define NM_DBUS_INTERFACE_DEVICE_GENERIC       NM_DBUS_INTERFACE_DEVICE ".Generic"
 #define NM_DBUS_INTERFACE_DEVICE_GRE           NM_DBUS_INTERFACE_DEVICE ".Gre"
+#define NM_DBUS_INTERFACE_DEVICE_HSR           NM_DBUS_INTERFACE_DEVICE ".Hsr"
 #define NM_DBUS_INTERFACE_DEVICE_INFINIBAND    NM_DBUS_INTERFACE_DEVICE ".Infiniband"
 #define NM_DBUS_INTERFACE_DEVICE_IP_TUNNEL     NM_DBUS_INTERFACE_DEVICE ".IPTunnel"
 #define NM_DBUS_INTERFACE_DEVICE_LOOPBACK      NM_DBUS_INTERFACE_DEVICE ".Loopback"
@@ -234,6 +235,7 @@ typedef enum {
  * @NM_DEVICE_TYPE_WIFI_P2P: an 802.11 Wi-Fi P2P device. Since: 1.16.
  * @NM_DEVICE_TYPE_VRF: A VRF (Virtual Routing and Forwarding) interface. Since: 1.24.
  * @NM_DEVICE_TYPE_LOOPBACK: a loopback interface. Since: 1.42.
+ * @NM_DEVICE_TYPE_HSR: A HSR/PRP device. Since: 1.46.
  *
  * #NMDeviceType values indicate the type of hardware represented by a
  * device object.
@@ -272,6 +274,7 @@ typedef enum {
     NM_DEVICE_TYPE_WIFI_P2P      = 30,
     NM_DEVICE_TYPE_VRF           = 31,
     NM_DEVICE_TYPE_LOOPBACK      = 32,
+    NM_DEVICE_TYPE_HSR           = 33,
 } NMDeviceType;
 
 /**
@@ -306,6 +309,7 @@ typedef enum /*< flags >*/ {
  * @NM_WIFI_DEVICE_CAP_FREQ_VALID: device reports frequency capabilities
  * @NM_WIFI_DEVICE_CAP_FREQ_2GHZ: device supports 2.4GHz frequencies
  * @NM_WIFI_DEVICE_CAP_FREQ_5GHZ: device supports 5GHz frequencies
+ * @NM_WIFI_DEVICE_CAP_FREQ_6GHZ: device supports 6GHz frequencies. Since: 1.46.
  * @NM_WIFI_DEVICE_CAP_MESH: device supports acting as a mesh point. Since: 1.20.
  * @NM_WIFI_DEVICE_CAP_IBSS_RSN: device supports WPA2/RSN in an IBSS network. Since: 1.22.
  *
@@ -324,6 +328,7 @@ typedef enum /*< flags >*/ {
     NM_WIFI_DEVICE_CAP_FREQ_VALID    = 0x00000100,
     NM_WIFI_DEVICE_CAP_FREQ_2GHZ     = 0x00000200,
     NM_WIFI_DEVICE_CAP_FREQ_5GHZ     = 0x00000400,
+    NM_WIFI_DEVICE_CAP_FREQ_6GHZ     = 0x00000800,
     NM_WIFI_DEVICE_CAP_MESH          = 0x00001000,
     NM_WIFI_DEVICE_CAP_IBSS_RSN      = 0x00002000,
 } NMDeviceWifiCapabilities;
@@ -447,7 +452,7 @@ typedef enum /*< flags >*/ {
  * @NM_DEVICE_MODEM_CAPABILITY_GSM_UMTS: modem supports at least one of GSM,
  * GPRS, EDGE, UMTS, HSDPA, HSUPA, or HSPA+ packet switched data capability
  * @NM_DEVICE_MODEM_CAPABILITY_LTE: modem has LTE data capability
- * @NM_DEVICE_MODEM_CAPABILITY_5GNR: modem has 5GNR data capability (Since: 1.36)
+ * @NM_DEVICE_MODEM_CAPABILITY_5GNR: modem has 5GNR data capability. Since: 1.36.
  *
  * #NMDeviceModemCapabilities values indicate the generic radio access
  * technology families a modem device supports.  For more information on the
@@ -605,6 +610,8 @@ typedef enum {
  * @NM_DEVICE_STATE_REASON_IP_METHOD_UNSUPPORTED: The selected IP method is not supported
  * @NM_DEVICE_STATE_REASON_SRIOV_CONFIGURATION_FAILED: configuration of SR-IOV parameters failed
  * @NM_DEVICE_STATE_REASON_PEER_NOT_FOUND: The Wi-Fi P2P peer could not be found
+ * @NM_DEVICE_STATE_REASON_DEVICE_HANDLER_FAILED: The device handler dispatcher returned an
+ *   error. Since: 1.46
  *
  * Device state change reason codes
  */
@@ -677,6 +684,7 @@ typedef enum {
     NM_DEVICE_STATE_REASON_IP_METHOD_UNSUPPORTED          = 65,
     NM_DEVICE_STATE_REASON_SRIOV_CONFIGURATION_FAILED     = 66,
     NM_DEVICE_STATE_REASON_PEER_NOT_FOUND                 = 67,
+    NM_DEVICE_STATE_REASON_DEVICE_HANDLER_FAILED          = 68,
 } NMDeviceStateReason;
 
 /**
@@ -967,7 +975,7 @@ typedef enum {
  * @NM_CHECKPOINT_CREATE_FLAG_DISCONNECT_NEW_DEVICES: upon rollback,
  *   disconnect any new device appeared after the checkpoint. Since: 1.6.
  * @NM_CHECKPOINT_CREATE_FLAG_ALLOW_OVERLAPPING: by default, creating
- *   a checkpoint fails if there are already existing checkoints that
+ *   a checkpoint fails if there are already existing checkpoints that
  *   reference the same devices. With this flag, creation of such
  *   checkpoints is allowed, however, if an older checkpoint
  *   that references overlapping devices gets rolled back, it will
@@ -986,7 +994,7 @@ typedef enum {
  *
  * The flags for CheckpointCreate call
  *
- * Since: 1.12 (public since 1.4, g-ir since 1.12)
+ * Since: 1.12: Public since 1.4, g-ir since 1.12.
  */
 typedef enum /*< flags >*/ {
     NM_CHECKPOINT_CREATE_FLAG_NONE                       = 0,
@@ -1409,5 +1417,22 @@ typedef enum /*< flags >*/ {
     NM_MPTCP_FLAGS_BACKUP   = 0x40,
     NM_MPTCP_FLAGS_FULLMESH = 0x80,
 } NMMptcpFlags;
+
+/* For secrets requests, hints starting with "x-vpn-message:" are a message to show, not
+ * a secret to request
+ */
+#define NM_SECRET_TAG_VPN_MSG "x-vpn-message:"
+
+/* For secrets requests, hints starting with "x-dynamic-challenge(-echo):" are dynamic
+ * 2FA challenges that are requested in a second authentication step, after the password
+ * (or whatever auth method is used) was already successfully validated. Because of
+ * that, the default secrets of the service mustn't be requested (again).
+ * When using the "-echo" variant, the user input doesn't need to be hidden even
+ * without --show-secrets
+ *
+ * Note: currently only implemented for VPN, but can be extended.
+ */
+#define NM_SECRET_TAG_DYNAMIC_CHALLENGE      "x-dynamic-challenge:"
+#define NM_SECRET_TAG_DYNAMIC_CHALLENGE_ECHO "x-dynamic-challenge-echo:"
 
 #endif /* __NM_DBUS_INTERFACE_H__ */

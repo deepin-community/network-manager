@@ -270,7 +270,7 @@ companion_state_changed_cb(NMDeviceWifi       *companion,
     NMDeviceState     self_state = nm_device_get_state(NM_DEVICE(self));
 
     if (old_state > NM_DEVICE_STATE_DISCONNECTED && state <= NM_DEVICE_STATE_DISCONNECTED) {
-        nm_device_emit_recheck_auto_activate(NM_DEVICE(self));
+        nm_device_recheck_auto_activate_schedule(NM_DEVICE(self));
     }
 
     if (self_state < NM_DEVICE_STATE_PREPARE || self_state > NM_DEVICE_STATE_ACTIVATED
@@ -497,7 +497,11 @@ static const NMDBusInterfaceInfoExtended interface_info_device_olpc_mesh = {
     .parent = NM_DEFINE_GDBUS_INTERFACE_INFO_INIT(
         NM_DBUS_INTERFACE_DEVICE_OLPC_MESH,
         .properties = NM_DEFINE_GDBUS_PROPERTY_INFOS(
-            NM_DEFINE_DBUS_PROPERTY_INFO_EXTENDED_READABLE("HwAddress", "s", NM_DEVICE_HW_ADDRESS),
+            NM_DEFINE_DBUS_PROPERTY_INFO_EXTENDED_READABLE(
+                "HwAddress",
+                "s",
+                NM_DEVICE_HW_ADDRESS,
+                .annotations = NM_GDBUS_ANNOTATION_INFO_LIST_DEPRECATED(), ),
             NM_DEFINE_DBUS_PROPERTY_INFO_EXTENDED_READABLE("Companion",
                                                            "o",
                                                            NM_DEVICE_OLPC_MESH_COMPANION),

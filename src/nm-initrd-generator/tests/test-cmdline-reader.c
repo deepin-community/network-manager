@@ -399,6 +399,7 @@ test_if_auto_with_mtu_and_mac(void)
     g_assert_cmpstr(nm_setting_ip_config_get_method(s_ip4),
                     ==,
                     NM_SETTING_IP4_CONFIG_METHOD_DISABLED);
+    g_assert_cmpstr(nm_setting_ip_config_get_dhcp_hostname(s_ip4), ==, NULL);
     g_assert(!nm_setting_ip_config_get_ignore_auto_dns(s_ip4));
 
     s_ip6 = nm_connection_get_setting_ip6_config(connection);
@@ -451,7 +452,7 @@ test_if_ip4_manual(void)
     g_assert_cmpstr(nm_ip_address_get_address(ip_addr), ==, "192.0.2.2");
     g_assert_cmpint(nm_ip_address_get_prefix(ip_addr), ==, 24);
     g_assert_cmpstr(nm_setting_ip_config_get_gateway(s_ip4), ==, "192.0.2.1");
-    g_assert_cmpstr(nm_setting_ip_config_get_dhcp_hostname(s_ip4), ==, "hostname0.example.com");
+    g_assert_cmpstr(nm_setting_ip_config_get_dhcp_hostname(s_ip4), ==, NULL);
     g_assert_cmpint(nm_setting_ip_config_get_required_timeout(s_ip4), ==, -1);
 
     s_ip6 = nm_connection_get_setting_ip6_config(connection);
@@ -459,6 +460,7 @@ test_if_ip4_manual(void)
     g_assert_cmpstr(nm_setting_ip_config_get_method(s_ip6),
                     ==,
                     NM_SETTING_IP6_CONFIG_METHOD_DISABLED);
+    g_assert_cmpstr(nm_setting_ip_config_get_dhcp_hostname(s_ip6), ==, NULL);
     g_assert(nm_setting_ip_config_get_may_fail(s_ip6));
     g_assert_cmpint(nm_setting_ip_config_get_required_timeout(s_ip6), ==, -1);
 
@@ -480,12 +482,65 @@ test_if_ip4_manual(void)
     g_assert_cmpstr(nm_ip_address_get_address(ip_addr), ==, "203.0.113.2");
     g_assert_cmpint(nm_ip_address_get_prefix(ip_addr), ==, 26);
     g_assert_cmpstr(nm_setting_ip_config_get_gateway(s_ip4), ==, "203.0.113.1");
-    g_assert_cmpstr(nm_setting_ip_config_get_dhcp_hostname(s_ip4), ==, "hostname1.example.com");
+    g_assert_cmpstr(nm_setting_ip_config_get_dhcp_hostname(s_ip4), ==, NULL);
 
     s_ip6 = nm_connection_get_setting_ip6_config(connection);
     g_assert(s_ip6);
     g_assert_cmpstr(nm_setting_ip_config_get_method(s_ip6), ==, NM_SETTING_IP6_CONFIG_METHOD_AUTO);
     g_assert(nm_setting_ip_config_get_may_fail(s_ip6));
+}
+
+static void
+test_if_ip4_auto(void)
+{
+    gs_unref_hashtable GHashTable *connections = NULL;
+    const char *const             *ARGV        = NM_MAKE_STRV("ip=172.25.1.1::172.25.1.2:24:"
+                                                              "myhostname:eth0:dhcp",
+                                           "rd.net.timeout.dhcp=10");
+    NMConnection                  *connection;
+    NMSettingConnection           *s_con;
+    NMSettingIPConfig             *s_ip4;
+    NMSettingIPConfig             *s_ip6;
+    NMIPAddress                   *ip_addr;
+    gs_free char                  *hostname            = NULL;
+    gint64                         carrier_timeout_sec = 0;
+
+    connections = _parse(ARGV, &hostname, &carrier_timeout_sec);
+    g_assert_cmpint(g_hash_table_size(connections), ==, 1);
+    g_assert_cmpstr(hostname, ==, "myhostname");
+    g_assert_cmpint(carrier_timeout_sec, ==, 0);
+
+    connection = g_hash_table_lookup(connections, "eth0");
+    nmtst_assert_connection_verifies_without_normalization(connection);
+    g_assert_cmpstr(nm_connection_get_id(connection), ==, "eth0");
+
+    s_con = nm_connection_get_setting_connection(connection);
+    g_assert(s_con);
+    g_assert_cmpint(nm_setting_connection_get_wait_device_timeout(s_con), ==, -1);
+
+    s_ip4 = nm_connection_get_setting_ip4_config(connection);
+    g_assert(s_ip4);
+    g_assert_cmpstr(nm_setting_ip_config_get_method(s_ip4), ==, NM_SETTING_IP4_CONFIG_METHOD_AUTO);
+    g_assert(!nm_setting_ip_config_get_ignore_auto_dns(s_ip4));
+    g_assert_cmpint(nm_setting_ip_config_get_num_dns(s_ip4), ==, 0);
+    g_assert_cmpint(nm_setting_ip_config_get_num_routes(s_ip4), ==, 0);
+    g_assert_cmpint(nm_setting_ip_config_get_num_addresses(s_ip4), ==, 1);
+    g_assert_cmpint(nm_setting_ip_config_get_dhcp_timeout(s_ip4), ==, 10);
+    g_assert_cmpstr(nm_setting_ip_config_get_gateway(s_ip4), ==, "172.25.1.2");
+    g_assert_cmpstr(nm_setting_ip_config_get_dhcp_hostname(s_ip4), ==, "myhostname");
+
+    ip_addr = nm_setting_ip_config_get_address(s_ip4, 0);
+    g_assert(ip_addr);
+    g_assert_cmpstr(nm_ip_address_get_address(ip_addr), ==, "172.25.1.1");
+    g_assert_cmpint(nm_ip_address_get_prefix(ip_addr), ==, 24);
+
+    s_ip6 = nm_connection_get_setting_ip6_config(connection);
+    g_assert(s_ip6);
+    g_assert_cmpstr(nm_setting_ip_config_get_method(s_ip6), ==, NM_SETTING_IP6_CONFIG_METHOD_AUTO);
+    g_assert_cmpstr(nm_setting_ip_config_get_dhcp_hostname(s_ip6), ==, "myhostname");
+    g_assert(nm_setting_ip_config_get_may_fail(s_ip6));
+    g_assert_cmpint(nm_setting_ip_config_get_dhcp_timeout(s_ip6), ==, 10);
+    g_assert_cmpint(nm_setting_ip_config_get_required_timeout(s_ip6), ==, -1);
 }
 
 static void
@@ -535,6 +590,7 @@ test_if_ip6_manual(void)
     const char *const             *ARGV = NM_MAKE_STRV("ip=[2001:0db8::02]/64::[2001:0db8::01]::"
                                                        "hostname0.example.com:eth4::[2001:0db8::53]");
     NMConnection                  *connection;
+    NMSettingIPConfig             *s_ip4;
     NMSettingIPConfig             *s_ip6;
     NMIPAddress                   *ip_addr;
     gs_free char                  *hostname            = NULL;
@@ -548,6 +604,11 @@ test_if_ip6_manual(void)
     connection = g_hash_table_lookup(connections, "eth4");
     nmtst_assert_connection_verifies_without_normalization(connection);
     g_assert_cmpstr(nm_connection_get_id(connection), ==, "eth4");
+
+    s_ip4 = nm_connection_get_setting_ip4_config(connection);
+    g_assert(s_ip4);
+    g_assert_cmpstr(nm_setting_ip_config_get_method(s_ip4), ==, NM_SETTING_IP4_CONFIG_METHOD_AUTO);
+    g_assert_cmpstr(nm_setting_ip_config_get_dhcp_hostname(s_ip4), ==, "hostname0.example.com");
 
     s_ip6 = nm_connection_get_setting_ip6_config(connection);
     g_assert(s_ip6);
@@ -564,7 +625,7 @@ test_if_ip6_manual(void)
     g_assert_cmpstr(nm_ip_address_get_address(ip_addr), ==, "2001:db8::2");
     g_assert_cmpint(nm_ip_address_get_prefix(ip_addr), ==, 64);
     g_assert_cmpstr(nm_setting_ip_config_get_gateway(s_ip6), ==, "2001:db8::1");
-    g_assert_cmpstr(nm_setting_ip_config_get_dhcp_hostname(s_ip6), ==, "hostname0.example.com");
+    g_assert_cmpstr(nm_setting_ip_config_get_dhcp_hostname(s_ip6), ==, NULL);
 }
 
 static void
@@ -616,6 +677,7 @@ test_if_mac_ifname(void)
     const char *const             *ARGV = NM_MAKE_STRV("ip=[2001:0db8::42]/64::[2001:0db8::01]::"
                                                        "hostname0:00-11-22-33-44-55::[2001:0db8::53]");
     NMConnection                  *connection;
+    NMSettingIPConfig             *s_ip4;
     NMSettingIPConfig             *s_ip6;
     NMSettingWired                *s_wired;
     NMIPAddress                   *ip_addr;
@@ -636,6 +698,11 @@ test_if_mac_ifname(void)
     g_assert(s_wired);
     g_assert_cmpstr(nm_setting_wired_get_mac_address(s_wired), ==, "00:11:22:33:44:55");
 
+    s_ip4 = nm_connection_get_setting_ip4_config(connection);
+    g_assert(s_ip4);
+    g_assert_cmpstr(nm_setting_ip_config_get_method(s_ip4), ==, NM_SETTING_IP4_CONFIG_METHOD_AUTO);
+    g_assert_cmpstr(nm_setting_ip_config_get_dhcp_hostname(s_ip4), ==, "hostname0");
+
     s_ip6 = nm_connection_get_setting_ip6_config(connection);
     g_assert(s_ip6);
     g_assert_cmpstr(nm_setting_ip_config_get_method(s_ip6),
@@ -646,12 +713,13 @@ test_if_mac_ifname(void)
     g_assert_cmpstr(nm_setting_ip_config_get_dns(s_ip6, 0), ==, "2001:db8::53");
     g_assert_cmpint(nm_setting_ip_config_get_num_routes(s_ip6), ==, 0);
     g_assert_cmpint(nm_setting_ip_config_get_num_addresses(s_ip6), ==, 1);
+    g_assert_cmpstr(nm_setting_ip_config_get_gateway(s_ip6), ==, "2001:db8::1");
+    g_assert_cmpstr(nm_setting_ip_config_get_dhcp_hostname(s_ip6), ==, NULL);
+
     ip_addr = nm_setting_ip_config_get_address(s_ip6, 0);
     g_assert(ip_addr);
     g_assert_cmpstr(nm_ip_address_get_address(ip_addr), ==, "2001:db8::42");
     g_assert_cmpint(nm_ip_address_get_prefix(ip_addr), ==, 64);
-    g_assert_cmpstr(nm_setting_ip_config_get_gateway(s_ip6), ==, "2001:db8::1");
-    g_assert_cmpstr(nm_setting_ip_config_get_dhcp_hostname(s_ip6), ==, "hostname0");
 }
 
 static void
@@ -963,7 +1031,7 @@ test_bond(void)
                     ==,
                     NM_SETTING_WIRED_SETTING_NAME);
     g_assert_cmpstr(nm_setting_connection_get_id(s_con), ==, "eth0");
-    g_assert_cmpstr(nm_setting_connection_get_slave_type(s_con), ==, NM_SETTING_BOND_SETTING_NAME);
+    g_assert_cmpstr(nm_setting_connection_get_port_type(s_con), ==, NM_SETTING_BOND_SETTING_NAME);
     g_assert_cmpstr(nm_setting_connection_get_master(s_con), ==, master_uuid);
     g_assert_cmpint(nm_setting_connection_get_multi_connect(s_con),
                     ==,
@@ -979,7 +1047,7 @@ test_bond(void)
                     ==,
                     NM_SETTING_WIRED_SETTING_NAME);
     g_assert_cmpstr(nm_setting_connection_get_id(s_con), ==, "eth1");
-    g_assert_cmpstr(nm_setting_connection_get_slave_type(s_con), ==, NM_SETTING_BOND_SETTING_NAME);
+    g_assert_cmpstr(nm_setting_connection_get_port_type(s_con), ==, NM_SETTING_BOND_SETTING_NAME);
     g_assert_cmpstr(nm_setting_connection_get_master(s_con), ==, master_uuid);
     g_assert_cmpint(nm_setting_connection_get_multi_connect(s_con),
                     ==,
@@ -1040,6 +1108,7 @@ test_bond_ip(void)
     g_assert_cmpstr(nm_setting_ip_config_get_method(s_ip6),
                     ==,
                     NM_SETTING_IP6_CONFIG_METHOD_DISABLED);
+    g_assert_cmpstr(nm_setting_ip_config_get_dhcp_hostname(s_ip6), ==, NULL);
     g_assert(!nm_setting_ip_config_get_ignore_auto_dns(s_ip6));
     g_assert_cmpint(nm_setting_ip_config_get_num_dns(s_ip6), ==, 0);
     g_assert(!nm_setting_ip_config_get_gateway(s_ip6));
@@ -1060,7 +1129,7 @@ test_bond_ip(void)
                     ==,
                     NM_SETTING_WIRED_SETTING_NAME);
     g_assert_cmpstr(nm_setting_connection_get_id(s_con), ==, "eth0");
-    g_assert_cmpstr(nm_setting_connection_get_slave_type(s_con), ==, NM_SETTING_BOND_SETTING_NAME);
+    g_assert_cmpstr(nm_setting_connection_get_port_type(s_con), ==, NM_SETTING_BOND_SETTING_NAME);
     g_assert_cmpstr(nm_setting_connection_get_master(s_con), ==, master_uuid);
     g_assert_cmpint(nm_setting_connection_get_multi_connect(s_con),
                     ==,
@@ -1076,7 +1145,7 @@ test_bond_ip(void)
                     ==,
                     NM_SETTING_WIRED_SETTING_NAME);
     g_assert_cmpstr(nm_setting_connection_get_id(s_con), ==, "eth1");
-    g_assert_cmpstr(nm_setting_connection_get_slave_type(s_con), ==, NM_SETTING_BOND_SETTING_NAME);
+    g_assert_cmpstr(nm_setting_connection_get_port_type(s_con), ==, NM_SETTING_BOND_SETTING_NAME);
     g_assert_cmpstr(nm_setting_connection_get_master(s_con), ==, master_uuid);
     g_assert_cmpint(nm_setting_connection_get_multi_connect(s_con),
                     ==,
@@ -1139,7 +1208,7 @@ test_bond_default(void)
                     ==,
                     NM_SETTING_WIRED_SETTING_NAME);
     g_assert_cmpstr(nm_setting_connection_get_id(s_con), ==, "eth0");
-    g_assert_cmpstr(nm_setting_connection_get_slave_type(s_con), ==, NM_SETTING_BOND_SETTING_NAME);
+    g_assert_cmpstr(nm_setting_connection_get_port_type(s_con), ==, NM_SETTING_BOND_SETTING_NAME);
     g_assert_cmpstr(nm_setting_connection_get_master(s_con), ==, master_uuid);
     g_assert_cmpint(nm_setting_connection_get_multi_connect(s_con),
                     ==,
@@ -1215,9 +1284,7 @@ test_bridge(void)
                     ==,
                     NM_SETTING_WIRED_SETTING_NAME);
     g_assert_cmpstr(nm_setting_connection_get_id(s_con), ==, "eth0");
-    g_assert_cmpstr(nm_setting_connection_get_slave_type(s_con),
-                    ==,
-                    NM_SETTING_BRIDGE_SETTING_NAME);
+    g_assert_cmpstr(nm_setting_connection_get_port_type(s_con), ==, NM_SETTING_BRIDGE_SETTING_NAME);
     g_assert_cmpstr(nm_setting_connection_get_master(s_con), ==, master_uuid);
     g_assert_cmpint(nm_setting_connection_get_multi_connect(s_con),
                     ==,
@@ -1233,9 +1300,7 @@ test_bridge(void)
                     ==,
                     NM_SETTING_WIRED_SETTING_NAME);
     g_assert_cmpstr(nm_setting_connection_get_id(s_con), ==, "eth1");
-    g_assert_cmpstr(nm_setting_connection_get_slave_type(s_con),
-                    ==,
-                    NM_SETTING_BRIDGE_SETTING_NAME);
+    g_assert_cmpstr(nm_setting_connection_get_port_type(s_con), ==, NM_SETTING_BRIDGE_SETTING_NAME);
     g_assert_cmpstr(nm_setting_connection_get_master(s_con), ==, master_uuid);
     g_assert_cmpint(nm_setting_connection_get_multi_connect(s_con),
                     ==,
@@ -1296,9 +1361,7 @@ test_bridge_default(void)
                     ==,
                     NM_SETTING_WIRED_SETTING_NAME);
     g_assert_cmpstr(nm_setting_connection_get_id(s_con), ==, "eth0");
-    g_assert_cmpstr(nm_setting_connection_get_slave_type(s_con),
-                    ==,
-                    NM_SETTING_BRIDGE_SETTING_NAME);
+    g_assert_cmpstr(nm_setting_connection_get_port_type(s_con), ==, NM_SETTING_BRIDGE_SETTING_NAME);
     g_assert_cmpstr(nm_setting_connection_get_master(s_con), ==, master_uuid);
     g_assert_cmpint(nm_setting_connection_get_multi_connect(s_con),
                     ==,
@@ -1364,7 +1427,7 @@ test_bridge_ip(void)
                         ==,
                         NM_SETTING_WIRED_SETTING_NAME);
         g_assert_cmpstr(nm_setting_connection_get_id(s_con), ==, ifname);
-        g_assert_cmpstr(nm_setting_connection_get_slave_type(s_con),
+        g_assert_cmpstr(nm_setting_connection_get_port_type(s_con),
                         ==,
                         NM_SETTING_BRIDGE_SETTING_NAME);
         g_assert_cmpstr(nm_setting_connection_get_master(s_con), ==, master_uuid);
@@ -1403,6 +1466,7 @@ test_team(void)
     g_assert_cmpstr(nm_setting_ip_config_get_method(s_ip4),
                     ==,
                     NM_SETTING_IP4_CONFIG_METHOD_DISABLED);
+    g_assert_cmpstr(nm_setting_ip_config_get_dhcp_hostname(s_ip4), ==, NULL);
     g_assert(!nm_setting_ip_config_get_ignore_auto_dns(s_ip4));
     g_assert_cmpint(nm_setting_ip_config_get_num_dns(s_ip4), ==, 0);
     g_assert(!nm_setting_ip_config_get_gateway(s_ip4));
@@ -1429,7 +1493,7 @@ test_team(void)
                     ==,
                     NM_SETTING_WIRED_SETTING_NAME);
     g_assert_cmpstr(nm_setting_connection_get_id(s_con), ==, "eth0");
-    g_assert_cmpstr(nm_setting_connection_get_slave_type(s_con), ==, NM_SETTING_TEAM_SETTING_NAME);
+    g_assert_cmpstr(nm_setting_connection_get_port_type(s_con), ==, NM_SETTING_TEAM_SETTING_NAME);
     g_assert_cmpstr(nm_setting_connection_get_master(s_con), ==, master_uuid);
     g_assert_cmpint(nm_setting_connection_get_multi_connect(s_con),
                     ==,
@@ -1445,7 +1509,7 @@ test_team(void)
                     ==,
                     NM_SETTING_WIRED_SETTING_NAME);
     g_assert_cmpstr(nm_setting_connection_get_id(s_con), ==, "eth1");
-    g_assert_cmpstr(nm_setting_connection_get_slave_type(s_con), ==, NM_SETTING_TEAM_SETTING_NAME);
+    g_assert_cmpstr(nm_setting_connection_get_port_type(s_con), ==, NM_SETTING_TEAM_SETTING_NAME);
     g_assert_cmpstr(nm_setting_connection_get_master(s_con), ==, master_uuid);
     g_assert_cmpint(nm_setting_connection_get_multi_connect(s_con),
                     ==,
@@ -2291,6 +2355,33 @@ test_dhcp_vendor_class_id(void)
 }
 
 static void
+test_dhcp_dscp(void)
+{
+    const char *const            *ARGV;
+    gs_unref_object NMConnection *connection = NULL;
+    NMSettingIPConfig            *s_ip4;
+
+    ARGV       = NM_MAKE_STRV("rd.net.dhcp.dscp=CS4", "ip=eno1:dhcp");
+    connection = _parse_con(ARGV, "eno1");
+    s_ip4      = NM_SETTING_IP_CONFIG(nm_connection_get_setting_ip4_config(connection));
+    g_assert_cmpstr(nm_setting_ip_config_get_dhcp_dscp(s_ip4), ==, "CS4");
+
+    g_clear_object(&connection);
+
+    ARGV       = NM_MAKE_STRV("rd.net.dhcp.dscp=CS0", "ip=eno1:dhcp");
+    connection = _parse_con(ARGV, "eno1");
+    s_ip4      = NM_SETTING_IP_CONFIG(nm_connection_get_setting_ip4_config(connection));
+    g_assert_cmpstr(nm_setting_ip_config_get_dhcp_dscp(s_ip4), ==, "CS0");
+
+    g_clear_object(&connection);
+
+    ARGV       = NM_MAKE_STRV("ip=eno1:dhcp");
+    connection = _parse_con(ARGV, "eno1");
+    s_ip4      = NM_SETTING_IP_CONFIG(nm_connection_get_setting_ip4_config(connection));
+    g_assert_cmpstr(nm_setting_ip_config_get_dhcp_dscp(s_ip4), ==, NULL);
+}
+
+static void
 test_infiniband_iface(void)
 {
     const char *const            *ARGV       = NM_MAKE_STRV("ip=ib1:dhcp");
@@ -2551,6 +2642,7 @@ main(int argc, char **argv)
     g_test_add_func("/initrd/cmdline/if_dhcp6", test_if_dhcp6);
     g_test_add_func("/initrd/cmdline/if_auto_with_mtu_and_mac", test_if_auto_with_mtu_and_mac);
     g_test_add_func("/initrd/cmdline/if_ip4_manual", test_if_ip4_manual);
+    g_test_add_func("/initrd/cmdline/if_ip4_auto", test_if_ip4_auto);
     g_test_add_func("/initrd/cmdline/if_ip4_manual_no_dev", test_if_ip4_manual_no_dev);
     g_test_add_func("/initrd/cmdline/if_ip6_manual", test_if_ip6_manual);
     g_test_add_func("/initrd/cmdline/if_mac_ifname", test_if_mac_ifname);
@@ -2587,6 +2679,7 @@ main(int argc, char **argv)
     g_test_add_func("/initrd/cmdline/neednet/no_args", test_neednet_no_args);
     g_test_add_func("/initrd/cmdline/neednet/args", test_neednet_args);
     g_test_add_func("/initrd/cmdline/dhcp/vendor_class_id", test_dhcp_vendor_class_id);
+    g_test_add_func("/initrd/cmdline/dhcp/dscp", test_dhcp_dscp);
     g_test_add_func("/initrd/cmdline/infiniband/iface", test_infiniband_iface);
     g_test_add_func("/initrd/cmdline/infiniband/mac", test_infiniband_mac);
     g_test_add_func("/initrd/cmdline/infiniband/pkey", test_infiniband_pkey);

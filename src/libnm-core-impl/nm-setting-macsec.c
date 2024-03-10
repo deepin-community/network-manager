@@ -35,7 +35,8 @@ NM_GOBJECT_PROPERTIES_DEFINE_BASE(PROP_PARENT,
                                   PROP_MKA_CKN,
                                   PROP_PORT,
                                   PROP_VALIDATION,
-                                  PROP_SEND_SCI, );
+                                  PROP_SEND_SCI,
+                                  PROP_OFFLOAD, );
 
 typedef struct {
     char  *parent;
@@ -47,6 +48,7 @@ typedef struct {
     gint32 port;
     bool   encrypt;
     bool   send_sci;
+    gint32 offload;
 } NMSettingMacsecPrivate;
 
 /**
@@ -55,20 +57,18 @@ typedef struct {
  * MACSec Settings
  */
 struct _NMSettingMacsec {
-    NMSetting parent;
-    /* In the past, this struct was public API. Preserve ABI! */
+    NMSetting              parent;
+    NMSettingMacsecPrivate _priv;
 };
 
 struct _NMSettingMacsecClass {
     NMSettingClass parent;
-    /* In the past, this struct was public API. Preserve ABI! */
-    gpointer padding[4];
 };
 
 G_DEFINE_TYPE(NMSettingMacsec, nm_setting_macsec, NM_TYPE_SETTING)
 
 #define NM_SETTING_MACSEC_GET_PRIVATE(o) \
-    (G_TYPE_INSTANCE_GET_PRIVATE((o), NM_TYPE_SETTING_MACSEC, NMSettingMacsecPrivate))
+    _NM_GET_PRIVATE(o, NMSettingMacsec, NM_IS_SETTING_MACSEC, NMSetting)
 
 /*****************************************************************************/
 
@@ -214,6 +214,22 @@ nm_setting_macsec_get_send_sci(NMSettingMacsec *setting)
     return NM_SETTING_MACSEC_GET_PRIVATE(setting)->send_sci;
 }
 
+/**
+ * nm_setting_macsec_get_offload:
+ * @setting: the #NMSettingMacsec
+ *
+ * Returns: the #NMSettingMacsec:offload property of the setting
+ *
+ * Since: 1.46
+ **/
+NMSettingMacsecOffload
+nm_setting_macsec_get_offload(NMSettingMacsec *setting)
+{
+    g_return_val_if_fail(NM_IS_SETTING_MACSEC(setting), NM_SETTING_MACSEC_OFFLOAD_DEFAULT);
+
+    return NM_SETTING_MACSEC_GET_PRIVATE(setting)->offload;
+}
+
 static GPtrArray *
 need_secrets(NMSetting *setting, gboolean check_rerequest)
 {
@@ -306,7 +322,7 @@ verify(NMSetting *setting, NMConnection *connection, GError **error)
             if (s_con) {
                 const char *master = NULL, *slave_type = NULL;
 
-                slave_type = nm_setting_connection_get_slave_type(s_con);
+                slave_type = nm_setting_connection_get_port_type(s_con);
                 if (!g_strcmp0(slave_type, NM_SETTING_MACSEC_SETTING_NAME))
                     master = nm_setting_connection_get_master(s_con);
 
@@ -316,7 +332,7 @@ verify(NMSetting *setting, NMConnection *connection, GError **error)
                                 NM_CONNECTION_ERROR_INVALID_PROPERTY,
                                 _("'%s' value doesn't match '%s=%s'"),
                                 priv->parent,
-                                NM_SETTING_CONNECTION_MASTER,
+                                NM_SETTING_CONNECTION_CONTROLLER,
                                 master);
                     g_prefix_error(error,
                                    "%s.%s: ",
@@ -436,8 +452,6 @@ nm_setting_macsec_class_init(NMSettingMacsecClass *klass)
     NMSettingClass *setting_class       = NM_SETTING_CLASS(klass);
     GArray         *properties_override = _nm_sett_info_property_override_create_array();
 
-    g_type_class_add_private(klass, sizeof(NMSettingMacsecPrivate));
-
     object_class->get_property = _nm_setting_property_get_property_direct;
     object_class->set_property = _nm_setting_property_set_property_direct;
 
@@ -460,7 +474,8 @@ nm_setting_macsec_class_init(NMSettingMacsecClass *klass)
                                               PROP_PARENT,
                                               NM_SETTING_PARAM_INFERRABLE,
                                               NMSettingMacsecPrivate,
-                                              parent);
+                                              parent,
+                                              .direct_string_allow_empty = TRUE);
 
     /**
      * NMSettingMacsec:mode:
@@ -511,7 +526,8 @@ nm_setting_macsec_class_init(NMSettingMacsecClass *klass)
                                               PROP_MKA_CAK,
                                               NM_SETTING_PARAM_SECRET,
                                               NMSettingMacsecPrivate,
-                                              mka_cak);
+                                              mka_cak,
+                                              .direct_string_allow_empty = TRUE);
 
     /**
      * NMSettingMacsec:mka-cak-flags:
@@ -543,7 +559,8 @@ nm_setting_macsec_class_init(NMSettingMacsecClass *klass)
                                               PROP_MKA_CKN,
                                               NM_SETTING_PARAM_NONE,
                                               NMSettingMacsecPrivate,
-                                              mka_ckn);
+                                              mka_ckn,
+                                              .direct_string_allow_empty = TRUE);
 
     /**
      * NMSettingMacsec:port:
@@ -598,11 +615,40 @@ nm_setting_macsec_class_init(NMSettingMacsecClass *klass)
                                                NMSettingMacsecPrivate,
                                                send_sci);
 
+    /**
+     * NMSettingMacsec:offload:
+     *
+     * Specifies the MACsec offload mode.
+     *
+     * %NM_SETTING_MACSEC_OFFLOAD_OFF disables MACsec offload.
+     *
+     * %NM_SETTING_MACSEC_OFFLOAD_PHY and %NM_SETTING_MACSEC_OFFLOAD_MAC request offload
+     * respectively to the PHY or to the MAC; if the selected mode is not available, the
+     * connection will fail.
+     *
+     * %NM_SETTING_MACSEC_OFFLOAD_DEFAULT uses the global default value specified in
+     * NetworkManager configuration; if no global default is defined, the built-in
+     * default is %NM_SETTING_MACSEC_OFFLOAD_OFF.
+     *
+     * Since: 1.46
+     **/
+    _nm_setting_property_define_direct_enum(properties_override,
+                                            obj_properties,
+                                            NM_SETTING_MACSEC_OFFLOAD,
+                                            PROP_OFFLOAD,
+                                            NM_TYPE_SETTING_MACSEC_OFFLOAD,
+                                            NM_SETTING_MACSEC_OFFLOAD_DEFAULT,
+                                            NM_SETTING_PARAM_INFERRABLE
+                                                | NM_SETTING_PARAM_FUZZY_IGNORE,
+                                            NULL,
+                                            NMSettingMacsecPrivate,
+                                            offload);
+
     g_object_class_install_properties(object_class, _PROPERTY_ENUMS_LAST, obj_properties);
 
     _nm_setting_class_commit(setting_class,
                              NM_META_SETTING_TYPE_MACSEC,
                              NULL,
                              properties_override,
-                             NM_SETT_INFO_PRIVATE_OFFSET_FROM_CLASS);
+                             G_STRUCT_OFFSET(NMSettingMacsec, _priv));
 }

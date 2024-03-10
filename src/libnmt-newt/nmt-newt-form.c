@@ -70,7 +70,7 @@ static void nmt_newt_form_redraw(NmtNewtForm *form);
 
 /**
  * nmt_newt_form_new:
- * @title: (allow-none): the form title
+ * @title: (nullable): the form title
  *
  * Creates a new form, which will be shown centered on the screen.
  * Compare nmt_newt_form_new_fullscreen(). You can also position a
@@ -91,7 +91,7 @@ nmt_newt_form_new(const char *title)
 
 /**
  * nmt_newt_form_new_fullscreen:
- * @title: (allow-none): the form title
+ * @title: (nullable): the form title
  *
  * Creates a new fullscreen form. Compare nmt_newt_form_new().
  *
@@ -182,9 +182,9 @@ nmt_newt_form_build(NmtNewtForm *form)
     newtGetScreenSize(&screen_width, &screen_height);
 
     if (!priv->fixed_width)
-        priv->width = MIN(form_width + 2 * priv->padding, screen_width - 2);
+        priv->width = NM_MIN(form_width + 2 * ((gint64) priv->padding), screen_width - 2);
     if (!priv->fixed_height)
-        priv->height = MIN(form_height + 2 * priv->padding, screen_height - 2);
+        priv->height = NM_MIN(form_height + 2 * ((gint64) priv->padding), screen_height - 2);
 
     if (!priv->fixed_x)
         priv->x = (screen_width - form_width) / 2;

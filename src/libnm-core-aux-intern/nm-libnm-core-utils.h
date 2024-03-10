@@ -21,6 +21,13 @@
 #define nm_auto_unref_ip_address nm_auto(_nm_ip_address_unref)
 NM_AUTO_DEFINE_FCN0(NMIPAddress *, _nm_ip_address_unref, nm_ip_address_unref);
 
+static inline NMIPRoute *
+_nm_ip_route_ref(NMIPRoute *route)
+{
+    nm_ip_route_ref(route);
+    return route;
+}
+
 #define nm_auto_unref_ip_route nm_auto(_nm_auto_unref_ip_route)
 NM_AUTO_DEFINE_FCN0(NMIPRoute *, _nm_auto_unref_ip_route, nm_ip_route_unref);
 
@@ -52,7 +59,7 @@ NM_AUTO_DEFINE_FCN0(NMWireGuardPeer *, _nm_auto_unref_wgpeer, nm_wireguard_peer_
 
 /****************************************************************************/
 
-const char **nm_utils_bond_option_arp_ip_targets_split(const char *arp_ip_target);
+const char **nm_utils_bond_option_ip_split(const char *arp_ip_target);
 
 void _nm_setting_bond_remove_options_miimon(NMSettingBond *s_bond);
 void _nm_setting_bond_remove_options_arp_interval(NMSettingBond *s_bond);
@@ -94,6 +101,18 @@ typedef enum {
 } NMBondFailOverMac;
 
 NMBondFailOverMac _nm_setting_bond_fail_over_mac_from_string(const char *str);
+
+typedef enum {
+    NM_BOND_LACP_ACTIVE_UNKNOWN = -1,
+
+    /* The numeric values correspond to kernel's numbering. */
+    NM_BOND_LACP_ACTIVE_OFF = 0,
+    NM_BOND_LACP_ACTIVE_ON  = 1,
+
+    _NM_BOND_LACP_ACTIVE_NUM,
+} NMBondLacpActive;
+
+NMBondLacpActive _nm_setting_bond_lacp_active_from_string(const char *str);
 
 typedef enum {
     NM_BOND_LACP_RATE_UNKNOWN = -1,
@@ -254,6 +273,7 @@ NMClientPermissionResult nm_client_permission_result_from_string(const char *nm)
 const char              *nm_client_permission_result_to_string(NMClientPermissionResult permission);
 
 gboolean nm_utils_validate_dhcp4_vendor_class_id(const char *vci, GError **error);
+gboolean nm_utils_validate_dhcp_dscp(const char *dscp, GError **error);
 
 /*****************************************************************************/
 

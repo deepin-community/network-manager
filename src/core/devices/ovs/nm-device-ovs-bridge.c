@@ -97,9 +97,16 @@ attach_port(NMDevice                  *device,
     return TRUE;
 }
 
-static void
-detach_port(NMDevice *device, NMDevice *port, gboolean configure)
-{}
+static NMTernary
+detach_port(NMDevice                  *device,
+            NMDevice                  *port,
+            gboolean                   configure,
+            GCancellable              *cancellable,
+            NMDeviceAttachPortCallback callback,
+            gpointer                   user_data)
+{
+    return TRUE;
+}
 
 void
 nm_device_ovs_reapply_connection(NMDevice *self, NMConnection *con_old, NMConnection *con_new)
@@ -145,7 +152,11 @@ static const NMDBusInterfaceInfoExtended interface_info_device_ovs_bridge = {
     .parent = NM_DEFINE_GDBUS_INTERFACE_INFO_INIT(
         NM_DBUS_INTERFACE_DEVICE_OVS_BRIDGE,
         .properties = NM_DEFINE_GDBUS_PROPERTY_INFOS(
-            NM_DEFINE_DBUS_PROPERTY_INFO_EXTENDED_READABLE("Slaves", "ao", NM_DEVICE_SLAVES), ), ),
+            NM_DEFINE_DBUS_PROPERTY_INFO_EXTENDED_READABLE(
+                "Slaves",
+                "ao",
+                NM_DEVICE_SLAVES,
+                .annotations = NM_GDBUS_ANNOTATION_INFO_LIST_DEPRECATED(), ), ), ),
 };
 
 static void

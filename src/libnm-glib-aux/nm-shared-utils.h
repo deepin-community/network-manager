@@ -79,7 +79,7 @@ G_STATIC_ASSERT(sizeof(int) == sizeof(gint32));
     ({                                             \
         _nm_unused typeof(value) _value = (value); \
                                                    \
-        _Generic((value), int : TRUE);             \
+        _Generic((value), int: TRUE);              \
     })
 #else
 #define _NM_INT_LE_MAXINT32(value)                   \
@@ -90,6 +90,15 @@ G_STATIC_ASSERT(sizeof(int) == sizeof(gint32));
         TRUE;                                        \
     })
 #endif
+
+/*****************************************************************************/
+
+typedef enum _nm_packed {
+    /* No type, empty value */
+    NM_PORT_KIND_NONE,
+    NM_PORT_KIND_BOND,
+    NM_PORT_KIND_BRIDGE,
+} NMPortKind;
 
 /*****************************************************************************/
 
@@ -149,6 +158,7 @@ typedef enum {
 #define _NM_LINK_TYPE_SW_MASTER_FIRST NM_LINK_TYPE_BRIDGE
     NM_LINK_TYPE_BRIDGE,
     NM_LINK_TYPE_BOND,
+    NM_LINK_TYPE_HSR,
     NM_LINK_TYPE_TEAM,
 #define _NM_LINK_TYPE_SW_MASTER_LAST NM_LINK_TYPE_TEAM
 
@@ -200,12 +210,13 @@ typedef struct {
 
 #define NM_ETHER_ADDR_INIT(...) ((NMEtherAddr) _NM_ETHER_ADDR_INIT(__VA_ARGS__))
 
-struct _NMIPAddr;
-extern const struct _NMIPAddr nm_ip_addr_zero;
+union _NMIPAddr;
+
+extern const union _NMIPAddr nm_ip_addr_zero;
 
 /* Let's reuse nm_ip_addr_zero also for nm_ether_addr_zero. It's a union that
  * also contains a NMEtherAddr field. */
-#define nm_ether_addr_zero (*((const NMEtherAddr *) ((gconstpointer) &nm_ip_addr_zero)))
+#define nm_ether_addr_zero (*((const NMEtherAddr *) &nm_ip_addr_zero))
 
 static inline int
 nm_ether_addr_cmp(const NMEtherAddr *a, const NMEtherAddr *b)
@@ -322,9 +333,10 @@ gboolean nm_utils_memeqzero(gconstpointer data, gsize length);
 
 extern const void *const _NM_PTRARRAY_EMPTY[1];
 
-#define NM_PTRARRAY_EMPTY(type) ((type const *) _NM_PTRARRAY_EMPTY)
-#define NM_STRV_EMPTY()         ((char **) _NM_PTRARRAY_EMPTY)
-#define NM_STRV_EMPTY_CC()      NM_PTRARRAY_EMPTY(const char *)
+#define NM_PTRARRAY_EMPTY(type)     ((type const *) _NM_PTRARRAY_EMPTY)
+#define NM_STRV_EMPTY()             ((char **) _NM_PTRARRAY_EMPTY)
+#define NM_STRV_EMPTY_CC()          NM_PTRARRAY_EMPTY(const char *)
+#define NM_PTRARRAY_EMPTY_NEW(type) (g_new0(type, 1))
 
 static inline void
 nm_strbuf_init(char *buf, gsize len, char **p_buf_ptr, gsize *p_buf_len)
@@ -519,12 +531,10 @@ gssize _nm_strv_find_first(const char *const *list, gssize len, const char *need
 
 gboolean nm_strv_has_duplicate(const char *const *list, gssize len, gboolean is_sorted);
 
-const char **nm_strv_cleanup_const(const char **strv, gboolean skip_empty, gboolean skip_repeated);
+const char **nm_strv_cleanup_const(const char **strv, gboolean no_empty, gboolean no_duplicates);
 
-char **nm_strv_cleanup(char   **strv,
-                       gboolean strip_whitespace,
-                       gboolean skip_empty,
-                       gboolean skip_repeated);
+char **
+nm_strv_cleanup(char **strv, gboolean strip_whitespace, gboolean no_empty, gboolean no_duplicates);
 
 gboolean nm_strv_is_same_unordered(const char *const *strv1,
                                    gssize             len1,
@@ -1105,6 +1115,21 @@ nm_utils_error_set_literal(GError **error, int error_code, const char *literal)
 
 /*****************************************************************************/
 
+void nm_gobject_notify_together_by_pspec_v(gpointer                 obj,
+                                           const GParamSpec *const *param_specs,
+                                           gsize                    param_specs_len);
+
+#define nm_gobject_notify_together_by_pspec(obj, ...)                           \
+    G_STMT_START                                                                \
+    {                                                                           \
+        const GParamSpec *const _arr[] = {__VA_ARGS__};                         \
+                                                                                \
+        G_STATIC_ASSERT(NM_NARG(__VA_ARGS__) == G_N_ELEMENTS(_arr));            \
+                                                                                \
+        nm_gobject_notify_together_by_pspec_v((obj), _arr, G_N_ELEMENTS(_arr)); \
+    }                                                                           \
+    G_STMT_END
+
 gboolean nm_g_object_set_property(GObject      *object,
                                   const char   *property_name,
                                   const GValue *value,
@@ -1243,12 +1268,16 @@ typedef enum {
      * It will backslash escape ascii characters according to nm_ascii_is_non_ascii(). */
     NM_UTILS_STR_UTF8_SAFE_FLAG_ESCAPE_NON_ASCII = 0x0002,
 
+    /* Escape '"' as ASCII "\\042". This is useful when escaping a string so that
+     * it can be unescaped with `echo -e $PASTE_TEXT`. */
+    NM_UTILS_STR_UTF8_SAFE_FLAG_ESCAPE_DOUBLE_QUOTE = 0x0004,
+
     /* This flag only has an effect during escaping to ensure we
      * don't leak secrets in memory. Note that during unescape we
      * know the maximum result size from the beginning, and no
      * reallocation happens. Thus, unescape always avoids leaking
      * secrets already. */
-    NM_UTILS_STR_UTF8_SAFE_FLAG_SECRET = 0x0004,
+    NM_UTILS_STR_UTF8_SAFE_FLAG_SECRET = 0x0008,
 
     /* This flag only has an effect during unescaping. It means
      * that non-escaped whitespaces (g_ascii_isspace()) will be
@@ -1256,7 +1285,7 @@ typedef enum {
      * this flag is only useful for gracefully accepting user input
      * with spaces. With this flag, escape and unescape may no longer
      * yield the original input. */
-    NM_UTILS_STR_UTF8_SAFE_UNESCAPE_STRIP_SPACES = 0x0008,
+    NM_UTILS_STR_UTF8_SAFE_UNESCAPE_STRIP_SPACES = 0x0010,
 } NMUtilsStrUtf8SafeFlags;
 
 const char *nm_utils_buf_utf8safe_escape(gconstpointer           buf,
@@ -1344,10 +1373,6 @@ nm_g_variant_new_au(const guint32 *data, gsize len)
     return g_variant_new_fixed_array(G_VARIANT_TYPE_UINT32, data, len, sizeof(guint32));
 }
 
-struct _NMIPAddr;
-
-extern const struct _NMIPAddr nm_ip_addr_zero;
-
 static inline GVariant *
 nm_g_variant_new_ay_inaddr(int addr_family, gconstpointer addr)
 {
@@ -1392,6 +1417,10 @@ nm_g_variant_builder_add_sv_str(GVariantBuilder *builder, const char *key, const
 {
     nm_g_variant_builder_add_sv(builder, key, g_variant_new_string(str));
 }
+
+int nm_g_variant_type_cmp(const GVariantType *type1, const GVariantType *type2);
+
+int nm_g_variant_cmp(GVariant *value1, GVariant *value2);
 
 static inline void
 nm_g_source_destroy_and_unref(GSource *source)
@@ -1545,6 +1574,12 @@ nm_g_timeout_add_source(guint timeout_msec, GSourceFunc func, gpointer user_data
         nm_g_timeout_source_new(timeout_msec, G_PRIORITY_DEFAULT, func, user_data, NULL),
         NULL);
 }
+
+gboolean nm_g_timeout_reschedule(GSource   **src,
+                                 gint64     *p_expiry_msec,
+                                 gint64      expiry_msec,
+                                 GSourceFunc func,
+                                 gpointer    user_data);
 
 static inline GSource *
 nm_g_timeout_add_seconds_source(guint timeout_sec, GSourceFunc func, gpointer user_data)
@@ -1836,6 +1871,8 @@ int nm_utils_hashtable_cmp(const GHashTable *a,
                            GCompareDataFunc  cmp_values,
                            gpointer          user_data);
 
+#define nm_strv_empty_new() NM_PTRARRAY_EMPTY_NEW(char *)
+
 char **nm_strv_make_deep_copied(const char **strv);
 
 char **nm_strv_make_deep_copied_n(const char **strv, gsize len);
@@ -1843,13 +1880,18 @@ char **nm_strv_make_deep_copied_n(const char **strv, gsize len);
 static inline char **
 nm_strv_make_deep_copied_nonnull(const char **strv)
 {
-    return nm_strv_make_deep_copied(strv) ?: g_new0(char *, 1);
+    return nm_strv_make_deep_copied(strv) ?: nm_strv_empty_new();
 }
 
-char **_nm_strv_dup(const char *const *strv, gssize len, gboolean deep_copied);
+char **_nm_strv_dup_full(const char *const *strv,
+                         gssize             len,
+                         gboolean           deep_copied,
+                         gboolean           preserve_empty);
 
-#define nm_strv_dup(strv, len, deep_copied) \
-    _nm_strv_dup(NM_CAST_STRV_CC(strv), (len), (deep_copied))
+#define nm_strv_dup_full(strv, len, deep_copied, preserve_empty) \
+    _nm_strv_dup_full(NM_CAST_STRV_CC(strv), (len), (deep_copied), (preserve_empty))
+
+#define nm_strv_dup(strv, len, deep_copied) nm_strv_dup_full((strv), (len), (deep_copied), FALSE)
 
 const char **_nm_strv_dup_packed(const char *const *strv, gssize len);
 
@@ -1927,7 +1969,27 @@ nm_g_array_unref(GArray *arr)
  * When accessing index zero, then this returns NULL if-and-only-if
  * "arr" is NULL or "arr->data" is NULL. In all other cases, this
  * returns the pointer &((Type*) arr->data)[idx]. Note that the pointer
- * may not be followed, if "idx" is equal to "arr->len". */
+ * may not be followed, if "idx" is equal to "arr->len".
+ *
+ * The reason to allow access one element past the length is the
+ * following usage:
+ *
+ *    ptr = nm_g_array_index_p(arr, Type, 0);
+ *    end = nm_g_array_index_p(arr, Type, length);
+ *    for (; ptr < end; ptr++) { ... }
+ *
+ * Another usage is to get a buffer, if the length might be zero. If
+ * length is zero, you cannot dereference the pointer, but it can be convenient
+ * to not require special casing:
+ *
+ *    // length might be zero.
+ *    nm_memdup(nm_g_array_index_p(arr, Type, length), sizeof(Type) * length);
+ *
+ * Note that in C, it's valid point one past the end of an array. So getting
+ * a pointer at index "length" is valid, and what nm_g_array_index_p() allows.
+ * If you don't need that, nm_g_array_index() is usually preferable,
+ * because it asserts against access at index "length".
+ */
 #define nm_g_array_index_p(arr, Type, idx)                                                       \
     ({                                                                                           \
         const GArray *const _arr_55 = (arr);                                                     \
@@ -2494,6 +2556,21 @@ nm_strv_ptrarray_get_unsafe(GPtrArray *arr, guint *out_len)
     return (const char *const *) arr->pdata;
 }
 
+static inline char **
+nm_strv_ptrarray_to_strv_full(const GPtrArray *a, gboolean not_null)
+{
+    if (!a)
+        return not_null ? nm_strv_empty_new() : NULL;
+    return nm_strv_dup_full((const char *const *) a->pdata, a->len, TRUE, TRUE);
+}
+
+static inline char **
+nm_strv_ptrarray_to_strv(const GPtrArray *a)
+{
+    /* Returns never NULL ("not_null"!) */
+    return nm_strv_ptrarray_to_strv_full(a, TRUE);
+}
+
 static inline GPtrArray *
 nm_strv_ptrarray_clone(const GPtrArray *src, gboolean null_if_empty)
 {
@@ -2716,7 +2793,7 @@ guint8 *nm_utils_hexstr2bin_alloc(const char *hexstr,
  * can parse addresses of any length. That is, you don't need
  * to know the length before-hand.
  *
- * Return value: @buffer, or %NULL if @asc couldn't be parsed.
+ * Returns: @buffer, or %NULL if @asc couldn't be parsed.
  */
 static inline guint8 *
 _nm_utils_hwaddr_aton(const char *asc, gpointer buffer, gsize buffer_length, gsize *out_length)
@@ -2962,100 +3039,248 @@ nm_strvarray_ensure(GArray **p)
         *p = g_array_new(TRUE, FALSE, sizeof(char *));
         g_array_set_clear_func(*p, nm_indirect_g_free);
     } else
-        nm_assert(g_array_get_element_size(*p) == sizeof(char *));
+        nm_assert(sizeof(char *) == g_array_get_element_size(*p));
 
     return *p;
 }
 
 static inline void
+nm_strvarray_add_take(GArray *array, char *str)
+{
+    nm_assert(array);
+    nm_assert(sizeof(char *) == g_array_get_element_size(array));
+
+    /* The array is used as a NULL terminated strv array. Adding NULL is most
+     * likely a bug. Assert against it. */
+    nm_assert(str);
+
+    g_array_append_val(array, str);
+}
+
+static inline void
 nm_strvarray_add(GArray *array, const char *str)
 {
-    char *s;
-
-    nm_assert(array);
-    nm_assert(g_array_get_element_size(array) == sizeof(char *));
-
-    s = g_strdup(str);
-    g_array_append_val(array, s);
+    nm_strvarray_add_take(array, g_strdup(str));
 }
 
 static inline const char *
-nm_strvarray_get_idx(GArray *array, guint idx)
+nm_strvarray_get_idx(const GArray *array, guint idx)
 {
     return nm_g_array_index(array, const char *, idx);
 }
 
-static inline const char *const *
-nm_strvarray_get_strv_non_empty(GArray *arr, guint *length)
-{
-    nm_assert(!arr || g_array_get_element_size(arr) == sizeof(char *));
+/* nm_strvarray_get_idxnull_or_greturn() permits access at `len`,
+ * returning NULL. If the access is out of bounds, the assertion
+ * will fail (and also return NULL). */
+#define nm_strvarray_get_idxnull_or_greturn(arr, idx)           \
+    ({                                                          \
+        GArray *_arr = (arr);                                   \
+        gsize   _idx = (idx);                                   \
+        guint   _len = nm_g_array_len(_arr);                    \
+                                                                \
+        g_return_val_if_fail(_idx <= _len, NULL);               \
+                                                                \
+        _idx == _len ? NULL : nm_strvarray_get_idx(_arr, _idx); \
+    })
 
-    if (!arr || arr->len == 0) {
+/**
+ * nm_strvarray_get_strv_full:
+ * @arr: the strvarray.
+ * @length: (out) (nullable): optionally return the length of the result.
+ * @not_null: if true and @arr is NULL, return NM_STRV_EMPTY_CC() (otherwise NULL).
+ * @preserve_empty: if true and the array is empty, return an empty
+ *   strv array. Otherwise, return NULL.
+ *
+ * If "arr" is NULL, this returns NULL, unless "not_null" is true (in which
+ *   case the static NM_STRV_EMPTY_CC() is returned).
+ * If "arr" is empty, it depends on:
+ *   - if "preserve_empty" or "not_null", then the resulting strv array is the empty "arr".
+ *   - otherwise NULL is returned.
+ * Otherwise, returns the non-empty, non-deep-cloned strv array.
+ *
+ * Like nm_strvarray_get_strv_full_dup(), but the strings are not cloned.
+ *
+ * Returns: (transfer none): a strv list or NULL.
+ */
+static inline const char *const *
+nm_strvarray_get_strv_full(const GArray *arr,
+                           guint        *length,
+                           gboolean      not_null,
+                           gboolean      preserve_empty)
+{
+    if (!arr) {
         NM_SET_OUT(length, 0);
-        return NULL;
+        return not_null ? NM_STRV_EMPTY_CC() : NULL;
     }
 
+    nm_assert(sizeof(char *) == g_array_get_element_size((GArray *) arr));
+
     NM_SET_OUT(length, arr->len);
+
+    if (arr->len == 0 && !(preserve_empty || not_null))
+        return NULL;
+
     return &g_array_index(arr, const char *, 0);
 }
 
+/**
+ * nm_strvarray_get_strv_full_dup:
+ * @arr: the strvarray.
+ * @length: (out) (nullable): optionally return the length of the result.
+ * @not_null: if true, never return NULL but allocate an empty strv array.
+ * @preserve_empty: if true and the array is empty, return an empty
+ *   strv array. Otherwise, return NULL.
+ *
+ * If "arr" is NULL, this returns NULL, unless "not_null" is true (in which case
+ *   am empty strv array is allocated.
+ * If "arr" is empty, it depends on:
+ *   - if "preserve_empty" || "not_null", then the resulting strv array is allocated (and empty).
+ *   - otherwise, NULL is returned.
+ * Otherwise, return the non-empty, deep-cloned strv array.
+ *
+ * Like nm_strvarray_get_strv_full(), but the strings are cloned.
+ *
+ * Returns: (transfer full): a deep-cloned strv list or NULL.
+ */
 static inline char **
-nm_strvarray_get_strv_non_empty_dup(GArray *arr, guint *length)
+nm_strvarray_get_strv_full_dup(const GArray *arr,
+                               guint        *length,
+                               gboolean      not_null,
+                               gboolean      preserve_empty)
 {
-    const char *const *strv;
-
-    nm_assert(!arr || g_array_get_element_size(arr) == sizeof(char *));
-
-    if (!arr || arr->len == 0) {
+    if (!arr) {
         NM_SET_OUT(length, 0);
+        return not_null ? nm_strv_empty_new() : NULL;
+    }
+
+    nm_assert(sizeof(char *) == g_array_get_element_size((GArray *) arr));
+
+    NM_SET_OUT(length, arr->len);
+
+    if (arr->len == 0) {
+        if (preserve_empty || not_null)
+            return nm_strv_empty_new();
         return NULL;
     }
 
-    NM_SET_OUT(length, arr->len);
-    strv = &g_array_index(arr, const char *, 0);
-    return nm_strv_dup(strv, arr->len, TRUE);
+    return nm_strv_dup(&g_array_index(arr, const char *, 0), arr->len, TRUE);
 }
 
+/**
+ * nm_strvarray_get_strv_notnull:
+ * @arr: the strvarray.
+ * @length: (out) (nullable): optionally return the length of the result.
+ *
+ * This never returns NULL. If @arr is NULL, this returns NM_STRV_EMPTY_CC().
+ *
+ * Like nm_strvarray_get_strv_notempty(), but never returns NULL.
+ *
+ * Returns: (transfer none): a pointer to the strv list in @arr or NM_STRV_EMPTY_CC().
+ */
 static inline const char *const *
-nm_strvarray_get_strv(GArray **arr, guint *length)
+nm_strvarray_get_strv_notnull(const GArray *arr, guint *length)
 {
-    if (!*arr) {
-        NM_SET_OUT(length, 0);
-        return (const char *const *) arr;
-    }
-
-    nm_assert(g_array_get_element_size(*arr) == sizeof(char *));
-
-    NM_SET_OUT(length, (*arr)->len);
-    return &g_array_index(*arr, const char *, 0);
+    return nm_strvarray_get_strv_full(arr, length, TRUE, TRUE);
 }
 
+/**
+ * nm_strvarray_get_strv_notempty:
+ * @arr: the strvarray.
+ * @length: (out) (nullable): optionally return the length of the result.
+ *
+ * This never returns an empty strv array. If @arr is NULL or empty, this
+ * returns NULL.
+ *
+ * Like nm_strvarray_get_strv_notempty_dup(), but does not clone strings.
+ *
+ * Returns: (transfer none): a pointer to the strv list in @arr or NULL.
+ */
+static inline const char *const *
+nm_strvarray_get_strv_notempty(const GArray *arr, guint *length)
+{
+    return nm_strvarray_get_strv_full(arr, length, FALSE, FALSE);
+}
+
+/**
+ * nm_strvarray_get_strv_notempty_dup:
+ * @arr: the strvarray.
+ * @length: (out) (nullable): optionally return the length of the result.
+ *
+ * This never returns an empty strv array. If @arr is NULL or empty, this
+ * returns NULL.
+ *
+ * Like nm_strvarray_get_strv_notempty(), but clones strings.
+ *
+ * Returns: (transfer full): a deep-cloned strv list or NULL.
+ */
+static inline char **
+nm_strvarray_get_strv_notempty_dup(const GArray *arr, guint *length)
+{
+    return nm_strvarray_get_strv_full_dup(arr, length, FALSE, FALSE);
+}
+
+/**
+ * nm_strvarray_set_strv_full:
+ * @array: a pointer to the array to set.
+ * @strv: the strv array. May be NULL.
+ * @preserve_empty: how to treat if strv is empty (strv[0]==NULL).
+ *
+ * The old array will be freed (in a way so that the function is self-assignment
+ * safe).
+ *
+ * If "strv" is NULL, then the resulting GArray is NULL.
+ * If "strv" is empty, then it depends on "preserve_empty":
+ *   - if "preserve_empty", then the resulting GArray is allocated (and empty).
+ *   - if "!preserve_empty", then the resulting GArray is NULL.
+ * If "strv" is not empty, a GArray gets allocated and the strv array deep-cloned.
+ */
 static inline void
-nm_strvarray_set_strv(GArray **array, const char *const *strv)
+nm_strvarray_set_strv_full(GArray **array, const char *const *strv, gboolean preserve_empty)
 {
     gs_unref_array GArray *array_old = NULL;
 
     array_old = g_steal_pointer(array);
 
-    nm_assert(!array_old || g_array_get_element_size(array_old) == sizeof(char *));
+    nm_assert(!array_old || sizeof(char *) == g_array_get_element_size(array_old));
 
-    if (!strv || !strv[0])
+    if (!strv)
         return;
+
+    if (!strv[0] && !preserve_empty) {
+        /* An empty strv array is treated like NULL. Don't allocate a GArray. */
+        return;
+    }
 
     nm_strvarray_ensure(array);
     for (; strv[0]; strv++)
         nm_strvarray_add(*array, strv[0]);
 }
 
+/**
+ * nm_strvarray_set_strv:
+ * @array: a pointer to the array to set.
+ * @strv: the strv array. May be NULL.
+ *
+ * The old array will be freed (in a way so that the function is self-assignment
+ * safe).
+ *
+ * Note that this will never initialize an empty GArray. If strv is NULL or
+ * empty, the @array pointer will be set to NULL. */
+static inline void
+nm_strvarray_set_strv(GArray **array, const char *const *strv)
+{
+    nm_strvarray_set_strv_full(array, strv, FALSE);
+}
+
 static inline gssize
-nm_strvarray_find_first(GArray *strv, const char *needle)
+nm_strvarray_find_first(const GArray *strv, const char *needle)
 {
     guint i;
 
     nm_assert(needle);
 
     if (strv) {
-        nm_assert(g_array_get_element_size(strv) == sizeof(char *));
+        nm_assert(sizeof(char *) == g_array_get_element_size((GArray *) strv));
         for (i = 0; i < strv->len; i++) {
             if (nm_streq(needle, g_array_index(strv, const char *, i)))
                 return i;
@@ -3063,6 +3288,8 @@ nm_strvarray_find_first(GArray *strv, const char *needle)
     }
     return -1;
 }
+
+#define nm_strvarray_contains(strv, needle) (nm_strvarray_find_first((strv), (needle)) >= 0)
 
 static inline gboolean
 nm_strvarray_remove_first(GArray *strv, const char *needle)
@@ -3078,11 +3305,42 @@ nm_strvarray_remove_first(GArray *strv, const char *needle)
     return TRUE;
 }
 
+#define nm_strvarray_remove_index(strv, idx)                          \
+    G_STMT_START                                                      \
+    {                                                                 \
+        GArray *const _strv = (strv);                                 \
+        typeof(idx)   _idx  = (idx);                                  \
+                                                                      \
+        nm_assert(_strv);                                             \
+        nm_assert((uintmax_t) _idx < _strv->len);                     \
+        nm_assert(sizeof(char *) == g_array_get_element_size(_strv)); \
+                                                                      \
+        g_array_remove_index(_strv, (guint) _idx);                    \
+    }                                                                 \
+    G_STMT_END
+
+static inline void
+nm_strvarray_ensure_and_add(GArray **p, const char *str)
+{
+    nm_strvarray_add(nm_strvarray_ensure(p), str);
+}
+
+static inline gboolean
+nm_strvarray_ensure_and_add_unique(GArray **p, const char *str)
+{
+    nm_assert(p);
+
+    if (nm_strvarray_contains(*p, str))
+        return FALSE;
+    nm_strvarray_add(nm_strvarray_ensure(p), str);
+    return TRUE;
+}
+
 static inline int
 nm_strvarray_cmp(const GArray *a, const GArray *b)
 {
-    nm_assert(!a || sizeof(const char *const *) == g_array_get_element_size((GArray *) a));
-    nm_assert(!b || sizeof(const char *const *) == g_array_get_element_size((GArray *) b));
+    nm_assert(!a || sizeof(char *) == g_array_get_element_size((GArray *) a));
+    nm_assert(!b || sizeof(char *) == g_array_get_element_size((GArray *) b));
 
     NM_CMP_SELF(a, b);
 
@@ -3094,7 +3352,7 @@ nm_strvarray_cmp(const GArray *a, const GArray *b)
 static inline int
 _nm_strvarray_cmp_strv(const GArray *strv, const char *const *ss, gsize ss_len)
 {
-    nm_assert(!strv || sizeof(const char *const *) == g_array_get_element_size((GArray *) strv));
+    nm_assert(!strv || sizeof(char *) == g_array_get_element_size((GArray *) strv));
 
     return nm_strv_cmp_n(nm_g_array_data(strv), strv ? ((gssize) strv->len) : -1, ss, ss_len);
 }
@@ -3103,6 +3361,24 @@ _nm_strvarray_cmp_strv(const GArray *strv, const char *const *ss, gsize ss_len)
 
 #define nm_strvarray_equal_strv(strv, ss, ss_len) \
     (nm_strvarray_cmp_strv((strv), (ss), (ss_len)) == 0)
+
+static inline gboolean
+nm_strvarray_clear(GArray **array)
+{
+    gboolean cleared = FALSE;
+
+    nm_assert(array);
+    nm_assert(!*array || sizeof(char *) == g_array_get_element_size(*array));
+
+    if (*array) {
+        /* We always clear the GArray, but we return TRUE only if the
+         * array was non-empty before. */
+        if ((*array)->len > 0)
+            cleared = TRUE;
+        nm_clear_pointer(array, g_array_unref);
+    }
+    return cleared;
+}
 
 /*****************************************************************************/
 
@@ -3147,6 +3423,12 @@ char *_nm_utils_format_variant_attributes(GHashTable                          *a
 gboolean nm_utils_is_localhost(const char *name);
 
 gboolean nm_utils_is_specific_hostname(const char *name);
+
+struct passwd;
+
+struct passwd *nm_getpwuid(uid_t uid);
+
+const char *nm_passwd_name(const struct passwd *pw);
 
 char    *nm_utils_uid_to_name(uid_t uid);
 gboolean nm_utils_name_to_uid(const char *name, uid_t *out_uid);
@@ -3241,5 +3523,37 @@ nm_path_startswith(const char *path, const char *prefix)
 /*****************************************************************************/
 
 gboolean nm_hostname_is_valid(const char *s, gboolean trailing_dot);
+
+/*****************************************************************************/
+
+typedef void (*NMUtilsPollProbeRegisterObjectFcn)(GObject *object, gpointer user_data);
+
+typedef void (*NMUtilsPollProbeStartFcn)(GCancellable       *cancellable,
+                                         gpointer            probe_user_data,
+                                         GAsyncReadyCallback callback,
+                                         gpointer            user_data);
+
+typedef gboolean (*NMUtilsPollProbeFinishFcn)(GObject      *source,
+                                              GAsyncResult *result,
+                                              gpointer      probe_user_data,
+                                              GError      **error);
+
+void nm_utils_poll(int                               poll_timeout_ms,
+                   int                               ratelimit_timeout_ms,
+                   int                               sleep_timeout_ms,
+                   NMUtilsPollProbeRegisterObjectFcn probe_register_object_fcn,
+                   NMUtilsPollProbeStartFcn          probe_start_fcn,
+                   NMUtilsPollProbeFinishFcn         probe_finish_fcn,
+                   gpointer                          probe_user_data,
+                   GCancellable                     *cancellable,
+                   GAsyncReadyCallback               callback,
+                   gpointer                          user_data);
+
+gboolean nm_utils_poll_finish(GAsyncResult *result, gpointer *probe_user_data, GError **error);
+
+/*****************************************************************************/
+
+void     nm_utils_env_var_encode_name(const char *key, GString *str_buffer);
+gboolean nm_utils_env_var_decode_name(const char *name, GString *str_buffer);
 
 #endif /* __NM_SHARED_UTILS_H__ */

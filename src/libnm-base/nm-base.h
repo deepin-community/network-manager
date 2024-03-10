@@ -117,21 +117,34 @@ typedef enum {
     NM_ETHTOOL_ID_PAUSE_TX,
     _NM_ETHTOOL_ID_PAUSE_LAST = NM_ETHTOOL_ID_PAUSE_TX,
 
-    _NM_ETHTOOL_ID_RING_FIRST = _NM_ETHTOOL_ID_PAUSE_LAST + 1,
+    _NM_ETHTOOL_ID_EEE_FIRST  = _NM_ETHTOOL_ID_PAUSE_LAST + 1,
+    NM_ETHTOOL_ID_EEE_ENABLED = _NM_ETHTOOL_ID_EEE_FIRST,
+    _NM_ETHTOOL_ID_EEE_LAST   = NM_ETHTOOL_ID_EEE_ENABLED,
+
+    _NM_ETHTOOL_ID_RING_FIRST = _NM_ETHTOOL_ID_EEE_LAST + 1,
     NM_ETHTOOL_ID_RING_RX     = _NM_ETHTOOL_ID_RING_FIRST,
     NM_ETHTOOL_ID_RING_RX_JUMBO,
     NM_ETHTOOL_ID_RING_RX_MINI,
     NM_ETHTOOL_ID_RING_TX,
     _NM_ETHTOOL_ID_RING_LAST = NM_ETHTOOL_ID_RING_TX,
 
-    _NM_ETHTOOL_ID_LAST = _NM_ETHTOOL_ID_RING_LAST,
+    _NM_ETHTOOL_ID_CHANNELS_FIRST = _NM_ETHTOOL_ID_RING_LAST + 1,
+    NM_ETHTOOL_ID_CHANNELS_RX     = _NM_ETHTOOL_ID_CHANNELS_FIRST,
+    NM_ETHTOOL_ID_CHANNELS_TX,
+    NM_ETHTOOL_ID_CHANNELS_OTHER,
+    NM_ETHTOOL_ID_CHANNELS_COMBINED,
+    _NM_ETHTOOL_ID_CHANNELS_LAST = NM_ETHTOOL_ID_CHANNELS_COMBINED,
+
+    _NM_ETHTOOL_ID_LAST = _NM_ETHTOOL_ID_CHANNELS_LAST,
 
     _NM_ETHTOOL_ID_COALESCE_NUM =
         (_NM_ETHTOOL_ID_COALESCE_LAST - _NM_ETHTOOL_ID_COALESCE_FIRST + 1),
     _NM_ETHTOOL_ID_FEATURE_NUM = (_NM_ETHTOOL_ID_FEATURE_LAST - _NM_ETHTOOL_ID_FEATURE_FIRST + 1),
     _NM_ETHTOOL_ID_RING_NUM    = (_NM_ETHTOOL_ID_RING_LAST - _NM_ETHTOOL_ID_RING_FIRST + 1),
     _NM_ETHTOOL_ID_PAUSE_NUM   = (_NM_ETHTOOL_ID_PAUSE_LAST - _NM_ETHTOOL_ID_PAUSE_FIRST + 1),
-    _NM_ETHTOOL_ID_NUM         = (_NM_ETHTOOL_ID_LAST - _NM_ETHTOOL_ID_FIRST + 1),
+    _NM_ETHTOOL_ID_CHANNELS_NUM =
+        (_NM_ETHTOOL_ID_CHANNELS_LAST - _NM_ETHTOOL_ID_CHANNELS_FIRST + 1),
+    _NM_ETHTOOL_ID_NUM = (_NM_ETHTOOL_ID_LAST - _NM_ETHTOOL_ID_FIRST + 1),
 } NMEthtoolID;
 
 #define _NM_ETHTOOL_ID_FEATURE_AS_IDX(ethtool_id)  ((ethtool_id) -_NM_ETHTOOL_ID_FEATURE_FIRST)
@@ -143,6 +156,8 @@ typedef enum {
     NM_ETHTOOL_TYPE_FEATURE,
     NM_ETHTOOL_TYPE_RING,
     NM_ETHTOOL_TYPE_PAUSE,
+    NM_ETHTOOL_TYPE_CHANNELS,
+    NM_ETHTOOL_TYPE_EEE,
 } NMEthtoolType;
 
 /****************************************************************************/
@@ -169,6 +184,18 @@ static inline gboolean
 nm_ethtool_id_is_pause(NMEthtoolID id)
 {
     return id >= _NM_ETHTOOL_ID_PAUSE_FIRST && id <= _NM_ETHTOOL_ID_PAUSE_LAST;
+}
+
+static inline gboolean
+nm_ethtool_id_is_channels(NMEthtoolID id)
+{
+    return id >= _NM_ETHTOOL_ID_CHANNELS_FIRST && id <= _NM_ETHTOOL_ID_CHANNELS_LAST;
+}
+
+static inline gboolean
+nm_ethtool_id_is_eee(NMEthtoolID id)
+{
+    return id >= _NM_ETHTOOL_ID_EEE_FIRST && id <= _NM_ETHTOOL_ID_EEE_LAST;
 }
 
 /*****************************************************************************/
@@ -225,6 +252,7 @@ typedef enum {
     _NM_WIFI_DEVICE_CAP_FREQ_VALID    = 0x00000100,
     _NM_WIFI_DEVICE_CAP_FREQ_2GHZ     = 0x00000200,
     _NM_WIFI_DEVICE_CAP_FREQ_5GHZ     = 0x00000400,
+    _NM_WIFI_DEVICE_CAP_FREQ_6GHZ     = 0x00000800,
     _NM_WIFI_DEVICE_CAP_MESH          = 0x00001000,
     _NM_WIFI_DEVICE_CAP_IBSS_RSN      = 0x00002000,
 } _NMDeviceWifiCapabilities;
@@ -248,6 +276,35 @@ typedef enum {
     _NM_VLAN_FLAGS_ALL = _NM_VLAN_FLAG_REORDER_HEADERS | _NM_VLAN_FLAG_GVRP
                          | _NM_VLAN_FLAG_LOOSE_BINDING | _NM_VLAN_FLAG_MVRP,
 } _NMVlanFlags;
+
+typedef enum {
+    /* Mirrors libnm's NMSriovEswitchMode.
+     * Values >= 0 mirror kernel's enum devlink_eswitch_mode. */
+    _NM_SRIOV_ESWITCH_MODE_PRESERVE  = -1,
+    _NM_SRIOV_ESWITCH_MODE_UNKNOWN   = -1, /*< skip >*/
+    _NM_SRIOV_ESWITCH_MODE_LEGACY    = 0,
+    _NM_SRIOV_ESWITCH_MODE_SWITCHDEV = 1,
+} _NMSriovEswitchMode;
+
+typedef enum {
+    /* Mirrors libnm's NMSriovEswitchInlineMode.
+     * Values >= 0 mirror kernel's enum devlink_eswitch_inline_mode. */
+    _NM_SRIOV_ESWITCH_INLINE_MODE_PRESERVE  = -1,
+    _NM_SRIOV_ESWITCH_INLINE_MODE_UNKNOWN   = -1, /*< skip >*/
+    _NM_SRIOV_ESWITCH_INLINE_MODE_NONE      = 0,
+    _NM_SRIOV_ESWITCH_INLINE_MODE_LINK      = 1,
+    _NM_SRIOV_ESWITCH_INLINE_MODE_NETWORK   = 2,
+    _NM_SRIOV_ESWITCH_INLINE_MODE_TRANSPORT = 3,
+} _NMSriovEswitchInlineMode;
+
+typedef enum {
+    /* Mirrors libnm's NMSriovEswitchEncapMode.
+     * Values >= 0 mirror kernel's enum devlink_eswitch_encap_mode. */
+    _NM_SRIOV_ESWITCH_ENCAP_MODE_PRESERVE = -1,
+    _NM_SRIOV_ESWITCH_ENCAP_MODE_UNKNOWN  = -1, /*< skip >*/
+    _NM_SRIOV_ESWITCH_ENCAP_MODE_NONE     = 0,
+    _NM_SRIOV_ESWITCH_ENCAP_MODE_BASIC    = 1,
+} _NMSriovEswitchEncapMode;
 
 /*****************************************************************************/
 
@@ -392,6 +449,7 @@ typedef struct {
 /****************************************************************************/
 
 #define NM_BOND_PORT_QUEUE_ID_DEF 0
+#define NM_BOND_PORT_PRIO_DEF     0
 
 /****************************************************************************/
 
@@ -430,5 +488,10 @@ typedef enum {
 char *nm_dhcp_iaid_to_hexstr(guint32 iaid, char buf[static NM_DHCP_IAID_TO_HEXSTR_BUF_LEN]);
 
 gboolean nm_dhcp_iaid_from_hexstr(const char *str, guint32 *out_value);
+
+/*****************************************************************************/
+
+const char *
+nm_net_devname_infiniband(char name[static NM_IFNAMSIZ], const char *parent_name, int p_key);
 
 #endif /* __NM_LIBNM_BASE_H__ */

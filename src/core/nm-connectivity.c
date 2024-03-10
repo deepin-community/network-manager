@@ -79,9 +79,9 @@ struct _NMConnectivityCheckHandle {
         struct curl_slist *request_headers;
         struct curl_slist *hosts;
 
-        gsize response_good_cnt;
+        GSource *curl_timer;
 
-        guint curl_timer;
+        gsize response_good_cnt;
     } concheck;
 #endif
 
@@ -241,7 +241,7 @@ cb_data_complete(NMConnectivityCheckHandle *cb_data,
         curl_slist_free_all(cb_data->concheck.request_headers);
         curl_slist_free_all(cb_data->concheck.hosts);
     }
-    nm_clear_g_source(&cb_data->concheck.curl_timer);
+    nm_clear_g_source_inst(&cb_data->concheck.curl_timer);
     nm_clear_g_cancellable(&cb_data->concheck.resolve_cancellable);
 #endif
 
@@ -406,6 +406,7 @@ _con_curl_timeout_cb(gpointer user_data)
 {
     NMConnectivityCheckHandle *cb_data = user_data;
 
+    nm_clear_g_source_inst(&cb_data->concheck.curl_timer);
     _con_curl_check_connectivity(cb_data->concheck.curl_mhandle, CURL_SOCKET_TIMEOUT, 0);
     _complete_queued(cb_data->self);
     return G_SOURCE_CONTINUE;
@@ -416,9 +417,11 @@ multi_timer_cb(CURLM *multi, long timeout_msec, void *userdata)
 {
     NMConnectivityCheckHandle *cb_data = userdata;
 
-    nm_clear_g_source(&cb_data->concheck.curl_timer);
-    if (timeout_msec != -1)
-        cb_data->concheck.curl_timer = g_timeout_add(timeout_msec, _con_curl_timeout_cb, cb_data);
+    nm_clear_g_source_inst(&cb_data->concheck.curl_timer);
+    if (timeout_msec != -1) {
+        cb_data->concheck.curl_timer =
+            nm_g_timeout_add_source(timeout_msec, _con_curl_timeout_cb, cb_data);
+    }
     return 0;
 }
 
@@ -981,9 +984,7 @@ check_platform_config(NMConnectivity *self,
         return NM_CONNECTIVITY_NONE;
     }
 
-    switch (addr_family) {
-    case AF_INET:
-    {
+    if (NM_IS_IPv4(addr_family)) {
         const NMPlatformIP4Route *route;
         gboolean                  found_global = FALSE;
         NMDedupMultiIter          iter;
@@ -1002,13 +1003,8 @@ check_platform_config(NMConnectivity *self,
             NM_SET_OUT(reason, "no global route configured");
             return NM_CONNECTIVITY_LIMITED;
         }
-        break;
-    }
-    case AF_INET6:
+    } else {
         /* Route scopes aren't meaningful for IPv6 so any route is fine. */
-        break;
-    default:
-        g_return_val_if_reached(FALSE);
     }
 
     NM_SET_OUT(reason, NULL);
@@ -1050,11 +1046,12 @@ nm_connectivity_check_start(NMConnectivity             *self,
     cb_data->concheck.con_config = _con_config_ref(priv->con_config);
 
     if (iface && ifindex > 0 && priv->enabled && priv->uri_valid) {
-        gboolean            has_systemd_resolved;
-        NMConnectivityState state;
-        const char         *reason;
+        gboolean has_systemd_resolved;
 
         if (platform) {
+            const char         *reason;
+            NMConnectivityState state;
+
             state = check_platform_config(self, platform, ifindex, addr_family, &reason);
             nm_assert((state == NM_CONNECTIVITY_UNKNOWN) == !reason);
             if (state != NM_CONNECTIVITY_UNKNOWN) {
@@ -1298,7 +1295,7 @@ update_config(NMConnectivity *self, NMConfigData *config_data)
     priv->uri_valid = new_uri_valid;
 
     interval = nm_config_data_get_connectivity_interval(config_data);
-    interval = MIN(interval, (7 * 24 * 3600));
+    interval = NM_MIN(interval, (7u * 24 * 3600));
     if (priv->interval != interval) {
         priv->interval = interval;
         changed        = TRUE;

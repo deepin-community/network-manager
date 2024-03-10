@@ -196,6 +196,14 @@ nm_dhcp_client_get_iface(NMDhcpClient *self)
     return priv->config.iface;
 }
 
+const char *
+nm_dhcp_client_get_iface_type_for_log(NMDhcpClient *self)
+{
+    NMDhcpClientPrivate *priv = NM_DHCP_CLIENT_GET_PRIVATE(self);
+
+    return priv->config.iface_type_log;
+}
+
 NMDedupMultiIndex *
 nm_dhcp_client_get_multi_idx(NMDhcpClient *self)
 {
@@ -519,7 +527,7 @@ _acd_reglist_data_remove(NMDhcpClient *self, guint idx, gboolean do_log)
 
     nm_clear_l3cd(&reglist_data->l3cd);
 
-    nm_l3cfg_commit_on_idle_schedule(priv->config.l3cfg, NM_L3_CFG_COMMIT_TYPE_UPDATE);
+    nm_l3cfg_commit_on_idle_schedule(priv->config.l3cfg, NM_L3_CFG_COMMIT_TYPE_AUTO);
 
     g_array_remove_index(priv->v4.acd.reglist, idx);
 
@@ -871,6 +879,7 @@ _nm_dhcp_client_notify(NMDhcpClient         *self,
         nm_clear_g_source_inst(&priv->previous_lease_timeout_source);
 
     nm_l3_config_data_reset(&priv->l3cd_curr, priv->l3cd_next);
+    priv->l3cfg_notify.wait_ipv6_dad = FALSE;
 
     if (client_event_type == NM_DHCP_CLIENT_EVENT_TYPE_BOUND && priv->l3cd_curr
         && nm_l3_config_data_get_num_addresses(priv->l3cd_curr, priv->config.addr_family) > 0)
@@ -889,6 +898,12 @@ _nm_dhcp_client_notify(NMDhcpClient         *self,
     }
 
     l3_cfg_notify_check_connected(self);
+
+    if (!priv->l3cd_curr) {
+        /* When the lease is lost, any cached ACD information is no longer relevant.
+         * Remove it so that it doesn't interfere with a new lease we might get. */
+        _acd_state_reset(self, TRUE, TRUE);
+    }
 
     _emit_notify(self,
                  NM_DHCP_CLIENT_NOTIFY_TYPE_LEASE_UPDATE,
@@ -1822,6 +1837,7 @@ config_init(NMDhcpClientConfig *config, const NMDhcpClientConfig *src)
     nm_g_bytes_ref(config->client_id);
 
     config->iface           = g_strdup(config->iface);
+    config->iface_type_log  = g_strdup(config->iface_type_log);
     config->uuid            = g_strdup(config->uuid);
     config->anycast_address = g_strdup(config->anycast_address);
     config->hostname        = g_strdup(config->hostname);
@@ -1884,6 +1900,7 @@ config_clear(NMDhcpClientConfig *config)
     nm_clear_pointer(&config->client_id, g_bytes_unref);
 
     nm_clear_g_free((gpointer *) &config->iface);
+    nm_clear_g_free((gpointer *) &config->iface_type_log);
     nm_clear_g_free((gpointer *) &config->uuid);
     nm_clear_g_free((gpointer *) &config->anycast_address);
     nm_clear_g_free((gpointer *) &config->hostname);

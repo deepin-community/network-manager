@@ -464,7 +464,9 @@ NM_UTILS_LOOKUP_STR_DEFINE(
     NM_UTILS_LOOKUP_ITEM(NM_DEVICE_STATE_REASON_SRIOV_CONFIGURATION_FAILED,
                          N_("Failed to configure SR-IOV parameters")),
     NM_UTILS_LOOKUP_ITEM(NM_DEVICE_STATE_REASON_PEER_NOT_FOUND,
-                         N_("The Wi-Fi P2P peer could not be found")), );
+                         N_("The Wi-Fi P2P peer could not be found")),
+    NM_UTILS_LOOKUP_ITEM(NM_DEVICE_STATE_REASON_DEVICE_HANDLER_FAILED,
+                         N_("The device handler dispatcher returned an error")), );
 
 NM_UTILS_LOOKUP_STR_DEFINE(
     nm_active_connection_state_reason_to_string,
@@ -712,6 +714,9 @@ nmc_print_qrcode(const char *str)
                 bool bottom = qrcodegen_getModule(qrcode, x, y + 1);
                 if (top) {
                     g_print(bottom ? " " : "\u2584");
+                } else if (y > size) {
+                    /* Print the last line (the bottom QR border) in light gray, no bg color */
+                    g_print("\033[0;37m\u2580");
                 } else {
                     g_print(bottom ? "\u2580" : "\u2588");
                 }

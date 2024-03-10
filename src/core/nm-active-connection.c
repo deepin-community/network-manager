@@ -636,7 +636,8 @@ device_state_changed(NMDevice           *device,
         NM_ACTIVE_CONNECTION_GET_CLASS(self)->device_state_changed(self,
                                                                    device,
                                                                    new_state,
-                                                                   old_state);
+                                                                   old_state,
+                                                                   reason);
 }
 
 static void
@@ -1153,7 +1154,7 @@ auth_done(NMAuthManager       *auth_mgr,
 /**
  * nm_active_connection_authorize:
  * @self: the #NMActiveConnection
- * @initial_connection: (allow-none): for add-and-activate, there
+ * @initial_connection: (nullable): for add-and-activate, there
  *   is no @settings_connection available when creating the active connection.
  *   Instead pass an alternative connection.
  * @result_func: function to be called on success or error
@@ -1604,9 +1605,11 @@ static const NMDBusInterfaceInfoExtended interface_info_active_connection = {
             NM_DEFINE_DBUS_PROPERTY_INFO_EXTENDED_READABLE("Controller",
                                                            "o",
                                                            NM_ACTIVE_CONNECTION_CONTROLLER),
-            NM_DEFINE_DBUS_PROPERTY_INFO_EXTENDED_READABLE("Master",
-                                                           "o",
-                                                           NM_ACTIVE_CONNECTION_MASTER), ), ),
+            NM_DEFINE_DBUS_PROPERTY_INFO_EXTENDED_READABLE(
+                "Master",
+                "o",
+                NM_ACTIVE_CONNECTION_MASTER,
+                .annotations = NM_GDBUS_ANNOTATION_INFO_LIST_DEPRECATED(), ), ), ),
 };
 
 static void

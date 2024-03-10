@@ -23,6 +23,9 @@ typedef enum {
     NM_DISPATCHER_ACTION_DHCP_CHANGE_6,
     NM_DISPATCHER_ACTION_CONNECTIVITY_CHANGE,
     NM_DISPATCHER_ACTION_REAPPLY,
+    NM_DISPATCHER_ACTION_DNS_CHANGE,
+    NM_DISPATCHER_ACTION_DEVICE_ADD,
+    NM_DISPATCHER_ACTION_DEVICE_DELETE,
 } NMDispatcherAction;
 
 #define NM_DISPATCHER_ACTION_DHCP_CHANGE_X(IS_IPv4) \
@@ -30,7 +33,14 @@ typedef enum {
 
 typedef struct NMDispatcherCallId NMDispatcherCallId;
 
+/* Callback function for regular dispatcher calls */
 typedef void (*NMDispatcherFunc)(NMDispatcherCallId *call_id, gpointer user_data);
+/* Callback function for device-handler dispatcher calls */
+typedef void (*NMDispatcherFuncDH)(NMDispatcherCallId *call_id,
+                                   gpointer            user_data,
+                                   gboolean            success,
+                                   const char         *error_msg,
+                                   GHashTable         *dict);
 
 gboolean nm_dispatcher_call_hostname(NMDispatcherFunc     callback,
                                      gpointer             user_data,
@@ -42,6 +52,13 @@ gboolean nm_dispatcher_call_device(NMDispatcherAction   action,
                                    NMDispatcherFunc     callback,
                                    gpointer             user_data,
                                    NMDispatcherCallId **out_call_id);
+
+gboolean nm_dispatcher_call_device_handler(NMDispatcherAction   action,
+                                           NMDevice            *device,
+                                           NMActRequest        *act_request,
+                                           NMDispatcherFuncDH   callback_dh,
+                                           gpointer             user_data,
+                                           NMDispatcherCallId **out_call_id);
 
 gboolean nm_dispatcher_call_device_sync(NMDispatcherAction action,
                                         NMDevice          *device,
@@ -68,6 +85,8 @@ gboolean nm_dispatcher_call_connectivity(NMConnectivityState  state,
                                          NMDispatcherFunc     callback,
                                          gpointer             user_data,
                                          NMDispatcherCallId **out_call_id);
+
+gboolean nm_dispatcher_call_dns_change(void);
 
 void nm_dispatcher_call_cancel(NMDispatcherCallId *call_id);
 

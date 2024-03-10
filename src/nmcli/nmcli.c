@@ -481,7 +481,7 @@ check_colors(NmcColorOption color_option, char **out_palette_str)
         return FALSE;
     }
 
-    if (color_option == NMC_USE_COLOR_AUTO && g_getenv("NO_COLOR")) {
+    if (color_option == NMC_USE_COLOR_AUTO && nm_str_not_empty(g_getenv("NO_COLOR"))) {
         /* https://no-color.org/ */
         return FALSE;
     }
@@ -489,7 +489,9 @@ check_colors(NmcColorOption color_option, char **out_palette_str)
     term = g_getenv("TERM");
 
     if (color_option == NMC_USE_COLOR_AUTO) {
-        if (nm_streq0(term, "dumb") || !isatty(STDOUT_FILENO))
+        if (nm_str_not_empty(g_getenv("CLICOLOR_FORCE"))) {
+            color_option = NMC_USE_COLOR_YES;
+        } else if (nm_streq0(term, "dumb") || !isatty(STDOUT_FILENO))
             return FALSE;
     }
 
@@ -785,7 +787,7 @@ process_command_line(NmCli *nmc, int argc, char **argv_orig)
         if (matches_arg(nmc, &argc, &argv, "-overview", NULL)) {
             nmc->nmc_config_mutable.overview = TRUE;
         } else if (matches_arg(nmc, &argc, &argv, "-offline", NULL)) {
-            nmc->offline = TRUE;
+            nmc->nmc_config_mutable.offline = TRUE;
         } else if (matches_arg(nmc, &argc, &argv, "-terse", NULL)) {
             if (nmc->nmc_config.print_output == NMC_PRINT_TERSE) {
                 g_string_printf(nmc->return_text,

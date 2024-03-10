@@ -40,6 +40,7 @@
 <link linkend="gdbus-property-org-freedesktop-NetworkManager-Settings.Connections">Connections</link>  readable   ao
 <link linkend="gdbus-property-org-freedesktop-NetworkManager-Settings.Hostname">Hostname</link>     readable   s
 <link linkend="gdbus-property-org-freedesktop-NetworkManager-Settings.CanModify">CanModify</link>    readable   b
+<link linkend="gdbus-property-org-freedesktop-NetworkManager-Settings.VersionId">VersionId</link>    readable   t
 </synopsis>
   </refsect1>
 <refsect1 role="desc" id="gdbus-interface-org-freedesktop-NetworkManager-Settings">
@@ -175,18 +176,18 @@ logically or-ed together:
 </para><para>
 <variablelist>
 <varlistentry>
-<term><literal>0x1 (to-disk)</literal>:</term>
-<listitem><para>The connection is persisted to disk.</para></listitem>
+  <term><literal>0x1 (to-disk)</literal>:</term>
+  <listitem><para>The connection is persisted to disk.</para></listitem>
 </varlistentry>
 <varlistentry>
-<term><literal>0x2 (in-memory)</literal>:</term>
-<listitem><para>The change is only made in memory (without touching an eventual
-profile on disk). If neither 0x1 nor 0x2 is set, the change is made in memory
-only, if the connection is already in memory only.</para></listitem>
+  <term><literal>0x2 (in-memory)</literal>:</term>
+  <listitem><para>The change is only made in memory (without touching an eventual
+  profile on disk). If neither 0x1 nor 0x2 is set, the change is made in memory
+  only, if the connection is already in memory only.</para></listitem>
 </varlistentry>
 <varlistentry>
-<term><literal>0x20 (block-autoconnect)</literal>:</term>
-<listitem><para>Blocks auto-connect on the new profile</para></listitem>
+  <term><literal>0x20 (block-autoconnect)</literal>:</term>
+  <listitem><para>Blocks auto-connect on the new profile</para></listitem>
 </varlistentry>
 </variablelist>
 </para><para>
@@ -194,10 +195,10 @@ The <constant>args</constant> argument accepts the following keys:
 </para><para>
 <variablelist>
 <varlistentry>
-<term><literal>plugin</literal>:</term>
-<listitem><para>The settings plugin the newly added connection will
-use, such as "keyfile" or "ifcfg-rh".</para>
-<para role="since">Since 1.38</para></listitem>
+  <term><literal>plugin</literal>:</term>
+  <listitem><para>The settings plugin the newly added connection will
+  use, such as "keyfile" or "ifcfg-rh".</para>
+  <para role="since">Since 1.38</para></listitem>
 </varlistentry>
 </variablelist>
 </para><para>
@@ -398,6 +399,19 @@ CanModify  readable   b
 </programlisting>
 <para>
 If true, adding and modifying connections is supported.
+</para>
+</refsect2>
+<refsect2 role="property" id="gdbus-property-org-freedesktop-NetworkManager-Settings.VersionId">
+  <title>The "VersionId" property</title>
+  <indexterm zone="gdbus-property-org-freedesktop-NetworkManager-Settings.VersionId"><primary sortas=".Settings:VersionId">org.freedesktop.NetworkManager.Settings:VersionId</primary></indexterm>
+<programlisting>
+VersionId  readable   t
+</programlisting>
+<para>
+The version of the settings. This is incremented whenever the profile
+changes and can be used to detect concurrent modifications.
+</para><para>
+Since: 1.44
 </para>
 </refsect2>
 </refsect1>

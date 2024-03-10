@@ -303,17 +303,20 @@ is_available(NMDevice *device, NMDeviceCheckDevAvailableFlags flags)
 /*****************************************************************************/
 
 static gboolean
-check_connection_compatible(NMDevice *device, NMConnection *connection, GError **error)
+check_connection_compatible(NMDevice     *device,
+                            NMConnection *connection,
+                            gboolean      check_properties,
+                            GError      **error)
 {
     NMDeviceVlanPrivate *priv = NM_DEVICE_VLAN_GET_PRIVATE(device);
     NMSettingVlan       *s_vlan;
     const char          *parent;
 
     if (!NM_DEVICE_CLASS(nm_device_vlan_parent_class)
-             ->check_connection_compatible(device, connection, error))
+             ->check_connection_compatible(device, connection, check_properties, error))
         return FALSE;
 
-    if (nm_device_is_real(device)) {
+    if (check_properties && nm_device_is_real(device)) {
         s_vlan = nm_connection_get_setting_vlan(connection);
 
         if (nm_setting_vlan_get_id(s_vlan) != priv->vlan_id) {
@@ -522,8 +525,16 @@ static const NMDBusInterfaceInfoExtended interface_info_device_vlan = {
     .parent = NM_DEFINE_GDBUS_INTERFACE_INFO_INIT(
         NM_DBUS_INTERFACE_DEVICE_VLAN,
         .properties = NM_DEFINE_GDBUS_PROPERTY_INFOS(
-            NM_DEFINE_DBUS_PROPERTY_INFO_EXTENDED_READABLE("HwAddress", "s", NM_DEVICE_HW_ADDRESS),
-            NM_DEFINE_DBUS_PROPERTY_INFO_EXTENDED_READABLE("Carrier", "b", NM_DEVICE_CARRIER),
+            NM_DEFINE_DBUS_PROPERTY_INFO_EXTENDED_READABLE(
+                "HwAddress",
+                "s",
+                NM_DEVICE_HW_ADDRESS,
+                .annotations = NM_GDBUS_ANNOTATION_INFO_LIST_DEPRECATED(), ),
+            NM_DEFINE_DBUS_PROPERTY_INFO_EXTENDED_READABLE(
+                "Carrier",
+                "b",
+                NM_DEVICE_CARRIER,
+                .annotations = NM_GDBUS_ANNOTATION_INFO_LIST_DEPRECATED(), ),
             NM_DEFINE_DBUS_PROPERTY_INFO_EXTENDED_READABLE("Parent", "o", NM_DEVICE_PARENT),
             NM_DEFINE_DBUS_PROPERTY_INFO_EXTENDED_READABLE("VlanId", "u", NM_DEVICE_VLAN_ID), ), ),
 };

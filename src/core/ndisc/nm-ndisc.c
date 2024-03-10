@@ -10,6 +10,7 @@
 #include <arpa/inet.h>
 #include <stdlib.h>
 
+#include "libnm-glib-aux/nm-random-utils.h"
 #include "libnm-platform/nm-platform-utils.h"
 #include "libnm-platform/nm-platform.h"
 #include "libnm-platform/nmp-netns.h"
@@ -113,7 +114,7 @@ nm_ndisc_data_to_l3cd(NMDedupMultiIndex        *multi_idx,
     nm_auto_unref_l3cd_init NML3ConfigData *l3cd = NULL;
     guint32                                 ifa_flags;
     guint                                   i;
-    const gint32                            now_sec = nm_utils_get_monotonic_timestamp_sec();
+    const gint64                            now_msec = nm_utils_get_monotonic_timestamp_msec();
 
     l3cd = nm_l3_config_data_new(multi_idx, ifindex, NM_IP_CONFIG_SOURCE_NDISC);
 
@@ -133,12 +134,10 @@ nm_ndisc_data_to_l3cd(NMDedupMultiIndex        *multi_idx,
             .ifindex   = ifindex,
             .address   = ndisc_addr->address,
             .plen      = 64,
-            .timestamp = now_sec,
-            .lifetime  = _nm_ndisc_lifetime_from_expiry(((gint64) now_sec) * 1000,
-                                                       ndisc_addr->expiry_msec,
-                                                       TRUE),
+            .timestamp = now_msec / 1000,
+            .lifetime  = _nm_ndisc_lifetime_from_expiry(now_msec, ndisc_addr->expiry_msec, TRUE),
             .preferred = _nm_ndisc_lifetime_from_expiry(
-                ((gint64) now_sec) * 1000,
+                now_msec,
                 NM_MIN(ndisc_addr->expiry_msec, ndisc_addr->expiry_preferred_msec),
                 TRUE),
             .addr_source = NM_IP_CONFIG_SOURCE_NDISC,
@@ -858,7 +857,7 @@ solicit_retransmit_time_jitter(gint32 solicit_retransmit_time_msec)
     ten_percent = NM_MAX(1, solicit_retransmit_time_msec / 10);
 
     return solicit_retransmit_time_msec - ten_percent
-           + ((gint32) (g_random_int() % (2u * ((guint32) ten_percent))));
+           + ((gint32) (nm_random_u32() % (2u * ((guint32) ten_percent))));
 }
 
 static gboolean
@@ -936,7 +935,7 @@ solicit_timer_start(NMNDisc *ndisc)
      * a suitable delay in 2021. Wait only up to 250 msec instead. */
 
     delay_msec =
-        g_random_int() % ((guint32) (NM_NDISC_RFC4861_MAX_RTR_SOLICITATION_DELAY * 1000 / 4));
+        nm_random_u32() % ((guint32) (NM_NDISC_RFC4861_MAX_RTR_SOLICITATION_DELAY * 1000 / 4));
 
     _LOGD("solicit: schedule sending first solicitation (of %d) in %.3f seconds",
           priv->config.router_solicitations,
@@ -974,8 +973,9 @@ announce_router(NMNDisc *ndisc)
 
         /* Schedule next initial announcement retransmit. */
         priv->send_ra_id =
-            g_timeout_add_seconds(g_random_int_range(NM_NDISC_ROUTER_ADVERT_DELAY,
-                                                     NM_NDISC_ROUTER_ADVERT_INITIAL_INTERVAL),
+            g_timeout_add_seconds(nm_random_u64_range_full(NM_NDISC_ROUTER_ADVERT_DELAY,
+                                                           NM_NDISC_ROUTER_ADVERT_INITIAL_INTERVAL,
+                                                           FALSE),
                                   (GSourceFunc) announce_router,
                                   ndisc);
     } else {
@@ -1009,10 +1009,9 @@ announce_router_initial(NMNDisc *ndisc)
     /* Schedule the initial send rather early. Clamp the delay by minimal
      * delay and not the initial advert internal so that we start fast. */
     if (G_LIKELY(!priv->send_ra_id)) {
-        priv->send_ra_id =
-            g_timeout_add_seconds(g_random_int_range(0, NM_NDISC_ROUTER_ADVERT_DELAY),
-                                  (GSourceFunc) announce_router,
-                                  ndisc);
+        priv->send_ra_id = g_timeout_add_seconds(nm_random_u64_range(NM_NDISC_ROUTER_ADVERT_DELAY),
+                                                 (GSourceFunc) announce_router,
+                                                 ndisc);
     }
 }
 
@@ -1028,7 +1027,7 @@ announce_router_solicited(NMNDisc *ndisc)
         nm_clear_g_source(&priv->send_ra_id);
 
     if (!priv->send_ra_id) {
-        priv->send_ra_id = g_timeout_add(g_random_int_range(0, NM_NDISC_ROUTER_ADVERT_DELAY_MS),
+        priv->send_ra_id = g_timeout_add(nm_random_u64_range(NM_NDISC_ROUTER_ADVERT_DELAY_MS),
                                          (GSourceFunc) announce_router,
                                          ndisc);
     }
@@ -1292,10 +1291,8 @@ nm_ndisc_dad_failed(NMNDisc *ndisc, GArray *addresses, gboolean emit_changed_sig
             NMNDiscAddress *item = &nm_g_array_index(rdata->addresses, NMNDiscAddress, j);
 
             if (IN6_ARE_ADDR_EQUAL(&item->address, addr)) {
-                char sbuf[NM_INET_ADDRSTRLEN];
-
-                _LOGI("DAD failed for discovered address %s", nm_inet6_ntop(addr, sbuf));
                 changed = TRUE;
+
                 if (!complete_address(ndisc, item)) {
                     g_array_remove_index(rdata->addresses, j);
                     continue;

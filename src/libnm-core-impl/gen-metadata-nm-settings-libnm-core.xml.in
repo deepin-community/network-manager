@@ -124,6 +124,7 @@
                   gprop-type="guint"
                   />
         <property name="rate"
+                  is-deprecated="1"
                   dbus-type="u"
                   gprop-type="guint"
                   />
@@ -140,6 +141,7 @@
                   gprop-type="GBytes"
                   />
         <property name="tx-power"
+                  is-deprecated="1"
                   dbus-type="u"
                   gprop-type="guint"
                   />
@@ -582,6 +584,10 @@
     <setting name="bond-port"
              gtype="NMSettingBondPort"
              >
+        <property name="prio"
+                  dbus-type="i"
+                  gprop-type="gint"
+                  />
         <property name="queue-id"
                   dbus-type="u"
                   gprop-type="guint"
@@ -761,6 +767,10 @@
                   dbus-type="b"
                   gprop-type="gboolean"
                   />
+        <property name="autoconnect-ports"
+                  dbus-type="i"
+                  gprop-type="gint"
+                  />
         <property name="autoconnect-priority"
                   dbus-type="i"
                   gprop-type="gint"
@@ -770,8 +780,13 @@
                   gprop-type="gint"
                   />
         <property name="autoconnect-slaves"
+                  is-deprecated="1"
                   dbus-type="i"
                   gprop-type="NMSettingConnectionAutoconnectSlaves"
+                  />
+        <property name="controller"
+                  dbus-type="s"
+                  gprop-type="gchararray"
                   />
         <property name="dns-over-tls"
                   dbus-type="i"
@@ -798,6 +813,7 @@
                   gprop-type="gint"
                   />
         <property name="master"
+                  is-deprecated="1"
                   dbus-type="s"
                   gprop-type="gchararray"
                   />
@@ -825,7 +841,12 @@
                   dbus-type="as"
                   gprop-type="GStrv"
                   />
+        <property name="port-type"
+                  dbus-type="s"
+                  gprop-type="gchararray"
+                  />
         <property name="read-only"
+                  is-deprecated="1"
                   dbus-type="b"
                   gprop-type="gboolean"
                   />
@@ -834,6 +855,7 @@
                   gprop-type="GStrv"
                   />
         <property name="slave-type"
+                  is-deprecated="1"
                   dbus-type="s"
                   gprop-type="gchararray"
                   />
@@ -1269,6 +1291,10 @@
                   dbus-type="b"
                   is-setting-option="1"
                   />
+        <property name="eee-enabled"
+                  dbus-type="b"
+                  is-setting-option="1"
+                  />
         <property name="ring-rx"
                   dbus-type="u"
                   is-setting-option="1"
@@ -1285,10 +1311,30 @@
                   dbus-type="u"
                   is-setting-option="1"
                   />
+        <property name="channels-rx"
+                  dbus-type="u"
+                  is-setting-option="1"
+                  />
+        <property name="channels-tx"
+                  dbus-type="u"
+                  is-setting-option="1"
+                  />
+        <property name="channels-other"
+                  dbus-type="u"
+                  is-setting-option="1"
+                  />
+        <property name="channels-combined"
+                  dbus-type="u"
+                  is-setting-option="1"
+                  />
     </setting>
     <setting name="generic"
              gtype="NMSettingGeneric"
              >
+        <property name="device-handler"
+                  dbus-type="s"
+                  gprop-type="gchararray"
+                  />
     </setting>
     <setting name="gsm"
              gtype="NMSettingGsm"
@@ -1310,6 +1356,14 @@
                   gprop-type="gchararray"
                   />
         <property name="home-only"
+                  dbus-type="b"
+                  gprop-type="gboolean"
+                  />
+        <property name="initial-eps-bearer-apn"
+                  dbus-type="s"
+                  gprop-type="gchararray"
+                  />
+        <property name="initial-eps-bearer-configure"
                   dbus-type="b"
                   gprop-type="gboolean"
                   />
@@ -1381,6 +1435,26 @@
         <property name="priority"
                   dbus-type="i"
                   gprop-type="gint"
+                  />
+    </setting>
+    <setting name="hsr"
+             gtype="NMSettingHsr"
+             >
+        <property name="multicast-spec"
+                  dbus-type="u"
+                  gprop-type="guint"
+                  />
+        <property name="port1"
+                  dbus-type="s"
+                  gprop-type="gchararray"
+                  />
+        <property name="port2"
+                  dbus-type="s"
+                  gprop-type="gchararray"
+                  />
+        <property name="prp"
+                  dbus-type="b"
+                  gprop-type="gboolean"
                   />
     </setting>
     <setting name="infiniband"
@@ -1491,6 +1565,10 @@
                   gprop-type="gint"
                   />
         <property name="dhcp-client-id"
+                  dbus-type="s"
+                  gprop-type="gchararray"
+                  />
+        <property name="dhcp-dscp"
                   dbus-type="s"
                   gprop-type="gchararray"
                   />
@@ -1625,6 +1703,10 @@
                   dbus-type="i"
                   gprop-type="gint"
                   />
+        <property name="dhcp-dscp"
+                  dbus-type="s"
+                  gprop-type="gchararray"
+                  />
         <property name="dhcp-duid"
                   dbus-type="s"
                   gprop-type="gchararray"
@@ -1638,6 +1720,10 @@
                   gprop-type="guint"
                   />
         <property name="dhcp-iaid"
+                  dbus-type="s"
+                  gprop-type="gchararray"
+                  />
+        <property name="dhcp-pd-hint"
                   dbus-type="s"
                   gprop-type="gchararray"
                   />
@@ -1741,6 +1827,26 @@
                   gprop-type="gchararray"
                   />
     </setting>
+    <setting name="link"
+             gtype="NMSettingLink"
+             >
+        <property name="gro-max-size"
+                  dbus-type="x"
+                  gprop-type="gint64"
+                  />
+        <property name="gso-max-segments"
+                  dbus-type="x"
+                  gprop-type="gint64"
+                  />
+        <property name="gso-max-size"
+                  dbus-type="x"
+                  gprop-type="gint64"
+                  />
+        <property name="tx-queue-length"
+                  dbus-type="x"
+                  gprop-type="gint64"
+                  />
+    </setting>
     <setting name="loopback"
              gtype="NMSettingLoopback"
              >
@@ -1771,6 +1877,10 @@
                   gprop-type="gchararray"
                   />
         <property name="mode"
+                  dbus-type="i"
+                  gprop-type="gint"
+                  />
+        <property name="offload"
                   dbus-type="i"
                   gprop-type="gint"
                   />
@@ -2095,6 +2205,18 @@
         <property name="autoprobe-drivers"
                   dbus-type="i"
                   gprop-type="NMTernary"
+                  />
+        <property name="eswitch-encap-mode"
+                  dbus-type="i"
+                  gprop-type="gint"
+                  />
+        <property name="eswitch-inline-mode"
+                  dbus-type="i"
+                  gprop-type="gint"
+                  />
+        <property name="eswitch-mode"
+                  dbus-type="i"
+                  gprop-type="gint"
                   />
         <property name="total-vfs"
                   dbus-type="u"

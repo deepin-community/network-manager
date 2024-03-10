@@ -55,20 +55,18 @@ typedef struct {
  * IP Tunneling Settings
  */
 struct _NMSettingIPTunnel {
-    NMSetting parent;
-    /* In the past, this struct was public API. Preserve ABI! */
+    NMSetting                parent;
+    NMSettingIPTunnelPrivate _priv;
 };
 
 struct _NMSettingIPTunnelClass {
     NMSettingClass parent;
-    /* In the past, this struct was public API. Preserve ABI! */
-    gpointer padding[4];
 };
 
 G_DEFINE_TYPE(NMSettingIPTunnel, nm_setting_ip_tunnel, NM_TYPE_SETTING)
 
 #define NM_SETTING_IP_TUNNEL_GET_PRIVATE(o) \
-    (G_TYPE_INSTANCE_GET_PRIVATE((o), NM_TYPE_SETTING_IP_TUNNEL, NMSettingIPTunnelPrivate))
+    _NM_GET_PRIVATE(o, NMSettingIPTunnel, NM_IS_SETTING_IP_TUNNEL, NMSetting)
 
 /*****************************************************************************/
 
@@ -491,7 +489,11 @@ verify(NMSetting *setting, NMConnection *connection, GError **error)
     }
 
     flags = priv->flags;
-    if (NM_IN_SET(priv->mode, NM_IP_TUNNEL_MODE_IPIP6, NM_IP_TUNNEL_MODE_IP6IP6))
+    if (NM_IN_SET(priv->mode,
+                  NM_IP_TUNNEL_MODE_IPIP6,
+                  NM_IP_TUNNEL_MODE_IP6IP6,
+                  NM_IP_TUNNEL_MODE_IP6GRE,
+                  NM_IP_TUNNEL_MODE_IP6GRETAP))
         flags &= (guint32) (~_NM_IP_TUNNEL_FLAG_ALL_IP6TNL);
     if (flags) {
         g_set_error(error,
@@ -562,8 +564,6 @@ nm_setting_ip_tunnel_class_init(NMSettingIPTunnelClass *klass)
     NMSettingClass *setting_class       = NM_SETTING_CLASS(klass);
     GArray         *properties_override = _nm_sett_info_property_override_create_array();
 
-    g_type_class_add_private(klass, sizeof(NMSettingIPTunnelPrivate));
-
     object_class->get_property = _nm_setting_property_get_property_direct;
     object_class->set_property = _nm_setting_property_set_property_direct;
 
@@ -584,16 +584,28 @@ nm_setting_ip_tunnel_class_init(NMSettingIPTunnelClass *klass)
                                               PROP_PARENT,
                                               NM_SETTING_PARAM_INFERRABLE,
                                               NMSettingIPTunnelPrivate,
-                                              parent);
+                                              parent,
+                                              .direct_string_allow_empty = TRUE);
 
     /**
      * NMSettingIPTunnel:mode:
      *
-     * The tunneling mode, for example %NM_IP_TUNNEL_MODE_IPIP or
-     * %NM_IP_TUNNEL_MODE_GRE.
+     * The tunneling mode. Valid values: %NM_IP_TUNNEL_MODE_IPIP,
+     * %NM_IP_TUNNEL_MODE_GRE, %NM_IP_TUNNEL_MODE_SIT, %NM_IP_TUNNEL_MODE_ISATAP,
+     * %NM_IP_TUNNEL_MODE_VTI, %NM_IP_TUNNEL_MODE_IP6IP6, %NM_IP_TUNNEL_MODE_IPIP6,
+     * %NM_IP_TUNNEL_MODE_IP6GRE, %NM_IP_TUNNEL_MODE_VTI6, %NM_IP_TUNNEL_MODE_GRETAP
+     * and %NM_IP_TUNNEL_MODE_IP6GRETAP
      *
      * Since: 1.2
      **/
+    /* ---nmcli---
+     * property: mode
+     * description:
+     *   The tunneling mode. Valid values: ipip (1), gre (2), sit (3), isatap (4),
+     *   vti (5), ip6ip6 (6), ipip6 (7), ip6gre (8), vti6 (9), gretap (10) and
+     *   ip6gretap (11)
+     * ---end---
+     */
     _nm_setting_property_define_direct_uint32(properties_override,
                                               obj_properties,
                                               NM_SETTING_IP_TUNNEL_MODE,
@@ -619,7 +631,8 @@ nm_setting_ip_tunnel_class_init(NMSettingIPTunnelClass *klass)
                                               PROP_LOCAL,
                                               NM_SETTING_PARAM_INFERRABLE,
                                               NMSettingIPTunnelPrivate,
-                                              local);
+                                              local,
+                                              .direct_string_allow_empty = TRUE);
 
     /**
      * NMSettingIPTunnel:remote:
@@ -635,7 +648,8 @@ nm_setting_ip_tunnel_class_init(NMSettingIPTunnelClass *klass)
                                               PROP_REMOTE,
                                               NM_SETTING_PARAM_INFERRABLE,
                                               NMSettingIPTunnelPrivate,
-                                              remote);
+                                              remote,
+                                              .direct_string_allow_empty = TRUE);
 
     /**
      * NMSettingIPTunnel:ttl
@@ -705,7 +719,8 @@ nm_setting_ip_tunnel_class_init(NMSettingIPTunnelClass *klass)
                                               PROP_INPUT_KEY,
                                               NM_SETTING_PARAM_INFERRABLE,
                                               NMSettingIPTunnelPrivate,
-                                              input_key);
+                                              input_key,
+                                              .direct_string_allow_empty = TRUE);
 
     /**
      * NMSettingIPTunnel:output-key:
@@ -721,16 +736,26 @@ nm_setting_ip_tunnel_class_init(NMSettingIPTunnelClass *klass)
                                               PROP_OUTPUT_KEY,
                                               NM_SETTING_PARAM_INFERRABLE,
                                               NMSettingIPTunnelPrivate,
-                                              output_key);
+                                              output_key,
+                                              .direct_string_allow_empty = TRUE);
 
     /**
      * NMSettingIPTunnel:encapsulation-limit:
      *
      * How many additional levels of encapsulation are permitted to be prepended
-     * to packets. This property applies only to IPv6 tunnels.
+     * to packets. This property applies only to IPv6 tunnels. To disable this option,
+     * add %NM_IP_TUNNEL_FLAG_IP6_IGN_ENCAP_LIMIT to ip-tunnel flags.
      *
      * Since: 1.2
      **/
+    /* ---nmcli---
+     * property: encapsulation-limit
+     * description:
+     *   How many additional levels of encapsulation are permitted to be prepended
+     *   to packets. This property applies only to IPv6 tunnels. To disable this
+     *   option, add 0x1 (ip6-ign-encap-limit) to ip-tunnel flags.
+     * ---end---
+     */
     _nm_setting_property_define_direct_uint32(properties_override,
                                               obj_properties,
                                               NM_SETTING_IP_TUNNEL_ENCAPSULATION_LIMIT,
@@ -810,6 +835,16 @@ nm_setting_ip_tunnel_class_init(NMSettingIPTunnelClass *klass)
      *
      * Since: 1.12
      **/
+    /* ---nmcli---
+     * property: flags
+     * description:
+     *   Tunnel flags. Currently, the following values are supported:
+     *   0x1 (ip6-ign-encap-limit), 0x2 (ip6-use-orig-tclass),
+     *   0x4 (ip6-use-orig-flowlabel), 0x8 (ip6-mip6-dev), 0x10 (ip6-rcv-dscp-copy)
+     *   and 0x20 (ip6-use-orig-fwmark).
+     *   They are valid only for IPv6 tunnels.
+     * ---end---
+     */
     _nm_setting_property_define_direct_uint32(properties_override,
                                               obj_properties,
                                               NM_SETTING_IP_TUNNEL_FLAGS,
@@ -827,5 +862,5 @@ nm_setting_ip_tunnel_class_init(NMSettingIPTunnelClass *klass)
                              NM_META_SETTING_TYPE_IP_TUNNEL,
                              NULL,
                              properties_override,
-                             NM_SETT_INFO_PRIVATE_OFFSET_FROM_CLASS);
+                             G_STRUCT_OFFSET(NMSettingIPTunnel, _priv));
 }

@@ -237,7 +237,7 @@ error:
 static const GPtrArray *
 nmc_get_connections(const NmCli *nmc)
 {
-    if (nmc->offline) {
+    if (nmc->nmc_config.offline) {
         g_return_val_if_fail(!nmc->client, nmc->offline_connections);
         return nmc->offline_connections;
     } else {
@@ -251,7 +251,7 @@ nmc_get_active_connections(const NmCli *nmc)
 {
     static const GPtrArray offline_active_connections = {.len = 0};
 
-    if (nmc->offline) {
+    if (nmc->nmc_config.offline) {
         g_return_val_if_fail(!nmc->client, &offline_active_connections);
         return &offline_active_connections;
     } else {
@@ -291,65 +291,91 @@ connection_type_to_display(const char *type, NMMetaAccessorGetType get_type)
 static int
 active_connection_get_state_ord(NMActiveConnection *active)
 {
+    static const NMActiveConnectionState ordered_states[] = {
+        NM_ACTIVE_CONNECTION_STATE_UNKNOWN,
+        NM_ACTIVE_CONNECTION_STATE_DEACTIVATED,
+        NM_ACTIVE_CONNECTION_STATE_DEACTIVATING,
+        NM_ACTIVE_CONNECTION_STATE_ACTIVATING,
+        NM_ACTIVE_CONNECTION_STATE_ACTIVATED,
+    };
+    NMActiveConnectionState state;
+    int                     i;
+    gboolean                is_external;
+
     /* returns an integer related to @active's state, that can be used for sorting
      * active connections based on their activation state. */
-    if (!active)
-        return -2;
 
-    switch (nm_active_connection_get_state(active)) {
-    case NM_ACTIVE_CONNECTION_STATE_UNKNOWN:
-        return 0;
-    case NM_ACTIVE_CONNECTION_STATE_DEACTIVATED:
-        return 1;
-    case NM_ACTIVE_CONNECTION_STATE_DEACTIVATING:
-        return 2;
-    case NM_ACTIVE_CONNECTION_STATE_ACTIVATING:
-        return 3;
-    case NM_ACTIVE_CONNECTION_STATE_ACTIVATED:
-        return 4;
+    if (!active)
+        return -10;
+
+    state       = nm_active_connection_get_state(active);
+    is_external = NM_FLAGS_HAS(nm_active_connection_get_state_flags(active),
+                               NM_ACTIVATION_STATE_FLAG_EXTERNAL);
+
+    for (i = 0; i < (int) G_N_ELEMENTS(ordered_states); i++) {
+        if (state == ordered_states[i]) {
+            if (!is_external)
+                i += G_N_ELEMENTS(ordered_states);
+            return i;
+        }
     }
-    return -1;
+
+    return is_external ? -2 : -1;
 }
 
 int
 nmc_active_connection_cmp(NMActiveConnection *ac_a, NMActiveConnection *ac_b)
 {
-    NMSettingIPConfig  *s_ip;
-    NMRemoteConnection *conn;
+    NMSettingIPConfig  *s_ip4_a;
+    NMSettingIPConfig  *s_ip4_b;
+    NMSettingIPConfig  *s_ip6_a;
+    NMSettingIPConfig  *s_ip6_b;
+    NMRemoteConnection *conn_a;
+    NMRemoteConnection *conn_b;
     NMIPConfig         *da_ip;
     NMIPConfig         *db_ip;
-    int                 da_num_addrs;
-    int                 db_num_addrs;
-    int                 cmp = 0;
+    gint64              da_num_addrs;
+    gint64              db_num_addrs;
+    gboolean            bool_a;
+    gboolean            bool_b;
 
-    /* Non-active sort last. */
+    /* nmc_active_connection_cmp() sorts more-important ACs later. That means,
+     * - NULL comes first
+     * - then sorting by state (active_connection_get_state_ord()), with "activated" sorted last.
+     * - various properties of the AC.
+     *
+     * This is basically the inverse order of `nmcli connection`.
+     */
+
+    /* Non-active (and NULL) sort first! */
     NM_CMP_SELF(ac_a, ac_b);
-    NM_CMP_DIRECT(active_connection_get_state_ord(ac_b), active_connection_get_state_ord(ac_a));
+    NM_CMP_DIRECT(active_connection_get_state_ord(ac_a), active_connection_get_state_ord(ac_b));
+
+    conn_a = nm_active_connection_get_connection(ac_a);
+    conn_b = nm_active_connection_get_connection(ac_b);
+
+    s_ip6_a = conn_a ? nm_connection_get_setting_ip6_config(NM_CONNECTION(conn_a)) : NULL;
+    s_ip6_b = conn_b ? nm_connection_get_setting_ip6_config(NM_CONNECTION(conn_b)) : NULL;
 
     /* Shared connections (likely hotspots) go on the top if possible */
-    conn = nm_active_connection_get_connection(ac_a);
-    s_ip = conn ? nm_connection_get_setting_ip6_config(NM_CONNECTION(conn)) : NULL;
-    if (s_ip
-        && nm_streq(nm_setting_ip_config_get_method(s_ip), NM_SETTING_IP6_CONFIG_METHOD_SHARED))
-        cmp++;
-    conn = nm_active_connection_get_connection(ac_b);
-    s_ip = conn ? nm_connection_get_setting_ip6_config(NM_CONNECTION(conn)) : NULL;
-    if (s_ip
-        && nm_streq(nm_setting_ip_config_get_method(s_ip), NM_SETTING_IP6_CONFIG_METHOD_SHARED))
-        cmp--;
-    NM_CMP_RETURN(cmp);
+    bool_a = (s_ip6_a
+              && nm_streq(nm_setting_ip_config_get_method(s_ip6_a),
+                          NM_SETTING_IP6_CONFIG_METHOD_SHARED));
+    bool_b = (s_ip6_b
+              && nm_streq(nm_setting_ip_config_get_method(s_ip6_b),
+                          NM_SETTING_IP6_CONFIG_METHOD_SHARED));
+    NM_CMP_DIRECT(bool_a, bool_b);
 
-    conn = nm_active_connection_get_connection(ac_a);
-    s_ip = conn ? nm_connection_get_setting_ip4_config(NM_CONNECTION(conn)) : NULL;
-    if (s_ip
-        && nm_streq(nm_setting_ip_config_get_method(s_ip), NM_SETTING_IP4_CONFIG_METHOD_SHARED))
-        cmp++;
-    conn = nm_active_connection_get_connection(ac_b);
-    s_ip = conn ? nm_connection_get_setting_ip4_config(NM_CONNECTION(conn)) : NULL;
-    if (s_ip
-        && nm_streq(nm_setting_ip_config_get_method(s_ip), NM_SETTING_IP4_CONFIG_METHOD_SHARED))
-        cmp--;
-    NM_CMP_RETURN(cmp);
+    s_ip4_a = conn_a ? nm_connection_get_setting_ip4_config(NM_CONNECTION(conn_a)) : NULL;
+    s_ip4_b = conn_b ? nm_connection_get_setting_ip4_config(NM_CONNECTION(conn_b)) : NULL;
+
+    bool_a = (s_ip4_a
+              && nm_streq(nm_setting_ip_config_get_method(s_ip4_a),
+                          NM_SETTING_IP4_CONFIG_METHOD_SHARED));
+    bool_b = (s_ip4_b
+              && nm_streq(nm_setting_ip_config_get_method(s_ip4_b),
+                          NM_SETTING_IP4_CONFIG_METHOD_SHARED));
+    NM_CMP_DIRECT(bool_a, bool_b);
 
     /* VPNs go next */
     NM_CMP_DIRECT(!!nm_active_connection_get_vpn(ac_a), !!nm_active_connection_get_vpn(ac_b));
@@ -367,9 +393,9 @@ nmc_active_connection_cmp(NMActiveConnection *ac_a, NMActiveConnection *ac_b)
     db_num_addrs = db_ip ? nm_ip_config_get_addresses(db_ip)->len : 0;
 
     da_ip = nm_active_connection_get_ip6_config(ac_a);
-    da_num_addrs += da_ip ? nm_ip_config_get_addresses(da_ip)->len : 0;
+    da_num_addrs += (gint64) (da_ip ? nm_ip_config_get_addresses(da_ip)->len : 0u);
     db_ip = nm_active_connection_get_ip6_config(ac_b);
-    db_num_addrs += db_ip ? nm_ip_config_get_addresses(db_ip)->len : 0;
+    db_num_addrs += (gint64) (db_ip ? nm_ip_config_get_addresses(db_ip)->len : 0u);
 
     NM_CMP_DIRECT(da_num_addrs, db_num_addrs);
 
@@ -646,8 +672,7 @@ nmc_connection_check_deprecated(NMConnection *c)
     const char                *type;
 
     type = nm_connection_get_connection_type(c);
-
-    if (strcmp(type, NM_SETTING_WIMAX_SETTING_NAME) == 0)
+    if (nm_streq0(type, NM_SETTING_WIMAX_SETTING_NAME))
         return _("WiMax is no longer supported");
 
     s_wsec = nm_connection_get_setting_wireless_security(c);
@@ -776,10 +801,10 @@ _metagen_con_show_get_fcn(NMC_META_GENERIC_INFO_GET_FCN_ARGS)
         if (ac)
             return nm_object_get_path(NM_OBJECT(ac));
         return NULL;
-    case NMC_GENERIC_INFO_TYPE_CON_SHOW_SLAVE:
+    case NMC_GENERIC_INFO_TYPE_CON_SHOW_PORT:
         if (!s_con)
             return NULL;
-        return nm_setting_connection_get_slave_type(s_con);
+        return nm_setting_connection_get_port_type(s_con);
     case NMC_GENERIC_INFO_TYPE_CON_SHOW_FILENAME:
         if (!NM_IS_REMOTE_CONNECTION(c))
             return NULL;
@@ -807,7 +832,7 @@ const NmcMetaGenericInfo *const metagen_con_show[_NMC_GENERIC_INFO_TYPE_CON_SHOW
     _METAGEN_CON_SHOW(NMC_GENERIC_INFO_TYPE_CON_SHOW_DEVICE, "DEVICE"),
     _METAGEN_CON_SHOW(NMC_GENERIC_INFO_TYPE_CON_SHOW_STATE, "STATE"),
     _METAGEN_CON_SHOW(NMC_GENERIC_INFO_TYPE_CON_SHOW_ACTIVE_PATH, "ACTIVE-PATH"),
-    _METAGEN_CON_SHOW(NMC_GENERIC_INFO_TYPE_CON_SHOW_SLAVE, "SLAVE"),
+    _METAGEN_CON_SHOW(NMC_GENERIC_INFO_TYPE_CON_SHOW_PORT, "SLAVE"),
     _METAGEN_CON_SHOW(NMC_GENERIC_INFO_TYPE_CON_SHOW_FILENAME, "FILENAME"),
 };
 #define NMC_FIELDS_CON_SHOW_COMMON "NAME,UUID,TYPE,DEVICE"
@@ -893,8 +918,8 @@ _metagen_con_active_general_get_fcn(NMC_META_GENERIC_INFO_GET_FCN_ARGS)
         /* this is really ugly, because the zone is not a property of the active-connection,
          * but the settings-connection profile. There is no guarantee, that they agree. */
         return s_con ? nm_setting_connection_get_zone(s_con) : NULL;
-    case NMC_GENERIC_INFO_TYPE_CON_ACTIVE_GENERAL_MASTER_PATH:
-        dev = nm_active_connection_get_master(ac);
+    case NMC_GENERIC_INFO_TYPE_CON_ACTIVE_GENERAL_CONTROLLER_PATH:
+        dev = nm_active_connection_get_controller(ac);
         return dev ? nm_object_get_path(NM_OBJECT(dev)) : NULL;
     default:
         break;
@@ -922,7 +947,7 @@ const NmcMetaGenericInfo
                                     "DBUS-PATH"),
         _METAGEN_CON_ACTIVE_GENERAL(NMC_GENERIC_INFO_TYPE_CON_ACTIVE_GENERAL_CON_PATH, "CON-PATH"),
         _METAGEN_CON_ACTIVE_GENERAL(NMC_GENERIC_INFO_TYPE_CON_ACTIVE_GENERAL_ZONE, "ZONE"),
-        _METAGEN_CON_ACTIVE_GENERAL(NMC_GENERIC_INFO_TYPE_CON_ACTIVE_GENERAL_MASTER_PATH,
+        _METAGEN_CON_ACTIVE_GENERAL(NMC_GENERIC_INFO_TYPE_CON_ACTIVE_GENERAL_CONTROLLER_PATH,
                                     "MASTER-PATH"),
 };
 
@@ -1041,15 +1066,17 @@ const NmcMetaGenericInfo
     "," NM_SETTING_TEAM_SETTING_NAME "," NM_SETTING_TEAM_PORT_SETTING_NAME             \
     "," NM_SETTING_OVS_BRIDGE_SETTING_NAME "," NM_SETTING_OVS_INTERFACE_SETTING_NAME   \
     "," NM_SETTING_OVS_PATCH_SETTING_NAME "," NM_SETTING_OVS_PORT_SETTING_NAME         \
-    "," NM_SETTING_DCB_SETTING_NAME "," NM_SETTING_TUN_SETTING_NAME                    \
-    "," NM_SETTING_IP_TUNNEL_SETTING_NAME "," NM_SETTING_MACSEC_SETTING_NAME           \
-    "," NM_SETTING_MACVLAN_SETTING_NAME "," NM_SETTING_VXLAN_SETTING_NAME              \
-    "," NM_SETTING_VRF_SETTING_NAME "," NM_SETTING_WPAN_SETTING_NAME                   \
-    "," NM_SETTING_6LOWPAN_SETTING_NAME "," NM_SETTING_WIREGUARD_SETTING_NAME          \
+    "," NM_SETTING_GENERIC_SETTING_NAME "," NM_SETTING_DCB_SETTING_NAME                \
+    "," NM_SETTING_TUN_SETTING_NAME "," NM_SETTING_IP_TUNNEL_SETTING_NAME              \
+    "," NM_SETTING_MACSEC_SETTING_NAME "," NM_SETTING_MACVLAN_SETTING_NAME             \
+    "," NM_SETTING_VXLAN_SETTING_NAME "," NM_SETTING_VRF_SETTING_NAME                  \
+    "," NM_SETTING_WPAN_SETTING_NAME "," NM_SETTING_6LOWPAN_SETTING_NAME               \
+    "," NM_SETTING_WIREGUARD_SETTING_NAME "," NM_SETTING_LINK_SETTING_NAME             \
     "," NM_SETTING_PROXY_SETTING_NAME "," NM_SETTING_TC_CONFIG_SETTING_NAME            \
     "," NM_SETTING_SRIOV_SETTING_NAME "," NM_SETTING_ETHTOOL_SETTING_NAME              \
-    "," NM_SETTING_OVS_DPDK_SETTING_NAME                                               \
-    "," NM_SETTING_HOSTNAME_SETTING_NAME /* NM_SETTING_DUMMY_SETTING_NAME NM_SETTING_WIMAX_SETTING_NAME */
+    "," NM_SETTING_OVS_DPDK_SETTING_NAME "," NM_SETTING_HOSTNAME_SETTING_NAME          \
+    "," NM_SETTING_HSR_SETTING_NAME
+/* NM_SETTING_DUMMY_SETTING_NAME NM_SETTING_WIMAX_SETTING_NAME */
 
 const NmcMetaGenericInfo *const nmc_fields_con_active_details_groups[] = {
     NMC_META_GENERIC_WITH_NESTED("GENERAL", metagen_con_active_general), /* 0 */
@@ -1447,7 +1474,7 @@ get_ac_for_connection_cmp(gconstpointer pa, gconstpointer pb)
     NMActiveConnection *ac_a = *((NMActiveConnection *const *) pa);
     NMActiveConnection *ac_b = *((NMActiveConnection *const *) pb);
 
-    NM_CMP_RETURN(nmc_active_connection_cmp(ac_a, ac_b));
+    NM_CMP_RETURN(nmc_active_connection_cmp(ac_b, ac_a));
     NM_CMP_DIRECT_STRCMP0(nm_active_connection_get_id(ac_a), nm_active_connection_get_id(ac_b));
     NM_CMP_DIRECT_STRCMP0(nm_active_connection_get_connection_type(ac_a),
                           nm_active_connection_get_connection_type(ac_b));
@@ -2242,7 +2269,7 @@ get_connection(NmCli              *nmc,
     if (nmc->offline_connections && nmc->offline_connections->len)
         return nmc->offline_connections->pdata[0];
 
-    g_return_val_if_fail(!nmc->offline, NULL);
+    g_return_val_if_fail(!nmc->nmc_config.offline, NULL);
 
     if (*argc == 0) {
         g_set_error_literal(error,
@@ -2262,7 +2289,7 @@ get_connection(NmCli              *nmc,
                             NMCLI_ERROR,
                             NMC_RESULT_ERROR_USER_INPUT,
                             _("%s argument is missing"),
-                            selector);
+                            (*argv)[0]);
                 return NULL;
             }
         } else {
@@ -2609,15 +2636,21 @@ get_default_active_connection(NmCli *nmc, NMDevice **device)
     return default_ac;
 }
 
-/* Find a device to activate the connection on.
- * IN:  connection:  connection to activate
- *      iface:       device interface name to use (optional)
- *      ap:          access point to use (optional; valid just for 802-11-wireless)
- *      nsp:         Network Service Provider to use (option; valid only for wimax)
- * OUT: device:      found device
- *      spec_object: specific_object path of NMAccessPoint
- * RETURNS: TRUE when a device is found, FALSE otherwise.
- */
+/**
+ * find_device_for_connection:
+ * @nmc: the #NmCli
+ * @connection: connection to activate
+ * @iface: device interface name to use (optional)
+ * @ap: access point to use (optional; valid just for 802-11-wireless)
+ * @nsp: Network Service Provider to use (option; valid only for wimax)
+ * @device: (out): found device
+ * @spec_object: (out): specific_object path of NMAccessPoint
+ * @error: the error reason.
+ *
+ * Find a device to activate the connection on.
+ *
+ * Return: TRUE when a device is found, FALSE otherwise.
+ **/
 static gboolean
 find_device_for_connection(NmCli        *nmc,
                            NMConnection *connection,
@@ -3489,19 +3522,19 @@ do_connection_down(const NMCCommand *cmd, NmCli *nmc, int argc, const char *cons
 /*****************************************************************************/
 
 /*
- * Return the most appropriate name for the connection of a type 'name' possibly with given 'slave_type'
+ * Return the most appropriate name for the connection of a type 'name' possibly with given 'port_type'
  * if exists, else return the 'name'. The returned string must not be freed.
  */
 static const char *
-get_name_alias_toplevel(const char *name, const char *slave_type)
+get_name_alias_toplevel(const char *name, const char *port_type)
 {
     const NMMetaSettingInfoEditor *setting_info;
 
-    if (slave_type) {
-        const char *slave_name;
+    if (port_type) {
+        const char *port_name;
 
-        if (nm_meta_setting_info_valid_parts_for_slave_type(slave_type, &slave_name))
-            return slave_name ?: name;
+        if (nm_meta_setting_info_valid_parts_for_slave_type(port_type, &port_name))
+            return port_name ?: name;
         return name;
     }
 
@@ -3520,7 +3553,7 @@ get_name_alias_toplevel(const char *name, const char *slave_type)
  */
 static char *
 get_valid_options_string(const NMMetaSettingValidPartItem *const *array,
-                         const NMMetaSettingValidPartItem *const *array_slv)
+                         const NMMetaSettingValidPartItem *const *array_port)
 {
     const NMMetaSettingValidPartItem *const *iter = array;
     GString                                 *str;
@@ -3528,7 +3561,7 @@ get_valid_options_string(const NMMetaSettingValidPartItem *const *array,
 
     str = g_string_sized_new(150);
 
-    for (i = 0; i < 2; i++, iter = array_slv) {
+    for (i = 0; i < 2; i++, iter = array_port) {
         for (; iter && *iter; iter++) {
             const NMMetaSettingInfoEditor *setting_info = (*iter)->setting_info;
 
@@ -3608,7 +3641,7 @@ _construct_property_name(const char            *setting_name,
 
 /* get_valid_properties_string:
  * @array: base properties for the current connection type
- * @array_slv: slave properties (or ipv4/ipv6 ones) for the current connection type
+ * @array_port: port properties (or ipv4/ipv6 ones) for the current connection type
  * @modifier: to prepend to each element of the returned list
  * @prefix: only properties matching the prefix will be returned
  * @postfix: required prefix on the property args; if a empty string is passed, is
@@ -3622,7 +3655,7 @@ _construct_property_name(const char            *setting_name,
  */
 static char *
 get_valid_properties_string(const NMMetaSettingValidPartItem *const *array,
-                            const NMMetaSettingValidPartItem *const *array_slv,
+                            const NMMetaSettingValidPartItem *const *array_port,
                             NMMetaAccessorModifier                   modifier,
                             const char                              *prefix,
                             const char                              *postfix)
@@ -3637,7 +3670,7 @@ get_valid_properties_string(const NMMetaSettingValidPartItem *const *array,
 
     str = g_string_sized_new(1024);
 
-    for (i = 0; i < 2; i++, iter = array_slv) {
+    for (i = 0; i < 2; i++, iter = array_port) {
         for (; !full_match && iter && *iter; iter++) {
             const NMMetaSettingInfoEditor *setting_info = (*iter)->setting_info;
 
@@ -3690,7 +3723,7 @@ get_valid_properties_string(const NMMetaSettingValidPartItem *const *array,
 
 /*
  * Check if 'val' is valid string in either array->name or array->alias for
- * both array parameters (array & array_slv).
+ * both array parameters (array & array_port).
  * It accepts shorter string provided they are not ambiguous.
  * 'val' == NULL doesn't hurt.
  *
@@ -3700,7 +3733,7 @@ get_valid_properties_string(const NMMetaSettingValidPartItem *const *array,
 static const char *
 check_valid_name(const char                              *val,
                  const NMMetaSettingValidPartItem *const *array,
-                 const NMMetaSettingValidPartItem *const *array_slv,
+                 const NMMetaSettingValidPartItem *const *array_port,
                  GError                                 **error)
 {
     const NMMetaSettingValidPartItem *const *iter;
@@ -3714,7 +3747,7 @@ check_valid_name(const char                              *val,
     /* Create a temporary array that can be used in nmc_string_is_valid() */
     tmp_arr = g_ptr_array_sized_new(32);
     iter    = array;
-    for (i = 0; i < 2; i++, iter = array_slv) {
+    for (i = 0; i < 2; i++, iter = array_port) {
         for (; iter && *iter; iter++) {
             const NMMetaSettingInfoEditor *setting_info = (*iter)->setting_info;
 
@@ -3734,7 +3767,7 @@ check_valid_name(const char                              *val,
             /* We want to handle aliases, so construct own error message */
             gs_free char *err_str = NULL;
 
-            err_str = get_valid_options_string(array, array_slv);
+            err_str = get_valid_options_string(array, array_port);
             g_set_error(error, 1, 0, _("'%s' not among [%s]"), val, err_str);
             g_clear_error(&tmp_err);
         }
@@ -3743,7 +3776,7 @@ check_valid_name(const char                              *val,
 
     /* Return a pointer to the found string in passed 'array' */
     iter = array;
-    for (i = 0; i < 2; i++, iter = array_slv) {
+    for (i = 0; i < 2; i++, iter = array_port) {
         for (; iter && *iter; iter++) {
             const NMMetaSettingInfoEditor *setting_info = (*iter)->setting_info;
 
@@ -3760,7 +3793,7 @@ check_valid_name(const char                              *val,
 }
 
 static const char *
-check_valid_name_toplevel(const char *val, const char **slave_type, GError **error)
+check_valid_name_toplevel(const char *val, const char **port_type, GError **error)
 {
     gs_unref_ptrarray GPtrArray   *tmp_arr = NULL;
     const NMMetaSettingInfoEditor *setting_info;
@@ -3768,7 +3801,7 @@ check_valid_name_toplevel(const char *val, const char **slave_type, GError **err
     const char                    *str;
     int                            i;
 
-    NM_SET_OUT(slave_type, NULL);
+    NM_SET_OUT(port_type, NULL);
 
     /* Create a temporary array that can be used in nmc_string_is_valid() */
     tmp_arr = g_ptr_array_sized_new(32);
@@ -3799,13 +3832,13 @@ check_valid_name_toplevel(const char *val, const char **slave_type, GError **err
     }
 
     if (nm_streq(str, "bond-slave")) {
-        NM_SET_OUT(slave_type, NM_SETTING_BOND_SETTING_NAME);
+        NM_SET_OUT(port_type, NM_SETTING_BOND_SETTING_NAME);
         return NM_SETTING_WIRED_SETTING_NAME;
     } else if (nm_streq(str, "bridge-slave")) {
-        NM_SET_OUT(slave_type, NM_SETTING_BRIDGE_SETTING_NAME);
+        NM_SET_OUT(port_type, NM_SETTING_BRIDGE_SETTING_NAME);
         return NM_SETTING_WIRED_SETTING_NAME;
     } else if (nm_streq(str, "team-slave")) {
-        NM_SET_OUT(slave_type, NM_SETTING_TEAM_SETTING_NAME);
+        NM_SET_OUT(port_type, NM_SETTING_TEAM_SETTING_NAME);
         return NM_SETTING_WIRED_SETTING_NAME;
     }
 
@@ -3832,7 +3865,7 @@ is_setting_mandatory(NMConnection *connection, NMSetting *setting)
     g_return_val_if_fail(s_con, FALSE);
 
     c_type = nm_setting_connection_get_connection_type(s_con);
-    s_type = nm_setting_connection_get_slave_type(s_con);
+    s_type = nm_setting_connection_get_port_type(s_con);
 
     name = nm_setting_get_name(setting);
 
@@ -3853,45 +3886,45 @@ is_setting_mandatory(NMConnection *connection, NMSetting *setting)
 /*****************************************************************************/
 
 static const char *
-_strip_master_prefix(const char *master, const char *(**func)(NMConnection *) )
+_strip_controller_prefix(const char *controller, const char *(**func)(NMConnection *) )
 {
-    if (!master)
+    if (!controller)
         return NULL;
 
-    if (g_str_has_prefix(master, "ifname/")) {
-        master = master + strlen("ifname/");
+    if (g_str_has_prefix(controller, "ifname/")) {
+        controller = controller + strlen("ifname/");
         if (func)
             *func = nm_connection_get_interface_name;
-    } else if (g_str_has_prefix(master, "uuid/")) {
-        master = master + strlen("uuid/");
+    } else if (g_str_has_prefix(controller, "uuid/")) {
+        controller = controller + strlen("uuid/");
         if (func)
             *func = nm_connection_get_uuid;
-    } else if (g_str_has_prefix(master, "id/")) {
-        master = master + strlen("id/");
+    } else if (g_str_has_prefix(controller, "id/")) {
+        controller = controller + strlen("id/");
         if (func)
             *func = nm_connection_get_id;
     }
-    return master;
+    return controller;
 }
 
-/* normalized_master_for_slave:
+/* normalized_controller_for_port:
  * @connections: list af all connections
- * @master: UUID, ifname or ID of the master connection
+ * @controller: UUID, ifname or ID of the controller connection
  * @type: virtual connection type (bond, team, bridge, ...) or %NULL
  * @out_type: type of the connection that matched
  *
- * Check whether master is a valid interface name, UUID or ID of some connection,
+ * Check whether controller is a valid interface name, UUID or ID of some connection,
  * possibly of a specified @type.
  * First UUID and ifname are checked. If they don't match, ID is checked
  * and replaced by UUID on a match.
  *
- * Returns: identifier of master connection if found, %NULL otherwise
+ * Returns: identifier of controller connection if found, %NULL otherwise
  */
 static const char *
-normalized_master_for_slave(const GPtrArray *connections,
-                            const char      *master,
-                            const char      *type,
-                            const char     **out_type)
+normalized_controller_for_port(const GPtrArray *connections,
+                               const char      *controller,
+                               const char      *type,
+                               const char     **out_type)
 {
     NMConnection        *connection;
     NMSettingConnection *s_con;
@@ -3899,13 +3932,13 @@ normalized_master_for_slave(const GPtrArray *connections,
     guint                i;
     const char          *found_by_id    = NULL;
     const char          *out_type_by_id = NULL;
-    const char          *out_master     = NULL;
+    const char          *out_controller = NULL;
     const char *(*func)(NMConnection *) = NULL;
 
-    if (!master)
+    if (!controller)
         return NULL;
 
-    master = _strip_master_prefix(master, &func);
+    controller = _strip_controller_prefix(controller, &func);
     for (i = 0; i < connections->len; i++) {
         connection = NM_CONNECTION(connections->pdata[i]);
         s_con      = nm_connection_get_setting_connection(connection);
@@ -3915,46 +3948,46 @@ normalized_master_for_slave(const GPtrArray *connections,
             continue;
         if (func) {
             /* There was a prefix; only compare to that type. */
-            if (nm_streq0(master, func(connection))) {
+            if (nm_streq0(controller, func(connection))) {
                 if (out_type)
                     *out_type = con_type;
                 if (func == nm_connection_get_id)
-                    out_master = nm_connection_get_uuid(connection);
+                    out_controller = nm_connection_get_uuid(connection);
                 else
-                    out_master = master;
+                    out_controller = controller;
                 break;
             }
         } else {
             id     = nm_connection_get_id(connection);
             uuid   = nm_connection_get_uuid(connection);
             ifname = nm_connection_get_interface_name(connection);
-            if (NM_IN_STRSET(master, uuid, ifname)) {
-                out_master = master;
+            if (NM_IN_STRSET(controller, uuid, ifname)) {
+                out_controller = controller;
                 if (out_type)
                     *out_type = con_type;
                 break;
             }
-            if (!found_by_id && nm_streq0(master, id)) {
+            if (!found_by_id && nm_streq0(controller, id)) {
                 out_type_by_id = con_type;
                 found_by_id    = uuid;
             }
         }
     }
 
-    if (!out_master) {
-        out_master = found_by_id;
+    if (!out_controller) {
+        out_controller = found_by_id;
         if (out_type)
             *out_type = out_type_by_id;
     }
 
-    if (!out_master) {
-        nmc_print(_("Warning: master='%s' doesn't refer to any existing profile.\n"), master);
-        out_master = master;
+    if (!out_controller) {
+        nmc_print(_("Warning: master='%s' doesn't refer to any existing profile.\n"), controller);
+        out_controller = controller;
         if (out_type)
             *out_type = type;
     }
 
-    return out_master;
+    return out_controller;
 }
 
 #define WORD_YES "yes"
@@ -3981,13 +4014,12 @@ prompt_yes_no(gboolean default_yes, char *delim)
 static NMSetting *
 is_setting_valid(NMConnection                            *connection,
                  const NMMetaSettingValidPartItem *const *valid_settings_main,
-                 const NMMetaSettingValidPartItem *const *valid_settings_slave,
+                 const NMMetaSettingValidPartItem *const *valid_settings_port,
                  const char                              *setting)
 {
     const char *setting_name;
 
-    if (!(setting_name =
-              check_valid_name(setting, valid_settings_main, valid_settings_slave, NULL)))
+    if (!(setting_name = check_valid_name(setting, valid_settings_main, valid_settings_port, NULL)))
         return NULL;
     return nm_connection_get_setting_by_name(connection, setting_name);
 }
@@ -4004,7 +4036,7 @@ is_property_valid(NMSetting *setting, const char *property, GError **error)
 }
 
 static char *
-unique_master_iface_ifname(const GPtrArray *connections, const char *try_name)
+unique_controller_iface_ifname(const GPtrArray *connections, const char *try_name)
 {
     char *new_name;
     guint num = 0;
@@ -4052,7 +4084,7 @@ set_default_interface_name(NmCli *nmc, NMSettingConnection *s_con)
         gs_free char    *ifname = NULL;
 
         connections = nmc_get_connections(nmc);
-        ifname      = unique_master_iface_ifname(connections, default_name);
+        ifname      = unique_controller_iface_ifname(connections, default_name);
         g_object_set(s_con, NM_SETTING_CONNECTION_INTERFACE_NAME, ifname, NULL);
     }
 }
@@ -4405,26 +4437,26 @@ set_option(NmCli                    *nmc,
 
 /*
  * Return relevant NameItem[] tables for given connection (based on connection type
- * and slave type.
+ * and port type).
  */
 static gboolean
 con_settings(NMConnection                             *connection,
              const NMMetaSettingValidPartItem *const **type_settings,
-             const NMMetaSettingValidPartItem *const **slv_settings,
+             const NMMetaSettingValidPartItem *const **port_settings,
              GError                                  **error)
 {
     const char          *con_type;
     NMSettingConnection *s_con;
 
     g_return_val_if_fail(type_settings, FALSE);
-    g_return_val_if_fail(slv_settings, FALSE);
+    g_return_val_if_fail(port_settings, FALSE);
 
     s_con = nm_connection_get_setting_connection(connection);
     g_return_val_if_fail(s_con, FALSE);
 
-    con_type      = nm_setting_connection_get_slave_type(s_con);
-    *slv_settings = nm_meta_setting_info_valid_parts_for_slave_type(con_type, NULL);
-    if (!*slv_settings) {
+    con_type       = nm_setting_connection_get_port_type(s_con);
+    *port_settings = nm_meta_setting_info_valid_parts_for_slave_type(con_type, NULL);
+    if (!*port_settings) {
         g_set_error(error,
                     NMCLI_ERROR,
                     NMC_RESULT_ERROR_USER_INPUT,
@@ -4516,20 +4548,22 @@ static gboolean
 enable_type_settings_and_options(NmCli *nmc, NMConnection *con, GError **error)
 {
     const NMMetaSettingValidPartItem *const *type_settings;
-    const NMMetaSettingValidPartItem *const *slv_settings;
+    const NMMetaSettingValidPartItem *const *port_settings;
     NMSettingConnection                     *s_con;
 
     s_con = nm_connection_get_setting_connection(con);
     g_return_val_if_fail(s_con, FALSE);
 
-    if (nm_setting_connection_get_slave_type(s_con))
-        enable_options(NM_SETTING_CONNECTION_SETTING_NAME, NM_SETTING_CONNECTION_MASTER, NULL);
+    if (nm_setting_connection_get_port_type(s_con)) {
+        enable_options(NM_SETTING_CONNECTION_SETTING_NAME, NM_SETTING_CONNECTION_CONTROLLER, NULL);
+    }
 
     if (NM_IN_STRSET(nm_setting_connection_get_connection_type(s_con),
                      NM_SETTING_BLUETOOTH_SETTING_NAME,
                      NM_SETTING_BOND_SETTING_NAME,
                      NM_SETTING_BRIDGE_SETTING_NAME,
                      NM_SETTING_DUMMY_SETTING_NAME,
+                     NM_SETTING_HSR_SETTING_NAME,
                      NM_SETTING_OVS_BRIDGE_SETTING_NAME,
                      NM_SETTING_OVS_PATCH_SETTING_NAME,
                      NM_SETTING_OVS_PORT_SETTING_NAME,
@@ -4542,10 +4576,10 @@ enable_type_settings_and_options(NmCli *nmc, NMConnection *con, GError **error)
                        NULL);
     }
 
-    if (!con_settings(con, &type_settings, &slv_settings, error))
+    if (!con_settings(con, &type_settings, &port_settings, error))
         return FALSE;
 
-    ensure_settings(con, slv_settings);
+    ensure_settings(con, port_settings);
     ensure_settings(con, type_settings);
 
     /* For some software connection types we generate the interface name for the user. */
@@ -4562,10 +4596,10 @@ set_connection_type(NmCli            *nmc,
                     gboolean          allow_reset,
                     GError          **error)
 {
-    GError     *local      = NULL;
-    const char *slave_type = NULL;
+    GError     *local     = NULL;
+    const char *port_type = NULL;
 
-    value = check_valid_name_toplevel(value, &slave_type, &local);
+    value = check_valid_name_toplevel(value, &port_type, &local);
     if (!value) {
         if (!allow_reset)
             return TRUE;
@@ -4578,12 +4612,12 @@ set_connection_type(NmCli            *nmc,
         return FALSE;
     }
 
-    if (slave_type) {
+    if (port_type) {
         if (!set_property(nmc->client,
                           con,
                           NM_SETTING_CONNECTION_SETTING_NAME,
-                          NM_SETTING_CONNECTION_SLAVE_TYPE,
-                          slave_type,
+                          NM_SETTING_CONNECTION_PORT_TYPE,
+                          port_type,
                           NM_META_ACCESSOR_MODIFIER_SET,
                           error)) {
             return FALSE;
@@ -4628,16 +4662,16 @@ set_connection_iface(NmCli            *nmc,
 }
 
 static gboolean
-set_connection_master(NmCli            *nmc,
-                      NMConnection     *con,
-                      const OptionInfo *option,
-                      const char       *value,
-                      gboolean          allow_reset,
-                      GError          **error)
+set_connection_controller(NmCli            *nmc,
+                          NMConnection     *con,
+                          const OptionInfo *option,
+                          const char       *value,
+                          gboolean          allow_reset,
+                          GError          **error)
 {
     const GPtrArray     *connections;
     NMSettingConnection *s_con;
-    const char          *slave_type;
+    const char          *port_type;
 
     s_con = nm_connection_get_setting_connection(con);
     g_return_val_if_fail(s_con, FALSE);
@@ -4652,15 +4686,15 @@ set_connection_master(NmCli            *nmc,
         return FALSE;
     }
 
-    slave_type  = nm_setting_connection_get_slave_type(s_con);
+    port_type   = nm_setting_connection_get_port_type(s_con);
     connections = nmc_get_connections(nmc);
-    value       = normalized_master_for_slave(connections, value, slave_type, &slave_type);
+    value       = normalized_controller_for_port(connections, value, port_type, &port_type);
 
     if (!set_property(nmc->client,
                       con,
                       NM_SETTING_CONNECTION_SETTING_NAME,
-                      NM_SETTING_CONNECTION_SLAVE_TYPE,
-                      slave_type,
+                      NM_SETTING_CONNECTION_PORT_TYPE,
+                      port_type,
                       NM_META_ACCESSOR_MODIFIER_SET,
                       error)) {
         return FALSE;
@@ -4887,7 +4921,12 @@ _meta_abstract_get_option_info(const NMMetaAbstractInfo *abstract_info)
         OPTION_INFO(CONNECTION,
                     NM_SETTING_CONNECTION_MASTER,
                     "master",
-                    set_connection_master,
+                    set_connection_controller,
+                    NULL),
+        OPTION_INFO(CONNECTION,
+                    NM_SETTING_CONNECTION_CONTROLLER,
+                    "controller",
+                    set_connection_controller,
                     NULL),
         OPTION_INFO(BLUETOOTH,
                     NM_SETTING_BLUETOOTH_TYPE,
@@ -4970,21 +5009,21 @@ complete_property_name(NmCli                 *nmc,
 {
     NMSettingConnection                     *s_con;
     const NMMetaSettingValidPartItem *const *valid_settings_main;
-    const NMMetaSettingValidPartItem *const *valid_settings_slave;
+    const NMMetaSettingValidPartItem *const *valid_settings_port;
     const char                              *connection_type = NULL;
-    const char                              *slave_type      = NULL;
+    const char                              *port_type       = NULL;
     gs_free char                            *word_list       = NULL;
     NMMetaSettingType                        s;
 
     connection_type = nm_connection_get_connection_type(connection);
     s_con           = nm_connection_get_setting_connection(connection);
     if (s_con)
-        slave_type = nm_setting_connection_get_slave_type(s_con);
-    valid_settings_main  = get_valid_settings_array(connection_type);
-    valid_settings_slave = nm_meta_setting_info_valid_parts_for_slave_type(slave_type, NULL);
+        port_type = nm_setting_connection_get_port_type(s_con);
+    valid_settings_main = get_valid_settings_array(connection_type);
+    valid_settings_port = nm_meta_setting_info_valid_parts_for_slave_type(port_type, NULL);
 
     word_list = get_valid_properties_string(valid_settings_main,
-                                            valid_settings_slave,
+                                            valid_settings_port,
                                             modifier,
                                             prefix,
                                             postfix);
@@ -5178,13 +5217,13 @@ nmc_process_connection_properties(NmCli              *nmc,
                                   gboolean            allow_setting_removal,
                                   GError            **error)
 {
-    /* First check if we have a slave-type, as this would mean we will not
-     * have ip properties but possibly others, slave-type specific.
+    /* First check if we have a port-type, as this would mean we will not
+     * have ip properties but possibly others, port-type specific.
      */
     /* Go through arguments and set properties */
     do {
         const NMMetaSettingValidPartItem *const *type_settings;
-        const NMMetaSettingValidPartItem *const *slv_settings;
+        const NMMetaSettingValidPartItem *const *port_settings;
         NMMetaAccessorModifier                   modifier;
         const char                              *option_orig;
         const char                              *option;
@@ -5195,10 +5234,10 @@ nmc_process_connection_properties(NmCli              *nmc,
         const char                              *chosen_option       = NULL;
         NMMetaSettingType                        s;
 
-        if (!con_settings(connection, &type_settings, &slv_settings, error))
+        if (!con_settings(connection, &type_settings, &port_settings, error))
             return FALSE;
 
-        ensure_settings(connection, slv_settings);
+        ensure_settings(connection, port_settings);
         ensure_settings(connection, type_settings);
 
         if (*argc <= 0) {
@@ -5255,9 +5294,9 @@ nmc_process_connection_properties(NmCli              *nmc,
             (*argc)--;
             (*argv)++;
 
-            ss = is_setting_valid(connection, type_settings, slv_settings, setting_name);
+            ss = is_setting_valid(connection, type_settings, port_settings, setting_name);
             if (!ss) {
-                if (!check_valid_name(setting_name, type_settings, slv_settings, NULL)) {
+                if (!check_valid_name(setting_name, type_settings, port_settings, NULL)) {
                     g_set_error(error,
                                 NMCLI_ERROR,
                                 NMC_RESULT_ERROR_USER_INPUT,
@@ -5287,7 +5326,7 @@ nmc_process_connection_properties(NmCli              *nmc,
                 complete_property_name(nmc, connection, modifier, option_sett, option_prop);
 
             option_sett_expanded =
-                check_valid_name(option_sett, type_settings, slv_settings, &local);
+                check_valid_name(option_sett, type_settings, port_settings, &local);
             if (!option_sett_expanded) {
                 g_set_error(error,
                             NMCLI_ERROR,
@@ -5328,7 +5367,7 @@ nmc_process_connection_properties(NmCli              *nmc,
 
             if (!check_valid_name(nm_meta_setting_infos[s].setting_name,
                                   type_settings,
-                                  slv_settings,
+                                  port_settings,
                                   NULL))
                 continue;
 
@@ -5838,7 +5877,7 @@ again:
 static void
 nmc_add_connection(NmCli *nmc, NMConnection *connection, gboolean temporary)
 {
-    if (nmc->offline) {
+    if (nmc->nmc_config.offline) {
         nmc_print_connection_and_quit(nmc, connection);
     } else {
         add_connection(nmc->client,
@@ -5920,9 +5959,9 @@ read_properties:
     if (nmc->ask)
         questionnaire_mandatory(nmc, connection);
 
-    /* Traditionally, we didn't ask for these options for ethernet slaves. They don't
-     * make much sense, since these are likely to be set by the master anyway. */
-    if (nm_setting_connection_get_slave_type(s_con)) {
+    /* Traditionally, we didn't ask for these options for ethernet ports. They don't
+     * make much sense, since these are likely to be set by the controller anyway. */
+    if (nm_setting_connection_get_port_type(s_con)) {
         disable_options(NM_SETTING_WIRED_SETTING_NAME, NM_SETTING_WIRED_MTU);
         disable_options(NM_SETTING_WIRED_SETTING_NAME, NM_SETTING_WIRED_MAC_ADDRESS);
         disable_options(NM_SETTING_WIRED_SETTING_NAME, NM_SETTING_WIRED_CLONED_MAC_ADDRESS);
@@ -5931,9 +5970,9 @@ read_properties:
     /* Connection id is special in that it's required but we don't insist
      * on getting it from the user -- we just make up something sensible. */
     if (!nm_setting_connection_get_id(s_con)) {
-        const char *ifname     = nm_setting_connection_get_interface_name(s_con);
-        const char *type       = nm_setting_connection_get_connection_type(s_con);
-        const char *slave_type = nm_setting_connection_get_slave_type(s_con);
+        const char *ifname    = nm_setting_connection_get_interface_name(s_con);
+        const char *type      = nm_setting_connection_get_connection_type(s_con);
+        const char *port_type = nm_setting_connection_get_port_type(s_con);
 
         /* If only bother when there's a type, which is not guaranteed at this point.
          * Otherwise, the validation will fail anyway. */
@@ -5944,8 +5983,8 @@ read_properties:
 
             connections = nmc_get_connections(nmc);
             try_name =
-                ifname ? g_strdup_printf("%s-%s", get_name_alias_toplevel(type, slave_type), ifname)
-                       : g_strdup(get_name_alias_toplevel(type, slave_type));
+                ifname ? g_strdup_printf("%s-%s", get_name_alias_toplevel(type, port_type), ifname)
+                       : g_strdup(get_name_alias_toplevel(type, port_type));
             default_name = nmc_unique_connection_name(connections, try_name);
             g_object_set(s_con, NM_SETTING_CONNECTION_ID, default_name, NULL);
         }
@@ -6169,7 +6208,7 @@ gen_connection_types(const char *text)
 static char *
 gen_setting_names(const char *text, int state)
 {
-    static int                               list_idx, len, is_slv;
+    static int                               list_idx, len, is_port;
     const char                              *s_name, *a_name;
     const NMMetaSettingValidPartItem *const *valid_settings_arr;
     NMSettingConnection                     *s_con;
@@ -6178,10 +6217,10 @@ gen_setting_names(const char *text, int state)
     if (!state) {
         list_idx = 0;
         len      = strlen(text);
-        is_slv   = 0;
+        is_port  = 0;
     }
 
-    if (!is_slv) {
+    if (!is_port) {
         valid_settings_arr = get_valid_settings_array(nmc_tab_completion.con_type);
         if (list_idx >= NM_PTRARRAY_LEN(valid_settings_arr))
             return NULL;
@@ -6202,13 +6241,13 @@ gen_setting_names(const char *text, int state)
 
         /* Let's give a try to parameters related to slave type */
         list_idx = 0;
-        is_slv   = 1;
+        is_port  = 1;
     }
 
-    /* is_slv */
+    /* is_port */
     s_con = nm_connection_get_setting_connection(nmc_tab_completion.connection);
     if (s_con)
-        s_type = nm_setting_connection_get_slave_type(s_con);
+        s_type = nm_setting_connection_get_port_type(s_con);
     valid_settings_arr = nm_meta_setting_info_valid_parts_for_slave_type(s_type, NULL);
 
     if (list_idx < NM_PTRARRAY_LEN(valid_settings_arr)) {
@@ -6241,9 +6280,9 @@ gen_property_names(const char *text, int state)
     const char                              *setting_name;
     char                                   **strv = NULL;
     const NMMetaSettingValidPartItem *const *valid_settings_main;
-    const NMMetaSettingValidPartItem *const *valid_settings_slave;
+    const NMMetaSettingValidPartItem *const *valid_settings_port;
     const char                              *p1;
-    const char                              *slv_type;
+    const char                              *port_type;
 
     /* Try to get the setting from 'line' - setting_name.property */
     p1 = strchr(line, '.');
@@ -6255,20 +6294,20 @@ gen_property_names(const char *text, int state)
 
         valid_settings_main = get_valid_settings_array(nmc_tab_completion.con_type);
 
-        /* Support autocompletion of slave-connection parameters
-         * guessing the slave type from the setting name already
+        /* Support autocompletion of port-connection parameters
+         * guessing the port type from the setting name already
          * typed (or autocompleted) */
         if (nm_streq0(strv[0], NM_SETTING_TEAM_PORT_SETTING_NAME))
-            slv_type = NM_SETTING_TEAM_SETTING_NAME;
+            port_type = NM_SETTING_TEAM_SETTING_NAME;
         else if (nm_streq0(strv[0], NM_SETTING_BRIDGE_PORT_SETTING_NAME))
-            slv_type = NM_SETTING_BRIDGE_SETTING_NAME;
+            port_type = NM_SETTING_BRIDGE_SETTING_NAME;
         else if (nm_streq0(strv[0], NM_SETTING_BOND_PORT_SETTING_NAME))
-            slv_type = NM_SETTING_BOND_SETTING_NAME;
+            port_type = NM_SETTING_BOND_SETTING_NAME;
         else
-            slv_type = NULL;
-        valid_settings_slave = nm_meta_setting_info_valid_parts_for_slave_type(slv_type, NULL);
+            port_type = NULL;
+        valid_settings_port = nm_meta_setting_info_valid_parts_for_slave_type(port_type, NULL);
 
-        setting_name = check_valid_name(strv[0], valid_settings_main, valid_settings_slave, NULL);
+        setting_name = check_valid_name(strv[0], valid_settings_main, valid_settings_port, NULL);
         if (setting_name) {
             setting = nm_meta_setting_info_editor_new_setting(
                 nm_meta_setting_info_editor_find_by_name(setting_name, FALSE),
@@ -6479,17 +6518,17 @@ should_complete_cmd(const char *line, int end, const char *cmd, int *cw_num, cha
     return ret;
 }
 
-/*
+/**
  * extract_setting_and_property:
- * prompt: (in) (allow-none): prompt string, or NULL
- * line: (in) (allow-none): line, or NULL
- * setting: (out) (transfer full) (array zero-terminated=1):
+ * @prompt: (nullable): prompt string, or NULL
+ * @line: (nullable): line, or NULL
+ * @setting: (out) (transfer full) (array zero-terminated=1) (optional):
  *   return location for setting name
- * property: (out) (transfer full) (array zero-terminated=1):
+ * @property: (out) (transfer full) (array zero-terminated=1) (optional):
  *   return location for property name
  *
  * Extract setting and property names from prompt and/or line.
- */
+ **/
 static void
 extract_setting_and_property(const char *prompt, const char *line, char **setting, char **property)
 {
@@ -6560,7 +6599,7 @@ get_setting_and_property(const char *prompt,
                          char      **property_out)
 {
     const NMMetaSettingValidPartItem *const *valid_settings_main;
-    const NMMetaSettingValidPartItem *const *valid_settings_slave;
+    const NMMetaSettingValidPartItem *const *valid_settings_port;
     gs_unref_object NMSetting               *setting  = NULL;
     gs_free char                            *property = NULL;
     NMSettingConnection                     *s_con;
@@ -6575,12 +6614,12 @@ get_setting_and_property(const char *prompt,
         /* Is this too much (and useless?) effort for an unlikely case? */
         s_con = nm_connection_get_setting_connection(nmc_tab_completion.connection);
         if (s_con)
-            s_type = nm_setting_connection_get_slave_type(s_con);
+            s_type = nm_setting_connection_get_port_type(s_con);
 
-        valid_settings_main  = get_valid_settings_array(nmc_tab_completion.con_type);
-        valid_settings_slave = nm_meta_setting_info_valid_parts_for_slave_type(s_type, NULL);
+        valid_settings_main = get_valid_settings_array(nmc_tab_completion.con_type);
+        valid_settings_port = nm_meta_setting_info_valid_parts_for_slave_type(s_type, NULL);
 
-        setting_name = check_valid_name(sett, valid_settings_main, valid_settings_slave, NULL);
+        setting_name = check_valid_name(sett, valid_settings_main, valid_settings_port, NULL);
         setting      = nm_meta_setting_info_editor_new_setting(
             nm_meta_setting_info_editor_find_by_name(setting_name, FALSE),
             NM_META_ACCESSOR_SETTING_INIT_TYPE_DEFAULT);
@@ -7555,7 +7594,7 @@ confirm_quit(const NmcConfig *nmc_config)
 
 /*
  * Submenu for detailed property editing
- * Return: TRUE - continue;  FALSE - should quit
+ * Returns TRUE for continue; FALSE for should quit.
  */
 static gboolean
 property_edit_submenu(NmCli               *nmc,
@@ -7757,13 +7796,13 @@ split_editor_main_cmd_args(const char *str, char **setting, char **property, cha
 static NMSetting *
 create_setting_by_name(const char                              *name,
                        const NMMetaSettingValidPartItem *const *valid_settings_main,
-                       const NMMetaSettingValidPartItem *const *valid_settings_slave)
+                       const NMMetaSettingValidPartItem *const *valid_settings_port)
 {
     const char *setting_name;
     NMSetting  *setting = NULL;
 
     /* Get a valid setting name */
-    setting_name = check_valid_name(name, valid_settings_main, valid_settings_slave, NULL);
+    setting_name = check_valid_name(name, valid_settings_main, valid_settings_port, NULL);
 
     if (setting_name) {
         setting = nm_meta_setting_info_editor_new_setting(
@@ -7777,7 +7816,7 @@ static const char *
 ask_check_setting(const NmcConfig                         *nmc_config,
                   const char                              *arg,
                   const NMMetaSettingValidPartItem *const *valid_settings_main,
-                  const NMMetaSettingValidPartItem *const *valid_settings_slave,
+                  const NMMetaSettingValidPartItem *const *valid_settings_port,
                   const char                              *valid_settings_str)
 {
     gs_free char *setting_name_user = NULL;
@@ -7794,7 +7833,7 @@ ask_check_setting(const NmcConfig                         *nmc_config,
 
     if (!(setting_name = check_valid_name(setting_name_user,
                                           valid_settings_main,
-                                          valid_settings_slave,
+                                          valid_settings_port,
                                           &err))) {
         nmc_print(_("Error: invalid setting name; %s\n"), err->message);
         g_clear_error(&err);
@@ -7937,7 +7976,7 @@ editor_menu_main(NmCli *nmc, NMConnection *connection, const char *connection_ty
     NmcEditorMainCmd                         cmd;
     gboolean                                 cmd_loop = TRUE;
     const NMMetaSettingValidPartItem *const *valid_settings_main;
-    const NMMetaSettingValidPartItem *const *valid_settings_slave;
+    const NMMetaSettingValidPartItem *const *valid_settings_port;
     gs_free char                            *valid_settings_str = NULL;
     const char                              *s_type             = NULL;
     gboolean                                 temp_changes;
@@ -7946,12 +7985,12 @@ editor_menu_main(NmCli *nmc, NMConnection *connection, const char *connection_ty
 
     s_con = nm_connection_get_setting_connection(connection);
     if (s_con)
-        s_type = nm_setting_connection_get_slave_type(s_con);
+        s_type = nm_setting_connection_get_port_type(s_con);
 
-    valid_settings_main  = get_valid_settings_array(connection_type);
-    valid_settings_slave = nm_meta_setting_info_valid_parts_for_slave_type(s_type, NULL);
+    valid_settings_main = get_valid_settings_array(connection_type);
+    valid_settings_port = nm_meta_setting_info_valid_parts_for_slave_type(s_type, NULL);
 
-    valid_settings_str = get_valid_options_string(valid_settings_main, valid_settings_slave);
+    valid_settings_str = get_valid_options_string(valid_settings_main, valid_settings_port);
     nmc_print(_("You may edit the following settings: %s\n"), valid_settings_str);
 
     menu_ctx.main_prompt = nmc_colorize(&nmc->nmc_config, NM_META_COLOR_PROMPT, BASE_PROMPT);
@@ -8051,12 +8090,12 @@ editor_menu_main(NmCli *nmc, NMConnection *connection, const char *connection_ty
                     /* setting provided as "setting.property" */
                     ss = is_setting_valid(connection,
                                           valid_settings_main,
-                                          valid_settings_slave,
+                                          valid_settings_port,
                                           cmd_arg_s);
                     if (!ss) {
                         ss_created = create_setting_by_name(cmd_arg_s,
                                                             valid_settings_main,
-                                                            valid_settings_slave);
+                                                            valid_settings_port);
                         ss         = ss_created;
                         if (!ss) {
                             nmc_print(_("Error: invalid setting argument '%s'; valid are [%s]\n"),
@@ -8128,7 +8167,7 @@ editor_menu_main(NmCli *nmc, NMConnection *connection, const char *connection_ty
                 setting_name = ask_check_setting(&nmc->nmc_config,
                                                  user_arg,
                                                  valid_settings_main,
-                                                 valid_settings_slave,
+                                                 valid_settings_port,
                                                  valid_settings_str);
                 if (!setting_name)
                     break;
@@ -8229,12 +8268,12 @@ editor_menu_main(NmCli *nmc, NMConnection *connection, const char *connection_ty
                 if (user_s) {
                     ss = is_setting_valid(connection,
                                           valid_settings_main,
-                                          valid_settings_slave,
+                                          valid_settings_port,
                                           user_s);
                     if (!ss) {
                         if (check_valid_name(user_s,
                                              valid_settings_main,
-                                             valid_settings_slave,
+                                             valid_settings_port,
                                              NULL)) {
                             nmc_print(_("Setting '%s' is not present in the connection.\n"),
                                       user_s);
@@ -8283,7 +8322,7 @@ editor_menu_main(NmCli *nmc, NMConnection *connection, const char *connection_ty
                         /* If the string is not a property, try it as a setting */
                         s_tmp = is_setting_valid(connection,
                                                  valid_settings_main,
-                                                 valid_settings_slave,
+                                                 valid_settings_port,
                                                  cmd_arg_p);
                         if (s_tmp) {
                             gs_free_error GError *local = NULL;
@@ -8340,12 +8379,12 @@ editor_menu_main(NmCli *nmc, NMConnection *connection, const char *connection_ty
                 if (user_s) {
                     ss = is_setting_valid(connection,
                                           valid_settings_main,
-                                          valid_settings_slave,
+                                          valid_settings_port,
                                           user_s);
                     if (!ss) {
                         ss = create_setting_by_name(user_s,
                                                     valid_settings_main,
-                                                    valid_settings_slave);
+                                                    valid_settings_port);
                         if (!ss) {
                             nmc_print(_("Error: invalid setting argument '%s'; valid are [%s]\n"),
                                       user_s,
@@ -8379,7 +8418,7 @@ editor_menu_main(NmCli *nmc, NMConnection *connection, const char *connection_ty
 
                         s_tmp = is_setting_valid(connection,
                                                  valid_settings_main,
-                                                 valid_settings_slave,
+                                                 valid_settings_port,
                                                  cmd_arg_p);
                         if (s_tmp)
                             print_setting_description(s_tmp);
@@ -8411,7 +8450,7 @@ editor_menu_main(NmCli *nmc, NMConnection *connection, const char *connection_ty
 
                         s_name = check_valid_name(user_s,
                                                   valid_settings_main,
-                                                  valid_settings_slave,
+                                                  valid_settings_port,
                                                   NULL);
                         if (!s_name) {
                             nmc_print(_("Error: unknown setting: '%s'\n"), user_s);
@@ -8445,7 +8484,7 @@ editor_menu_main(NmCli *nmc, NMConnection *connection, const char *connection_ty
                             NMSetting *s_tmp;
                             s_tmp = is_setting_valid(connection,
                                                      valid_settings_main,
-                                                     valid_settings_slave,
+                                                     valid_settings_port,
                                                      cmd_arg_p);
                             if (s_tmp) {
                                 /* Print the whole setting */
@@ -8794,7 +8833,7 @@ get_ethernet_device_name(NmCli *nmc)
 }
 
 static void
-editor_init_new_connection(NmCli *nmc, NMConnection *connection, const char *slave_type)
+editor_init_new_connection(NmCli *nmc, NMConnection *connection, const char *port_type)
 {
     NMSetting           *setting, *base_setting;
     NMSettingConnection *s_con;
@@ -8809,20 +8848,20 @@ editor_init_new_connection(NmCli *nmc, NMConnection *connection, const char *sla
 
     nmc_setting_connection_connect_handlers(s_con, connection);
 
-    if (slave_type) {
+    if (port_type) {
         const char *dev_ifname = get_ethernet_device_name(nmc);
 
-        /* For bond/team/bridge slaves add 'wired' setting */
+        /* For bond/team/bridge ports add 'wired' setting */
         setting = nm_setting_wired_new();
         nm_connection_add_setting(connection, setting);
 
         g_object_set(s_con,
                      NM_SETTING_CONNECTION_TYPE,
                      NM_SETTING_WIRED_SETTING_NAME,
-                     NM_SETTING_CONNECTION_MASTER,
+                     NM_SETTING_CONNECTION_CONTROLLER,
                      dev_ifname ?: "eth0",
-                     NM_SETTING_CONNECTION_SLAVE_TYPE,
-                     slave_type,
+                     NM_SETTING_CONNECTION_PORT_TYPE,
+                     port_type,
                      NULL);
     } else {
         const NMMetaSettingInfoEditor *setting_info;
@@ -9020,7 +9059,7 @@ do_connection_edit(const NMCCommand *cmd, NmCli *nmc, int argc, const char *cons
 
         editor_init_existing_connection(connection);
     } else {
-        const char   *slave_type   = NULL;
+        const char   *port_type    = NULL;
         gs_free char *uuid         = NULL;
         gs_free char *default_name = NULL;
         gs_free char *tmp_str      = NULL;
@@ -9032,7 +9071,7 @@ do_connection_edit(const NMCCommand *cmd, NmCli *nmc, int argc, const char *cons
             return;
         }
 
-        connection_type = check_valid_name_toplevel(type, &slave_type, &err1);
+        connection_type = check_valid_name_toplevel(type, &port_type, &err1);
         tmp_str         = get_valid_options_string_toplevel();
 
         while (!connection_type) {
@@ -9046,7 +9085,7 @@ do_connection_edit(const NMCCommand *cmd, NmCli *nmc, int argc, const char *cons
 
             type_ask = nmc_readline(&nmc->nmc_config, EDITOR_PROMPT_CON_TYPE);
             type = type_ask = nm_strstrip(type_ask);
-            connection_type = check_valid_name_toplevel(type_ask, &slave_type, &err1);
+            connection_type = check_valid_name_toplevel(type_ask, &port_type, &err1);
         }
         nm_clear_g_free(&tmp_str);
 
@@ -9073,7 +9112,7 @@ do_connection_edit(const NMCCommand *cmd, NmCli *nmc, int argc, const char *cons
         nm_connection_add_setting(connection, NM_SETTING(s_con));
 
         /* Initialize the new connection so that it is valid from the start */
-        editor_init_new_connection(nmc, connection, slave_type);
+        editor_init_new_connection(nmc, connection, port_type);
     }
 
     /* nmcli runs the editor */
@@ -9140,7 +9179,7 @@ modify_connection_cb(GObject *connection, GAsyncResult *result, gpointer user_da
 static void
 nmc_update_connection(NmCli *nmc, NMConnection *connection, gboolean temporary)
 {
-    if (nmc->offline) {
+    if (nmc->nmc_config.offline) {
         nmc_print_connection_and_quit(nmc, connection);
     } else {
         nm_remote_connection_commit_changes_async(NM_REMOTE_CONNECTION(connection),
@@ -9171,7 +9210,7 @@ do_connection_modify(const NMCCommand *cmd, NmCli *nmc, int argc, const char *co
     }
 
     /* Don't insist on having argument if we're running in offline mode. */
-    if (!nmc->offline || argc > 0) {
+    if (!nmc->nmc_config.offline || argc > 0) {
         if (!nmc_process_connection_properties(nmc, connection, &argc, &argv, TRUE, &error)) {
             g_string_assign(nmc->return_text, error->message);
             nmc->return_value = error->code;
@@ -9364,8 +9403,10 @@ do_connection_delete(const NMCCommand *cmd, NmCli *nmc, int argc, const char *co
             g_clear_error(&error);
 
             if (nmc->return_value != NMC_RESULT_ERROR_NOT_FOUND) {
-                g_string_free(invalid_cons, TRUE);
-                invalid_cons = NULL;
+                if (invalid_cons) {
+                    g_string_free(invalid_cons, TRUE);
+                    invalid_cons = NULL;
+                }
                 goto finish;
             }
 

@@ -2,12 +2,12 @@
 .\"     Title: NetworkManager.conf
 .\"    Author: 
 .\" Generator: DocBook XSL Stylesheets vsnapshot <http://docbook.sf.net/>
-.\"      Date: 03/09/2023
+.\"      Date: 02/22/2024
 .\"    Manual: Configuration
-.\"    Source: NetworkManager 1.42.4
+.\"    Source: NetworkManager 1.46.0
 .\"  Language: English
 .\"
-.TH "NETWORKMANAGER\&.CONF" "5" "" "NetworkManager 1\&.42\&.4" "Configuration"
+.TH "NETWORKMANAGER\&.CONF" "5" "" "NetworkManager 1\&.46\&.0" "Configuration"
 .\" -----------------------------------------------------------------
 .\" * Define some portability stuff
 .\" -----------------------------------------------------------------
@@ -280,8 +280,7 @@ that contains the original name servers pushed to the DNS plugin\&.
 When using
 dnsmasq
 and
-systemd\-resolved
-per\-connection added dns servers will always be queried using the device the connection has been activated on\&.
+systemd\-resolved, per\-connection added dns servers will always be queried using the device the connection has been activated on\&.
 .RE
 .PP
 \fIrc\-manager\fR
@@ -341,22 +340,17 @@ symlink\&.
 .PP
 \fIsystemd\-resolved\fR
 .RS 4
-Send the connection DNS configuration to
+Additionally, send the connection DNS configuration to
 systemd\-resolved\&. Defaults to "true"\&.
 .sp
-Note that this setting is complementary to the
+Note that this setting has no effect if the main
 \fIdns\fR
-setting\&. You can keep this enabled while using
+plugin is already
+systemd\-resolved\&. It is complementary to the
 \fIdns\fR
-set to another DNS plugin alongside
-systemd\-resolved, or
-\fIdns\fR
-set to
-systemd\-resolved
-to configure the system resolver to use
-systemd\-resolved\&.
+setting to configure systemd\-resolved alongside the main plugin\&.
 .sp
-If systemd\-resolved is enabled, the connectivity check resolves the hostname per\-device\&.
+If systemd\-resolved is enabled, either via this setting or the main DNS plugin, the connectivity check resolves the hostname per\-device\&.
 .RE
 .PP
 \fIdebug\fR
@@ -374,15 +368,6 @@ fatal\-warnings: set g_log_set_always_fatal() to core dump on warning messages f
 The number of times a connection activation should be automatically tried before switching to another one\&. This value applies only to connections that can auto\-connect and have a
 connection\&.autoconnect\-retries
 property set to \-1\&. If not specified, connections will be tried 4 times\&. Setting this value to 1 means to try activation once, without retry\&.
-.RE
-.PP
-\fIslaves\-order\fR
-.RS 4
-This key specifies in which order slave connections are auto\-activated on boot or when the master activates them\&. Allowed values are
-name
-(order connection by interface name, the default), or
-index
-(order slaves by their kernel index)\&.
 .RE
 .PP
 \fIfirewall\-backend\fR
@@ -412,6 +397,12 @@ The path can also be overriden by pointing to a specific existing and writable d
 .sp
 This mechanism allows editing connection profile settings such as the 802\&.1x configuration using NetworkManager clients\&. Without it such changes have no effect in IWD\&.
 .RE
+.PP
+\fImigrate\-ifcfg\-rh\fR
+.RS 4
+Whether NetworkManager tries to automatically convert any connection profile stored in ifcfg\-rh format to the keyfile format\&. Support for ifcfg\-rh is deprecated and will be eventually removed\&. If enabled, the migration is performed at every startup of the daemon\&. The default value is
+false\&.
+.RE
 .SH "KEYFILE SECTION"
 .PP
 This section contains keyfile\-plugin\-specific options, and is normally only used when you are not using any other distro\-specific plugin\&.
@@ -427,6 +418,11 @@ or other system configuration files according to build options\&.
 \fIpath\fR
 .RS 4
 The location where keyfiles are read and stored\&. This defaults to "/etc/NetworkManager/system\-connections"\&.
+.RE
+.PP
+\fIrename\fR
+.RS 4
+NetworkManager automatically chooses a filename when storing a new profile to disk\&. That name depends on the profile\*(Aqs name (connection\&.id)\&. When updating a profile\*(Aqs name, the file is not renamed to not break scripts that rely on the filename for the profile\&. By setting this option to "true", NetworkManager renames the keyfile on update of the profile, to follow the profile\*(Aqs name\&. This defaults to "false"\&.
 .RE
 .PP
 \fIunmanaged\-devices\fR
@@ -504,7 +500,9 @@ domains=ALL
 .sp
 and restart the daemon with
 \fBsystemctl restart NetworkManager\fR\&. Then reproduce the problem\&. You can find the logs in syslog (for example
-\fBjournalctl\fR)\&.
+\fBjournalctl\fR, or
+\fBjournalctl \-u NetworkManager\fR
+to show only logs from NetworkManager)\&.
 .PP
 Any settings here are overridden by the
 \fB\-\-log\-level\fR
@@ -765,7 +763,7 @@ ipv6\&.ip6\-privacy=0
 .SS "Supported Properties"
 .PP
 Not all properties can be overwritten, only the following properties are supported to have their default values configured (see
-\fBnm-settings\fR(5)
+\fBnm-settings-nmcli\fR(5)
 for details)\&.
 .PP
 
@@ -880,6 +878,10 @@ If configured explicitly to 0, the MTU is not reconfigured during device activat
 .RS 4
 .RE
 .PP
+\fIipv4\&.dhcp\-dscp\fR
+.RS 4
+.RE
+.PP
 \fIipv4\&.dhcp\-iaid\fR
 .RS 4
 If left unspecified, it defaults to "ifname"\&.
@@ -981,6 +983,10 @@ If left unspecified, routes are only added to the main table\&. Note that this i
 \fIloopback\&.mtu\fR
 .RS 4
 If configured explicitly to 0, the MTU is not reconfigured during device activation unless it is required due to IPv6 constraints\&. If left unspecified, a DHCP/IPv6 SLAAC provided value is used or the MTU is left unspecified on activation\&.
+.RE
+.PP
+\fImacsec\&.offload\fR
+.RS 4
 .RE
 .PP
 \fIsriov\&.autoprobe\-drivers\fR
@@ -1134,7 +1140,7 @@ Whether the device is managed or not\&. A device can be marked as managed via ud
 .PP
 \fIcarrier\-wait\-timeout\fR
 .RS 4
-Specify the timeout for waiting for carrier in milliseconds\&. The default is 5000 milliseconds\&. This setting exists because certain drivers/hardware can take a long time to detect whether the cable is plugged in\&.
+Specify the timeout for waiting for carrier in milliseconds\&. The default is 6000 milliseconds\&. This setting exists because certain drivers/hardware can take a long time to detect whether the cable is plugged in\&.
 .sp
 When the device loses carrier, NetworkManager does not react immediately\&. Instead, it waits for this timeout before considering the link lost\&.
 .sp
@@ -1210,7 +1216,7 @@ Like the per\-connection settings
 ethernet\&.generate\-mac\-address\-mask
 and
 wifi\&.generate\-mac\-address\-mask, this allows to configure the generated MAC addresses during scanning\&. See
-\fBnm-settings\fR(5)
+\fBnm-settings-nmcli\fR(5)
 for details\&.
 .RE
 .PP
@@ -1372,7 +1378,7 @@ NM_CONFIG_ENABLE_TAG, like:
 .RS 4
 .\}
 .nf
-# always skip loading the file when running NetworkManager with
+# only load the file when running NetworkManager with
 # environment variable "NM_CONFIG_ENABLE_TAG=TAG1"
 [\&.config]
 enable=env:TAG1
@@ -1421,7 +1427,7 @@ plugin is the generic plugin that supports all the connection types and capabili
 for details about the file format\&.
 .sp
 The stored connection file may contain passwords, secrets and private keys in plain text, so it will be made readable only to root, and the plugin will ignore files that are readable or writable by any user or group other than root\&. See "Secret flag types" in
-\fBnm-settings\fR(5)
+\fBnm-settings-nmcli\fR(5)
 for how to avoid storing passwords in plain text\&.
 .sp
 This plugin is always active, and will automatically be used to store any connections that aren\*(Aqt supported by any other active plugin\&.
@@ -1429,7 +1435,7 @@ This plugin is always active, and will automatically be used to store any connec
 .PP
 \fIifcfg\-rh\fR
 .RS 4
-This plugin is used on the Fedora and Red Hat Enterprise Linux distributions to read and write configuration from the standard
+This plugin is now deprecated; it can be used on the Fedora and Red Hat Enterprise Linux distributions to read and write configuration from the standard
 /etc/sysconfig/network\-scripts/ifcfg\-*
 files\&. It currently supports reading Ethernet, Wi\-Fi, InfiniBand, VLAN, Bond, Bridge, and Team connections\&. Enabling
 ifcfg\-rh
@@ -1616,6 +1622,6 @@ Backslash is supported to escape the separators \*(Aq;\*(Aq and \*(Aq,\*(Aq, and
 \fBnmcli\fR(1),
 \fBnmcli-examples\fR(7),
 \fBnm-online\fR(1),
-\fBnm-settings\fR(5),
+\fBnm-settings-nmcli\fR(5),
 \fBnm-applet\fR(1),
 \fBnm-connection-editor\fR(1)

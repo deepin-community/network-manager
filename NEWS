@@ -1,30 +1,120 @@
-===============================================
-NetworkManager-1.42.4
-Overview of changes since NetworkManager-1.42.2
-===============================================
+=============================================
+NetworkManager-1.46
+Overview of changes since NetworkManager-1.44
+=============================================
 
-* Fix a possible crash when [global-dns] is used and improve the
-  documentation.
+* Support dynamic value "${NETWORK_SSID}" for connection.stable-id to generate
+  the stable ID based on the Wi-Fi's SSID.
+* Support new value "wifi.cloned-mac-address=stable-ssid" for randomizing the
+  MAC address based on the Wi-Fi network.
+* Change internal ABI of NMSetting types and NMSimpleConnection. The layout of
+  these structs was already hidden from public headers since 1.34 and this change
+  should not be noticeable.
+* Honor udev property ID_NET_AUTO_LINK_LOCAL_ONLY=1 for enabling
+  link local addresses on default wired connection.
+* Honor udev property ID_NET_MANAGED_BY to only manage an interface
+  when set to "org.freedesktop.NetworkManager".
+* D-Bus methods StartFind() and StopFind() on interface
+  "org.freedesktop.NetworkManager.Device.WifiP2P" now require the
+  "org.freedesktop.NetworkManager.wifi.scan" Polkit permission.
+* Drop build support with Python2. Python3 is now required.
+* nmcli: limit number of printed addresses/routes in `nmcli` overview to 10.
+* Limit number of exported IP addresses/routes on D-Bus to 100 to reduce
+  performance cost. Also, D-Bus updates for addresses/routes are now rate
+  limited to 3 per second.
+* cloud-setup: enable more sandboxing options in systemd service file.
+* nmcli: show WiFi bandwidth.
+* Internal improvements and bugfixes.
+* Man page now show the format and accepted values of all properties.
+* Added the 'dns-change' dispatcher event.
+* Show WiFi devices capability to work on the 6GHz band.
+* Allow to set dhcp-client-id to none.
+* Support configuring ethtool channels property to configure NIC multiqueue.
+* Don't attempt to use IPv6 if it's disabled in kernel.
+* Fix handling of OVS interfaces with netdev datapath and cloned MAC.
+* Support for old systemd has been droped, at least systemd v200 is required.
+* Support Ethtool EEE (Energy Efficient Ethernet) settings.
+* Add options to prevent edns0 and trust-ad being automatically added to DNS
+  configuration.
+* Implement fwmark property for IP tunnels.
+* Add support to HSR/PRP interfaces.
+* Deprecated connection.* properties master, slave-type, autoconnect-slaves
+* Allow configuring static routes also when addresses is empty.
+* VPN: accept pref-src for IPv6 routes from VPN plugins.
+* nmcli: show global metered state.
+* Support modifying the DSCP header field for DHCP packets, and change the
+  default to CS0.
+* Enable IPv4 DAD (Duplicate Address Detection) by default.
+* vpn: support 2FA authentication from VPN plugins.
+* nmtui: allow adding a bond as bridge port.
+* sriov: add support to configure the NIC's eswitch settings via Devlink.
+* ndisc: fix IPv6 address lifetimes computation.
+* Support the MACsec offload mode.
+* Support creating generic devices via external "device-handler" dispatcher.
 * Documentation improvements.
+* Many internal improvements and bug fixes.
 
-===============================================
-NetworkManager-1.42.2
-Overview of changes since NetworkManager-1.42.0
-===============================================
+=============================================
+NetworkManager-1.44
+Overview of changes since NetworkManager-1.42
+=============================================
 
-* Add build option to set the mobile-broadband-provider-info database
-  path.
-* Add new "ipv[46].replace-local-rule" setting to control whether to
-  remove the local route rule that is automatically generated.
-* Add the DHCPv6 IAID to the lease information exposed in /run and on
-  D-Bus.
-* Fix assuming team connections at boot.
-* Fix race condition when setting the MAC address of an OVS interface.
-* Fix constructing the IPv4 name servers variable passed to dispatcher
-  scripts.
-* Don't use tentative IPv6 address to resolve the system hostname via DNS.
-* Deprecate the "Master" property of the NMActiveConnection D-Bus object
-  in favor of the new "Controller" property.
+* Introduce a new "link" setting that holds properties related to the
+  kernel link such as "tx-queue-length", "gso-max-size",
+  "gso-max-segments", "gro-max-size".
+* Support sending a DHCPv6 prefix delegation hint via the
+  "ipv6.dhcp-pd-hint" connection property.
+* Support new bond options: "arp_missed_max", "lacp_active",
+  "ns_ip6_target".
+* Add new "initial-eps-bearer-configure" and "initial-eps-bearer-apn"
+  properties in the GSM setting.
+* Setting "connection.stable-id=default${CONNECTION}" changed behavior to
+  be identical to the built-in default value when the stable-id is not set.
+* Add a "[keyfile].rename" option to NetworkManager.conf to force renaming
+  profiles on disk when their name changes.
+* The ifcfg-rh plugin is deprecated; it will only receive bugfixes and
+  no new features. A warning is emitted the log when a connection in
+  ifcfg-rh format is found.
+* To automatically migrate existing ifcfg-rh connections to the
+  keyfile format, a new configuration option "main.migrate-ifcfg-rh"
+  is provided. Migration is disabled by default, but the default value
+  can be changed at build time via
+  "--with-config-migrate-ifcfg-rh-default=yes".
+* When configuring hostnames in non-public TLD (like "example.local"), use
+  the TLD as default search domain instead of the full hostname.
+* Always apply DNS options from the [global-dns] configuration section
+* The NetworkManager daemon now acquires the D-Bus name only after
+  populating the D-Bus tree. This can add a delay during startup but
+  it is required to avoid race conditions with other services
+  depending on NM.
+* Add a "version-id" argument to the Update2() D-Bus call to guard
+  against concurrent modifications of profiles.
+* Don't use tentative IPv6 addresses to resolve the system hostname
+  via DNS.
+* Track the number of autoconnect retries left for each device and
+  connection. Previously it was tracked only per connection and this
+  lead to unexpected behaviors in case of multiconnect profiles.
+* Set VLAN filtering options on bridge via netlink instead of sysfs.
+* nm-cloud-setup now supports IMDSv2 on Amazon EC2.
+* nmtui now allows to enable or disable Wi-Fi and WWAN radios.
+* Honor ignore-carrier=no for bond/bridge/team devices.
+* Add version mismatch warning when running nmcli commands.
+
+The following changes were backported to 1.42.x releases between 1.42.0
+and 1.42.8, and are also present in NetworkManager-1.44:
+
+- 1.42.8
+* Support compiling against pppd 2.5.0.
+* Support the "prio" option for bond ports.
+* Better handle non-full-membership PKEY_ID with new PKEY_ID_NM
+  variable in ifcfg-rh files.
+
+- 1.42.2
+* Add new "ipv[46].replace-local-rule" connection property that allows
+  users to remove the autogenerated local route rule. By default,
+  NetworkManager won't touch the local route rule.
+* Introduce a new D-Bus property "Controller" in the ActiveConnection
+  object, and deprecated the existing "Master" property.
 
 =============================================
 NetworkManager-1.42
@@ -164,6 +254,8 @@ Overview of changes since NetworkManager-1.38
   paragraphs.
 * Support enabling ipv4ll alongside DHCPv4 and static addressing.
 * Support configuring "ipv6.mtu".
+* The "ipv6.addr-gen-mode" property can now have a default value
+  specified via global connections defaults in NetworkManager.conf.
 * Honor "nm.debug" kernel command line to enable debug logging of
   NetworkManager.
 * NetworkManager reads the kernel command line "/proc/cmdline" for several

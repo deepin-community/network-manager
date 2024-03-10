@@ -80,20 +80,17 @@ typedef struct {
  * VPN Settings
  */
 struct _NMSettingVpn {
-    NMSetting parent;
-    /* In the past, this struct was public API. Preserve ABI! */
+    NMSetting           parent;
+    NMSettingVpnPrivate _priv;
 };
 
 struct _NMSettingVpnClass {
     NMSettingClass parent;
-    /* In the past, this struct was public API. Preserve ABI! */
-    gpointer padding[4];
 };
 
 G_DEFINE_TYPE(NMSettingVpn, nm_setting_vpn, NM_TYPE_SETTING)
 
-#define NM_SETTING_VPN_GET_PRIVATE(o) \
-    (G_TYPE_INSTANCE_GET_PRIVATE((o), NM_TYPE_SETTING_VPN, NMSettingVpnPrivate))
+#define NM_SETTING_VPN_GET_PRIVATE(o) _NM_GET_PRIVATE(o, NMSettingVpn, NM_IS_SETTING_VPN, NMSetting)
 
 /*****************************************************************************/
 
@@ -178,7 +175,7 @@ nm_setting_vpn_get_num_data_items(NMSettingVpn *setting)
  * nm_setting_vpn_add_data_item:
  * @setting: the #NMSettingVpn
  * @key: a name that uniquely identifies the given value @item
- * @item: (allow-none): the value to be referenced by @key
+ * @item: (nullable): the value to be referenced by @key
  *
  * Establishes a relationship between @key and @item internally in the
  * setting which may be retrieved later.  Should not be used to store passwords
@@ -227,11 +224,11 @@ nm_setting_vpn_get_data_item(NMSettingVpn *setting, const char *key)
 /**
  * nm_setting_vpn_get_data_keys:
  * @setting: the #NMSettingVpn
- * @out_length: (allow-none) (out): the length of the returned array
+ * @out_length: (out) (optional): the length of the returned array
  *
  * Retrieves every data key inside @setting, as an array.
  *
- * Returns: (array length=out_length) (transfer container): a
+ * Returns: (array length=out_length) (transfer container) (nullable): a
  *   %NULL-terminated array containing each data key or %NULL if
  *   there are no data items.
  *
@@ -346,7 +343,7 @@ nm_setting_vpn_get_num_secrets(NMSettingVpn *setting)
  * nm_setting_vpn_add_secret:
  * @setting: the #NMSettingVpn
  * @key: a name that uniquely identifies the given secret @secret
- * @secret: (allow-none): the secret to be referenced by @key
+ * @secret: (nullable): the secret to be referenced by @key
  *
  * Establishes a relationship between @key and @secret internally in the
  * setting which may be retrieved later.
@@ -394,11 +391,11 @@ nm_setting_vpn_get_secret(NMSettingVpn *setting, const char *key)
 /**
  * nm_setting_vpn_get_secret_keys:
  * @setting: the #NMSettingVpn
- * @out_length: (allow-none) (out): the length of the returned array
+ * @out_length: (out) (optional): the length of the returned array
  *
  * Retrieves every secret key inside @setting, as an array.
  *
- * Returns: (array length=out_length) (transfer container): a
+ * Returns: (array length=out_length) (transfer container) (nullable): a
  *   %NULL-terminated array containing each secret key or %NULL if
  *   there are no secrets.
  *
@@ -1067,8 +1064,6 @@ nm_setting_vpn_class_init(NMSettingVpnClass *klass)
     NMSettingClass *setting_class       = NM_SETTING_CLASS(klass);
     GArray         *properties_override = _nm_sett_info_property_override_create_array();
 
-    g_type_class_add_private(klass, sizeof(NMSettingVpnPrivate));
-
     object_class->get_property = get_property;
     object_class->set_property = set_property;
     object_class->finalize     = finalize;
@@ -1095,7 +1090,8 @@ nm_setting_vpn_class_init(NMSettingVpnClass *klass)
                                               PROP_SERVICE_TYPE,
                                               NM_SETTING_PARAM_NONE,
                                               NMSettingVpnPrivate,
-                                              service_type);
+                                              service_type,
+                                              .direct_string_allow_empty = TRUE);
 
     /**
      * NMSettingVpn:user-name:
@@ -1113,7 +1109,8 @@ nm_setting_vpn_class_init(NMSettingVpnClass *klass)
                                               PROP_USER_NAME,
                                               NM_SETTING_PARAM_NONE,
                                               NMSettingVpnPrivate,
-                                              user_name);
+                                              user_name,
+                                              .direct_string_allow_empty = TRUE);
 
     /**
      * NMSettingVpn:persistent:
@@ -1211,5 +1208,5 @@ nm_setting_vpn_class_init(NMSettingVpnClass *klass)
                              NM_META_SETTING_TYPE_VPN,
                              NULL,
                              properties_override,
-                             NM_SETT_INFO_PRIVATE_OFFSET_FROM_CLASS);
+                             G_STRUCT_OFFSET(NMSettingVpn, _priv));
 }

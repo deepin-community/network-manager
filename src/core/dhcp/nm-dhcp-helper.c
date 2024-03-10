@@ -21,21 +21,22 @@
 #define _NMLOG_ENABLED(level) ((level) <= LOG_ERR)
 #endif
 
-#define _NMLOG(always_enabled, level, ...)                                                       \
-    G_STMT_START                                                                                 \
-    {                                                                                            \
-        if ((always_enabled) || _NMLOG_ENABLED(level)) {                                         \
-            GTimeVal _tv;                                                                        \
-                                                                                                 \
-            g_get_current_time(&_tv);                                                            \
-            g_print(                                                                             \
-                "nm-dhcp-helper[%ld] %-7s [%ld.%04ld] " _NM_UTILS_MACRO_FIRST(__VA_ARGS__) "\n", \
-                (long) getpid(),                                                                 \
-                nm_utils_syslog_to_str(level),                                                   \
-                _tv.tv_sec,                                                                      \
-                _tv.tv_usec / 100 _NM_UTILS_MACRO_REST(__VA_ARGS__));                            \
-        }                                                                                        \
-    }                                                                                            \
+#define _NMLOG(always_enabled, level, ...)                                     \
+    G_STMT_START                                                               \
+    {                                                                          \
+        if ((always_enabled) || _NMLOG_ENABLED(level)) {                       \
+            gint64 _tv;                                                        \
+                                                                               \
+            _tv = g_get_real_time();                                           \
+            g_print("nm-dhcp-helper[%ld] %-7s [%" G_GINT64_FORMAT              \
+                    ".%04d] " _NM_UTILS_MACRO_FIRST(__VA_ARGS__) "\n",         \
+                    (long) getpid(),                                           \
+                    nm_utils_syslog_to_str(level),                             \
+                    (_tv / NM_UTILS_USEC_PER_SEC),                             \
+                    ((int) ((_tv % NM_UTILS_USEC_PER_SEC) / (((gint64) 100)))) \
+                        _NM_UTILS_MACRO_REST(__VA_ARGS__));                    \
+        }                                                                      \
+    }                                                                          \
     G_STMT_END
 
 #define _LOGD(...) _NMLOG(TRUE, LOG_INFO, __VA_ARGS__)
@@ -158,7 +159,7 @@ do_connect:
                       error->message,
                       try_count,
                       (long long) (time_end - remaining_time - time_start) / 1000);
-                interval = NM_CLAMP((gint64) (100L * (1L << NM_MIN(try_count, 31))), 5000, 100000);
+                interval = NM_CLAMP((gint64) (100L * (1L << NM_MIN(try_count, 31u))), 5000, 100000);
                 g_usleep(NM_MIN(interval, remaining_time));
                 g_clear_error(&error);
                 goto do_connect;
@@ -221,7 +222,7 @@ do_notify:
         gint64 interval;
 
         _LOGi("failure to call notify: %s (retry %u)", error->message, try_count);
-        interval = NM_CLAMP((gint64) (100L * (1L << NM_MIN(try_count, 31))), 5000, 25000);
+        interval = NM_CLAMP((gint64) (100L * (1L << NM_MIN(try_count, 31u))), 5000, 25000);
         g_usleep(NM_MIN(interval, remaining_time));
         g_clear_error(&error);
         goto do_notify;

@@ -137,7 +137,6 @@ NML3ConfigData *nm_l3_config_data_new_from_platform(NMDedupMultiIndex        *mu
 
 typedef struct {
     NMOptionBool ip4acd_not_ready;
-    NMOptionBool force_commit;
 } NML3ConfigMergeHookResult;
 
 typedef gboolean (*NML3ConfigMergeHookAddObj)(const NML3ConfigData      *l3cd,
@@ -164,7 +163,6 @@ void nm_l3_config_data_add_dependent_device_routes(NML3ConfigData       *self,
                                                    int                   addr_family,
                                                    guint32               route_table,
                                                    guint32               route_metric,
-                                                   gboolean              force_commit,
                                                    const NML3ConfigData *source);
 
 /*****************************************************************************/
@@ -555,6 +553,8 @@ NMSettingIP6ConfigPrivacy nm_l3_config_data_get_ip6_privacy(const NML3ConfigData
 
 gboolean nm_l3_config_data_set_ip6_privacy(NML3ConfigData           *self,
                                            NMSettingIP6ConfigPrivacy ip6_privacy);
+
+gboolean nm_l3_config_data_get_dhcp_enabled(const NML3ConfigData *self, int addr_family);
 
 NMProxyConfigMethod nm_l3_config_data_get_proxy_method(const NML3ConfigData *self);
 

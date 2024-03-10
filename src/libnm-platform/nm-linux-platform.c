@@ -41,6 +41,7 @@
 #include "libnm-platform/nm-netlink.h"
 #include "libnm-platform/nm-platform-utils.h"
 #include "libnm-platform/nmp-netns.h"
+#include "libnm-platform/devlink/nm-devlink.h"
 #include "libnm-platform/wifi/nm-wifi-utils-wext.h"
 #include "libnm-platform/wifi/nm-wifi-utils.h"
 #include "libnm-platform/wpan/nm-wpan-utils.h"
@@ -115,7 +116,9 @@ typedef enum _nm_packed {
 #define IFLA_CARRIER       33
 #define IFLA_PHYS_PORT_ID  34
 #define IFLA_LINK_NETNSID  37
-#define __IFLA_MAX         39
+#define IFLA_GSO_MAX_SEGS  40
+#define IFLA_GSO_MAX_SIZE  41
+#define IFLA_GRO_MAX_SIZE  58
 
 #define IFLA_INET6_TOKEN         7
 #define IFLA_INET6_ADDR_GEN_MODE 8
@@ -161,7 +164,7 @@ typedef enum _nm_packed {
 G_STATIC_ASSERT(RTA_MAX == (__RTA_MAX - 1));
 #define RTA_PREF 20
 #undef RTA_MAX
-#define RTA_MAX (MAX((__RTA_MAX - 1), RTA_PREF))
+#define RTA_MAX (NM_MAX_CONST((__RTA_MAX - 1), RTA_PREF))
 
 #ifndef MACVLAN_FLAG_NOPROMISC
 #define MACVLAN_FLAG_NOPROMISC 1
@@ -177,7 +180,12 @@ G_STATIC_ASSERT(RTA_MAX == (__RTA_MAX - 1));
 
 /*****************************************************************************/
 
+#define IFLA_BOND_SLAVE_PRIO 9
+
 #define IFLA_BOND_PEER_NOTIF_DELAY 28
+#define IFLA_BOND_AD_LACP_ACTIVE   29
+#define IFLA_BOND_MISSED_MAX       30
+#define IFLA_BOND_NS_IP6_TARGET    31
 
 #undef IFLA_BOND_MAX
 
@@ -219,6 +227,18 @@ G_STATIC_ASSERT(RTA_MAX == (__RTA_MAX - 1));
 #define IFLA_MACSEC_VALIDATION     13
 #define IFLA_MACSEC_PAD            14
 #define __IFLA_MACSEC_MAX          15
+
+/*****************************************************************************/
+
+#define IFLA_HSR_UNSPEC           0
+#define IFLA_HSR_PORT1            1
+#define IFLA_HSR_PORT2            2
+#define IFLA_HSR_MULTICAST_SPEC   3
+#define IFLA_HSR_SUPERVISION_ADDR 4
+#define IFLA_HSR_SEQ_NR           5
+#define IFLA_HSR_VERSION          6
+#define IFLA_HSR_PROTOCOL         7
+#define __IFLA_HSR_MAX            8
 
 /*****************************************************************************/
 
@@ -320,6 +340,10 @@ struct _ifla_vf_vlan_info {
 /*****************************************************************************/
 
 #define PSCHED_TIME_UNITS_PER_SEC 1000000
+
+/*****************************************************************************/
+
+#define RESYNC_RETRIES 50
 
 /*****************************************************************************/
 
@@ -450,7 +474,14 @@ typedef enum _nm_packed {
     WAIT_FOR_NL_RESPONSE_RESULT_UNKNOWN = 0,
     WAIT_FOR_NL_RESPONSE_RESULT_RESPONSE_OK,
     WAIT_FOR_NL_RESPONSE_RESULT_RESPONSE_UNKNOWN,
+
+    /* The receive buffer of the netlink socket has a large, but limited size.
+     * It can fill up, and we lose messages. When that happens, we may lose a
+     * response that we were waiting for. This error number indicates that we
+     * don't know the response due to a resync. We probably should retry the
+     * request. */
     WAIT_FOR_NL_RESPONSE_RESULT_FAILED_RESYNC,
+
     WAIT_FOR_NL_RESPONSE_RESULT_FAILED_POLL,
     WAIT_FOR_NL_RESPONSE_RESULT_FAILED_TIMEOUT,
     WAIT_FOR_NL_RESPONSE_RESULT_FAILED_DISPOSING,
@@ -465,7 +496,7 @@ typedef enum _nm_packed {
 
 typedef struct {
     WaitForNlResponseResult *out_seq_result;
-    char                   **out_errmsg;
+    char                   **out_extack_msg;
     union {
         int        *out_refresh_all_in_progress;
         NMPObject **out_route_get;
@@ -482,9 +513,6 @@ typedef struct {
 typedef struct {
     guint32 nlh_seq_next;
     guint32 nlh_seq_last_seen;
-#if NM_MORE_LOGGING
-    guint32 nlh_seq_last_handled;
-#endif
 } NetlinkProtocolPrivData;
 
 typedef struct {
@@ -709,7 +737,7 @@ wait_for_nl_response_to_nmerr(WaitForNlResponseResult seq_result)
 
 static const char *
 wait_for_nl_response_to_string(WaitForNlResponseResult seq_result,
-                               const char             *errmsg,
+                               const char             *extack_msg,
                                char                   *buf,
                                gsize                   buf_size)
 {
@@ -735,8 +763,8 @@ wait_for_nl_response_to_string(WaitForNlResponseResult seq_result,
                              "failure %d (%s%s%s)",
                              -((int) seq_result),
                              nm_strerror_native(-((int) seq_result)),
-                             errmsg ? " - " : "",
-                             errmsg ?: "");
+                             extack_msg ? " - " : "",
+                             extack_msg ?: "");
         } else
             nm_strbuf_append(&buf, &buf_size, "internal failure %d", (int) seq_result);
         break;
@@ -832,6 +860,7 @@ static const LinkDesc link_descs[] = {
 
     [NM_LINK_TYPE_BRIDGE] = {"bridge", "bridge", "bridge"},
     [NM_LINK_TYPE_BOND]   = {"bond", "bond", "bond"},
+    [NM_LINK_TYPE_HSR]    = {"hsr", "hsr", "hsr"},
     [NM_LINK_TYPE_TEAM]   = {"team", "team", NULL},
 };
 
@@ -854,6 +883,7 @@ _link_type_from_rtnl_type(const char *name)
         NM_LINK_TYPE_DUMMY,       /* "dummy"       */
         NM_LINK_TYPE_GRE,         /* "gre"         */
         NM_LINK_TYPE_GRETAP,      /* "gretap"      */
+        NM_LINK_TYPE_HSR,         /* "hsr"         */
         NM_LINK_TYPE_IFB,         /* "ifb"         */
         NM_LINK_TYPE_IP6GRE,      /* "ip6gre"      */
         NM_LINK_TYPE_IP6GRETAP,   /* "ip6gretap"   */
@@ -928,6 +958,7 @@ _link_type_from_devtype(const char *name)
         NM_LINK_TYPE_BNEP,      /* "bluetooth" */
         NM_LINK_TYPE_BOND,      /* "bond"      */
         NM_LINK_TYPE_BRIDGE,    /* "bridge"    */
+        NM_LINK_TYPE_HSR,       /* "hsr"       */
         NM_LINK_TYPE_PPP,       /* "ppp"       */
         NM_LINK_TYPE_VLAN,      /* "vlan"      */
         NM_LINK_TYPE_VRF,       /* "vrf"       */
@@ -1081,7 +1112,7 @@ _addrtime_extend_lifetime(guint32 lifetime, guint32 seconds)
         return lifetime;
 
     v = (guint64) lifetime + (guint64) seconds;
-    return MIN(v, NM_PLATFORM_LIFETIME_PERMANENT - 1);
+    return NM_MIN(v, NM_PLATFORM_LIFETIME_PERMANENT - 1);
 }
 
 /* The rtnl_addr object contains relative lifetimes @valid and @preferred
@@ -1500,6 +1531,8 @@ _parse_lnk_bridge(const char *kind, struct nlattr *info_data)
         [IFLA_BR_MCAST_QUERY_INTVL]          = {.type = NLA_U64},
         [IFLA_BR_MCAST_QUERY_RESPONSE_INTVL] = {.type = NLA_U64},
         [IFLA_BR_MCAST_STARTUP_QUERY_INTVL]  = {.type = NLA_U64},
+        [IFLA_BR_VLAN_FILTERING]             = {.type = NLA_U8},
+        [IFLA_BR_VLAN_DEFAULT_PVID]          = {.type = NLA_U16},
     };
     NMPlatformLnkBridge *props;
     struct nlattr       *tb[G_N_ELEMENTS(policy)];
@@ -1570,6 +1603,10 @@ _parse_lnk_bridge(const char *kind, struct nlattr *info_data)
         props->mcast_query_response_interval = nla_get_u64(tb[IFLA_BR_MCAST_QUERY_RESPONSE_INTVL]);
     if (tb[IFLA_BR_MCAST_STARTUP_QUERY_INTVL])
         props->mcast_startup_query_interval = nla_get_u64(tb[IFLA_BR_MCAST_STARTUP_QUERY_INTVL]);
+    if (tb[IFLA_BR_VLAN_FILTERING])
+        props->vlan_filtering = !!nla_get_u8(tb[IFLA_BR_VLAN_FILTERING]);
+    if (tb[IFLA_BR_VLAN_DEFAULT_PVID])
+        props->default_pvid = nla_get_u16(tb[IFLA_BR_VLAN_DEFAULT_PVID]);
 
     return obj;
 }
@@ -1607,6 +1644,9 @@ _parse_lnk_bond(const char *kind, struct nlattr *info_data)
         [IFLA_BOND_AD_ACTOR_SYSTEM]   = {.minlen = sizeof(NMEtherAddr)},
         [IFLA_BOND_TLB_DYNAMIC_LB]    = {.type = NLA_U8},
         [IFLA_BOND_PEER_NOTIF_DELAY]  = {.type = NLA_U32},
+        [IFLA_BOND_MISSED_MAX]        = {.type = NLA_U8},
+        [IFLA_BOND_AD_LACP_ACTIVE]    = {.type = NLA_U8},
+        [IFLA_BOND_NS_IP6_TARGET]     = {.type = NLA_NESTED},
     };
     NMPlatformLnkBond *props;
     struct nlattr     *tb[G_N_ELEMENTS(policy)];
@@ -1661,6 +1701,19 @@ _parse_lnk_bond(const char *kind, struct nlattr *info_data)
             props->arp_ip_target[props->arp_ip_targets_num++] = nla_get_u32(attr);
         }
     }
+    if (tb[IFLA_BOND_NS_IP6_TARGET]) {
+        struct nlattr *attr;
+        int            rem;
+
+        nla_for_each_nested (attr, tb[IFLA_BOND_NS_IP6_TARGET], rem) {
+            if (props->ns_ip6_targets_num > NM_BOND_MAX_ARP_TARGETS - 1)
+                break;
+            if (nla_len(attr) < sizeof(struct in6_addr))
+                break;
+
+            props->ns_ip6_target[props->ns_ip6_targets_num++] = nla_get_in6_addr(attr);
+        }
+    }
     if (tb[IFLA_BOND_ARP_VALIDATE])
         props->arp_validate = nla_get_u32(tb[IFLA_BOND_ARP_VALIDATE]);
     if (tb[IFLA_BOND_ARP_ALL_TARGETS])
@@ -1681,6 +1734,8 @@ _parse_lnk_bond(const char *kind, struct nlattr *info_data)
         props->num_grat_arp = nla_get_u8(tb[IFLA_BOND_NUM_PEER_NOTIF]);
     if (tb[IFLA_BOND_ALL_SLAVES_ACTIVE])
         props->all_ports_active = nla_get_u8(tb[IFLA_BOND_ALL_SLAVES_ACTIVE]);
+    if (tb[IFLA_BOND_MISSED_MAX])
+        props->arp_missed_max = nla_get_u8(tb[IFLA_BOND_MISSED_MAX]);
     if (tb[IFLA_BOND_MIN_LINKS])
         props->min_links = nla_get_u32(tb[IFLA_BOND_MIN_LINKS]);
     if (tb[IFLA_BOND_LP_INTERVAL])
@@ -1689,6 +1744,10 @@ _parse_lnk_bond(const char *kind, struct nlattr *info_data)
         props->packets_per_port = nla_get_u32(tb[IFLA_BOND_PACKETS_PER_SLAVE]);
     if (tb[IFLA_BOND_AD_LACP_RATE])
         props->lacp_rate = nla_get_u8(tb[IFLA_BOND_AD_LACP_RATE]);
+    if (tb[IFLA_BOND_AD_LACP_ACTIVE]) {
+        props->lacp_active     = nla_get_u8(tb[IFLA_BOND_AD_LACP_ACTIVE]);
+        props->lacp_active_has = TRUE;
+    }
     if (tb[IFLA_BOND_AD_SELECT])
         props->ad_select = nla_get_u8(tb[IFLA_BOND_AD_SELECT]);
     if (tb[IFLA_BOND_AD_ACTOR_SYS_PRIO])
@@ -1762,6 +1821,51 @@ _parse_lnk_gre(const char *kind, struct nlattr *info_data)
     props->ttl                = tb[IFLA_GRE_TTL] ? nla_get_u8(tb[IFLA_GRE_TTL]) : 0;
     props->path_mtu_discovery = !tb[IFLA_GRE_PMTUDISC] || !!nla_get_u8(tb[IFLA_GRE_PMTUDISC]);
     props->is_tap             = is_tap;
+
+    return obj;
+}
+
+/*****************************************************************************/
+
+static NMPObject *
+_parse_lnk_hsr(const char *kind, struct nlattr *info_data)
+{
+    static const struct nla_policy policy[] = {
+        [IFLA_HSR_PORT1]            = {.type = NLA_U32},
+        [IFLA_HSR_PORT2]            = {.type = NLA_U32},
+        [IFLA_HSR_MULTICAST_SPEC]   = {.type = NLA_U8},
+        [IFLA_HSR_SUPERVISION_ADDR] = {.minlen = sizeof(NMEtherAddr)},
+        [IFLA_HSR_PROTOCOL]         = {.type = NLA_U8},
+    };
+    NMPlatformLnkHsr *props;
+    struct nlattr    *tb[G_N_ELEMENTS(policy)];
+    NMPObject        *obj;
+    guint32           v_u32;
+
+    if (!info_data || !kind)
+        return NULL;
+
+    if (nla_parse_nested_arr(tb, info_data, policy) < 0)
+        return NULL;
+
+    obj   = nmp_object_new(NMP_OBJECT_TYPE_LNK_HSR, NULL);
+    props = &obj->lnk_hsr;
+    if (tb[IFLA_HSR_PORT1]) {
+        v_u32 = nla_get_u32(tb[IFLA_HSR_PORT1]);
+        if (v_u32 <= (unsigned) G_MAXINT)
+            props->port1 = v_u32;
+    }
+    if (tb[IFLA_HSR_PORT2]) {
+        v_u32 = nla_get_u32(tb[IFLA_HSR_PORT2]);
+        if (v_u32 <= (unsigned) G_MAXINT)
+            props->port2 = v_u32;
+    }
+    if (tb[IFLA_HSR_MULTICAST_SPEC])
+        props->multicast_spec = nla_get_u8(tb[IFLA_HSR_MULTICAST_SPEC]);
+    if (tb[IFLA_HSR_SUPERVISION_ADDR])
+        nla_memcpy(&props->supervision_address, tb[IFLA_HSR_SUPERVISION_ADDR], sizeof(NMEtherAddr));
+    if (tb[IFLA_HSR_PROTOCOL])
+        props->prp = nla_get_u8(tb[IFLA_HSR_PROTOCOL]);
 
     return obj;
 }
@@ -3263,6 +3367,9 @@ _new_from_nl_link(NMPlatform            *platform,
         [IFLA_IFNAME]        = {.type = NLA_STRING, .maxlen = IFNAMSIZ},
         [IFLA_MTU]           = {.type = NLA_U32},
         [IFLA_TXQLEN]        = {.type = NLA_U32},
+        [IFLA_GSO_MAX_SIZE]  = {.type = NLA_U32},
+        [IFLA_GSO_MAX_SEGS]  = {.type = NLA_U32},
+        [IFLA_GRO_MAX_SIZE]  = {.type = NLA_U32},
         [IFLA_LINK]          = {.type = NLA_U32},
         [IFLA_WEIGHT]        = {.type = NLA_U32},
         [IFLA_MASTER]        = {.type = NLA_U32},
@@ -3347,9 +3454,11 @@ _new_from_nl_link(NMPlatform            *platform,
 
     if (tb[IFLA_LINKINFO]) {
         static const struct nla_policy policy_link_info[] = {
-            [IFLA_INFO_KIND]   = {.type = NLA_STRING},
-            [IFLA_INFO_DATA]   = {.type = NLA_NESTED},
-            [IFLA_INFO_XSTATS] = {.type = NLA_NESTED},
+            [IFLA_INFO_KIND]       = {.type = NLA_STRING},
+            [IFLA_INFO_DATA]       = {.type = NLA_NESTED},
+            [IFLA_INFO_XSTATS]     = {.type = NLA_NESTED},
+            [IFLA_INFO_SLAVE_KIND] = {.type = NLA_STRING},
+            [IFLA_INFO_SLAVE_DATA] = {.type = NLA_NESTED},
         };
         struct nlattr *li[G_N_ELEMENTS(policy_link_info)];
 
@@ -3360,7 +3469,80 @@ _new_from_nl_link(NMPlatform            *platform,
             nl_info_kind = nla_get_string(li[IFLA_INFO_KIND]);
 
         nl_info_data = li[IFLA_INFO_DATA];
+
+        if (li[IFLA_INFO_SLAVE_KIND]) {
+            const char *s = nla_get_string(li[IFLA_INFO_SLAVE_KIND]);
+
+            if (nm_streq(s, "bond"))
+                obj->link.port_kind = NM_PORT_KIND_BOND;
+            else if (nm_streq(s, "bridge"))
+                obj->link.port_kind = NM_PORT_KIND_BRIDGE;
+        }
+
+        if (li[IFLA_INFO_SLAVE_DATA]) {
+            static const struct nla_policy policy_bond_port[] = {
+                [IFLA_BOND_SLAVE_QUEUE_ID] = {.type = NLA_U16},
+                [IFLA_BOND_SLAVE_PRIO]     = {.type = NLA_S32},
+            };
+            struct nlattr                 *bp[G_N_ELEMENTS(policy_bond_port)];
+            static const struct nla_policy policy_bridge_port[] = {
+                [IFLA_BRPORT_COST]     = {.type = NLA_U32},
+                [IFLA_BRPORT_PRIORITY] = {.type = NLA_U16},
+                [IFLA_BRPORT_MODE]     = {.type = NLA_U8},
+            };
+            struct nlattr *brp[G_N_ELEMENTS(policy_bridge_port)];
+
+            switch (obj->link.port_kind) {
+            case NM_PORT_KIND_BOND:
+                if (nla_parse_nested_arr(bp, li[IFLA_INFO_SLAVE_DATA], policy_bond_port) < 0)
+                    return NULL;
+
+                if (bp[IFLA_BOND_SLAVE_QUEUE_ID])
+                    obj->link.port_data.bond.queue_id = nla_get_u16(bp[IFLA_BOND_SLAVE_QUEUE_ID]);
+
+                if (bp[IFLA_BOND_SLAVE_PRIO]) {
+                    obj->link.port_data.bond.prio     = nla_get_s32(bp[IFLA_BOND_SLAVE_PRIO]);
+                    obj->link.port_data.bond.prio_has = TRUE;
+                    if (!_nm_platform_kernel_support_detected(
+                            NM_PLATFORM_KERNEL_SUPPORT_TYPE_IFLA_BOND_SLAVE_PRIO)) {
+                        /* support for IFLA_BOND_SLAVE_PRIO was added in 0a2ff7cc8ad48a86939a91bd3457f38e59e741a1,
+                         * kernel 6.0, 2 October 2022.
+                         *
+                         * We can only detect support if the attribute is present. A missing attribute
+                         * is not conclusive. */
+                        _nm_platform_kernel_support_init(
+                            NM_PLATFORM_KERNEL_SUPPORT_TYPE_IFLA_BOND_SLAVE_PRIO,
+                            1);
+                    }
+                }
+                break;
+            case NM_PORT_KIND_BRIDGE:
+                if (nla_parse_nested_arr(brp, li[IFLA_INFO_SLAVE_DATA], policy_bridge_port) < 0)
+                    return NULL;
+
+                if (brp[IFLA_BRPORT_COST])
+                    obj->link.port_data.bridge.path_cost = nla_get_u32(brp[IFLA_BRPORT_COST]);
+
+                if (brp[IFLA_BRPORT_PRIORITY])
+                    obj->link.port_data.bridge.priority = nla_get_u16(brp[IFLA_BRPORT_PRIORITY]);
+
+                if (brp[IFLA_BRPORT_MODE])
+                    obj->link.port_data.bridge.hairpin = nla_get_u8(brp[IFLA_BRPORT_MODE]);
+                break;
+            case NM_PORT_KIND_NONE:
+                break;
+            }
+        }
     }
+
+    if (tb[IFLA_TXQLEN])
+        obj->link.link_props.tx_queue_length = nla_get_u32(tb[IFLA_TXQLEN]);
+    if (tb[IFLA_GSO_MAX_SIZE])
+        obj->link.link_props.gso_max_size = nla_get_u32(tb[IFLA_GSO_MAX_SIZE]);
+    if (tb[IFLA_GSO_MAX_SEGS])
+        obj->link.link_props.gso_max_segments = nla_get_u32(tb[IFLA_GSO_MAX_SEGS]);
+    if (tb[IFLA_GRO_MAX_SIZE])
+        obj->link.link_props.gro_max_size = nla_get_u32(tb[IFLA_GRO_MAX_SIZE]);
 
     if (tb[IFLA_STATS64]) {
         const char *stats = nla_data(tb[IFLA_STATS64]);
@@ -3452,6 +3634,9 @@ _new_from_nl_link(NMPlatform            *platform,
     case NM_LINK_TYPE_GRE:
     case NM_LINK_TYPE_GRETAP:
         lnk_data = _parse_lnk_gre(nl_info_kind, nl_info_data);
+        break;
+    case NM_LINK_TYPE_HSR:
+        lnk_data = _parse_lnk_hsr(nl_info_kind, nl_info_data);
         break;
     case NM_LINK_TYPE_INFINIBAND:
         lnk_data = _parse_lnk_infiniband(nl_info_kind, nl_info_data);
@@ -3828,7 +4013,7 @@ _new_from_nl_route(const struct nlmsghdr *nlh, gboolean id_only, ParseNlmsgIter 
                  * hops in this list). */
                 nm_assert(v4_n_nexthops > 0u);
                 if (v4_n_nexthops - 1u >= v4_nh_extra_alloc) {
-                    v4_nh_extra_alloc = NM_MAX(4, v4_nh_extra_alloc * 2u);
+                    v4_nh_extra_alloc = NM_MAX(4u, v4_nh_extra_alloc * 2u);
                     if (!v4_nh_extra_nexthops_heap) {
                         v4_nh_extra_nexthops_heap =
                             g_new(NMPlatformIP4RtNextHop, v4_nh_extra_alloc);
@@ -4521,15 +4706,15 @@ _new_from_nl_tfilter(NMPlatform *platform, const struct nlmsghdr *nlh, gboolean 
 
 /**
  * nmp_object_new_from_nl:
- * @platform: (allow-none): for creating certain objects, the constructor wants to check
+ * @platform: (nullable): for creating certain objects, the constructor wants to check
  *   sysfs. For this the platform instance is needed. If missing, the object might not
  *   be correctly detected.
- * @cache: (allow-none): for certain objects, the netlink message doesn't contain all the information.
+ * @cache: (nullable): for certain objects, the netlink message doesn't contain all the information.
  *   If a cache is given, the object is completed with information from the cache.
  * @nlh: the netlink message header
  * @id_only: whether only to create an empty object with only the ID fields set.
  *
- * Returns: %NULL or a newly created NMPObject instance.
+ * Returns: (nullable): %NULL or a newly created NMPObject instance.
  **/
 static NMPObject *
 nmp_object_new_from_nl(NMPlatform               *platform,
@@ -4688,6 +4873,17 @@ _nl_msg_new_link_set_linkinfo(struct nl_msg *msg, NMLinkType link_type, gconstpo
             nla_nest_end(msg, targets);
         }
 
+        if (props->ns_ip6_targets_num > 0) {
+            targets = nla_nest_start(msg, IFLA_BOND_NS_IP6_TARGET);
+            if (!targets)
+                goto nla_put_failure;
+
+            for (i = 0; i < props->ns_ip6_targets_num; i++)
+                NLA_PUT(msg, i, sizeof(struct in6_addr), &props->ns_ip6_target[i]);
+
+            nla_nest_end(msg, targets);
+        }
+
         if (props->arp_all_targets)
             NLA_PUT_U32(msg, IFLA_BOND_ARP_ALL_TARGETS, props->arp_all_targets);
         if (props->arp_interval)
@@ -4723,6 +4919,8 @@ _nl_msg_new_link_set_linkinfo(struct nl_msg *msg, NMLinkType link_type, gconstpo
                     &props->ad_actor_system);
         if (props->ad_select)
             NLA_PUT_U8(msg, IFLA_BOND_AD_SELECT, props->ad_select);
+        if (props->arp_missed_max)
+            NLA_PUT_U8(msg, IFLA_BOND_MISSED_MAX, props->arp_missed_max);
 
         NLA_PUT_U8(msg, IFLA_BOND_ALL_SLAVES_ACTIVE, props->all_ports_active);
 
@@ -4730,6 +4928,8 @@ _nl_msg_new_link_set_linkinfo(struct nl_msg *msg, NMLinkType link_type, gconstpo
             NLA_PUT_U8(msg, IFLA_BOND_FAIL_OVER_MAC, props->fail_over_mac);
         if (props->lacp_rate)
             NLA_PUT_U8(msg, IFLA_BOND_AD_LACP_RATE, props->lacp_rate);
+        if (props->lacp_active_has)
+            NLA_PUT_U8(msg, IFLA_BOND_AD_LACP_ACTIVE, props->lacp_active);
         if (props->num_grat_arp)
             NLA_PUT_U8(msg, IFLA_BOND_NUM_PEER_NOTIF, props->num_grat_arp);
 
@@ -4866,6 +5066,24 @@ _nl_msg_new_link_set_linkinfo(struct nl_msg *msg, NMLinkType link_type, gconstpo
         NLA_PUT_U32(msg, IFLA_GRE_OKEY, htonl(props->output_key));
         NLA_PUT_U16(msg, IFLA_GRE_IFLAGS, htons(props->input_flags));
         NLA_PUT_U16(msg, IFLA_GRE_OFLAGS, htons(props->output_flags));
+        break;
+    }
+    case NM_LINK_TYPE_HSR:
+    {
+        const NMPlatformLnkHsr *props = extra_data;
+
+        nm_assert(props);
+
+        if (!(data = nla_nest_start(msg, IFLA_INFO_DATA)))
+            goto nla_put_failure;
+
+        NLA_PUT_U32(msg, IFLA_HSR_PORT1, props->port1);
+        NLA_PUT_U32(msg, IFLA_HSR_PORT2, props->port2);
+
+        if (props->multicast_spec)
+            NLA_PUT_U8(msg, IFLA_HSR_MULTICAST_SPEC, props->multicast_spec);
+
+        NLA_PUT_U8(msg, IFLA_HSR_PROTOCOL, props->prp);
         break;
     }
     case NM_LINK_TYPE_SIT:
@@ -6643,7 +6861,7 @@ delayed_action_wait_for_response_complete(NMPlatform             *platform,
 
     nm_assert(NM_FLAGS_ANY(priv->delayed_action.flags, ACTION_TYPE));
     nm_assert(idx < priv->delayed_action.list_wait_for_response_x[netlink_protocol]->len);
-    nm_assert(seq_result);
+    nm_assert(seq_result != WAIT_FOR_NL_RESPONSE_RESULT_UNKNOWN);
 
     data = delayed_action_get_list_wait_for_resonse(priv, netlink_protocol, idx);
 
@@ -6994,7 +7212,7 @@ delayed_action_schedule_WAIT_FOR_RESPONSE(NMPlatform                        *pla
                                           NMPNetlinkProtocol                 netlink_protocol,
                                           guint32                            seq_number,
                                           WaitForNlResponseResult           *out_seq_result,
-                                          char                             **out_errmsg,
+                                          char                             **out_extack_msg,
                                           DelayedActionWaitForNlResponseType response_type,
                                           gpointer                           response_out_data)
 {
@@ -7003,10 +7221,12 @@ delayed_action_schedule_WAIT_FOR_RESPONSE(NMPlatform                        *pla
         .timeout_abs_nsec =
             nm_utils_get_monotonic_timestamp_nsec() + (200 * (NM_UTILS_NSEC_PER_SEC / 1000)),
         .out_seq_result    = out_seq_result,
-        .out_errmsg        = out_errmsg,
+        .out_extack_msg    = out_extack_msg,
         .response_type     = response_type,
         .response.out_data = response_out_data,
     };
+
+    nm_assert(!out_seq_result || *out_seq_result == WAIT_FOR_NL_RESPONSE_RESULT_UNKNOWN);
 
     delayed_action_schedule(
         platform,
@@ -7362,7 +7582,7 @@ static int
 _nl_send_nlmsghdr(NMPlatform                        *platform,
                   struct nlmsghdr                   *nlhdr,
                   WaitForNlResponseResult           *out_seq_result,
-                  char                             **out_errmsg,
+                  char                             **out_extack_msg,
                   DelayedActionWaitForNlResponseType response_type,
                   gpointer                           response_out_data)
 {
@@ -7371,6 +7591,8 @@ _nl_send_nlmsghdr(NMPlatform                        *platform,
     int                     errsv;
 
     nm_assert(nlhdr);
+
+    nm_assert(out_seq_result && *out_seq_result == WAIT_FOR_NL_RESPONSE_RESULT_UNKNOWN);
 
     seq              = _nlh_seq_next_get(priv, NMP_NETLINK_ROUTE);
     nlhdr->nlmsg_seq = seq;
@@ -7399,7 +7621,7 @@ again:
             errsv = errno;
             if (errsv == EINTR && try_count++ < 100)
                 goto again;
-            _LOGD("netlink: nl-send-nlmsghdr: failed sending message: %s (%d)",
+            _LOGI("netlink: nl-send-nlmsghdr: failed sending message: %s (%d)",
                   nm_strerror_native(errsv),
                   errsv);
             return -nm_errno_from_native(errsv);
@@ -7410,7 +7632,7 @@ again:
                                               NMP_NETLINK_ROUTE,
                                               seq,
                                               out_seq_result,
-                                              out_errmsg,
+                                              out_extack_msg,
                                               response_type,
                                               response_out_data);
     return 0;
@@ -7421,7 +7643,7 @@ _netlink_send_nlmsg(NMPlatform                        *platform,
                     NMPNetlinkProtocol                 netlink_protocol,
                     struct nl_msg                     *nlmsg,
                     WaitForNlResponseResult           *out_seq_result,
-                    char                             **out_errmsg,
+                    char                             **out_extack_msg,
                     DelayedActionWaitForNlResponseType response_type,
                     gpointer                           response_out_data)
 {
@@ -7430,13 +7652,15 @@ _netlink_send_nlmsg(NMPlatform                        *platform,
     guint32                 seq;
     int                     nle;
 
+    nm_assert(!out_seq_result || *out_seq_result == WAIT_FOR_NL_RESPONSE_RESULT_UNKNOWN);
+
     nlhdr            = nlmsg_hdr(nlmsg);
     seq              = _nlh_seq_next_get(priv, netlink_protocol);
     nlhdr->nlmsg_seq = seq;
 
     nle = nl_send_auto(priv->sk_x[netlink_protocol], nlmsg);
     if (nle < 0) {
-        _LOGD("netlink: nl-send-nlmsg: failed sending message: %s (%d)", nm_strerror(nle), nle);
+        _LOGI("netlink: nl-send-nlmsg: failed sending message: %s (%d)", nm_strerror(nle), nle);
         return nle;
     }
 
@@ -7444,7 +7668,7 @@ _netlink_send_nlmsg(NMPlatform                        *platform,
                                               netlink_protocol,
                                               seq,
                                               out_seq_result,
-                                              out_errmsg,
+                                              out_extack_msg,
                                               response_type,
                                               response_out_data);
     return 0;
@@ -7454,13 +7678,13 @@ static int
 _netlink_send_nlmsg_rtnl(NMPlatform              *platform,
                          struct nl_msg           *nlmsg,
                          WaitForNlResponseResult *out_seq_result,
-                         char                   **out_errmsg)
+                         char                   **out_extack_msg)
 {
     return _netlink_send_nlmsg(platform,
                                NMP_NETLINK_ROUTE,
                                nlmsg,
                                out_seq_result,
-                               out_errmsg,
+                               out_extack_msg,
                                DELAYED_ACTION_RESPONSE_TYPE_VOID,
                                NULL);
 }
@@ -7731,7 +7955,7 @@ event_seq_check(NMPlatform             *platform,
                 NMPNetlinkProtocol      netlink_protocol,
                 guint32                 seq_number,
                 WaitForNlResponseResult seq_result,
-                const char             *msg)
+                const char             *extack_msg)
 {
     NMLinuxPlatformPrivate *priv = NM_LINUX_PLATFORM_GET_PRIVATE(platform);
     guint                   i;
@@ -7742,7 +7966,7 @@ event_seq_check(NMPlatform             *platform,
     if (!NM_FLAGS_ANY(
             priv->delayed_action.flags,
             nmp_netlink_protocol_info(netlink_protocol)->delayed_action_type_wait_for_response))
-        goto out;
+        return;
 
     nm_assert(priv->delayed_action.list_wait_for_response_x[netlink_protocol]->len > 0);
 
@@ -7750,30 +7974,23 @@ event_seq_check(NMPlatform             *platform,
         DelayedActionWaitForNlResponseData *data =
             delayed_action_get_list_wait_for_resonse(priv, netlink_protocol, i);
 
-        if (data->seq_number == seq_number) {
-            /* We potentially receive many parts partial responses for the same sequence number.
-                 * Thus, we only remember the result, and collect it later. */
-            if (data->seq_result < 0) {
-                /* we already saw an error for this sequence number.
-                     * Preserve it. */
-            } else if (seq_result != WAIT_FOR_NL_RESPONSE_RESULT_RESPONSE_UNKNOWN
-                       || data->seq_result == WAIT_FOR_NL_RESPONSE_RESULT_UNKNOWN)
-                data->seq_result = seq_result;
-            if (data->out_errmsg && !*data->out_errmsg)
-                *data->out_errmsg = g_strdup(msg);
-            return;
-        }
+        if (data->seq_number != seq_number)
+            continue;
+
+        /* We potentially receive many parts partial responses for the same sequence number.
+         * Thus, we only remember the result, and collect it later. */
+        if (data->seq_result < 0) {
+            /* we already saw an error for this sequence number.
+             * Preserve it. */
+        } else if (seq_result != WAIT_FOR_NL_RESPONSE_RESULT_RESPONSE_UNKNOWN
+                   || data->seq_result == WAIT_FOR_NL_RESPONSE_RESULT_UNKNOWN)
+            data->seq_result = seq_result;
+
+        if (extack_msg && data->out_extack_msg && !*data->out_extack_msg)
+            *data->out_extack_msg = g_strdup(extack_msg);
+
+        return;
     }
-
-out:
-
-#if NM_MORE_LOGGING
-    if (seq_number != priv->proto_data_x[netlink_protocol].nlh_seq_last_handled)
-        _LOGt("netlink: recvmsg: unwaited sequence number %u", seq_number);
-    priv->proto_data_x[netlink_protocol].nlh_seq_last_handled = seq_number;
-#else
-    (void) 0;
-#endif
 }
 
 static void
@@ -8009,35 +8226,41 @@ do_add_link_with_lookup(NMPlatform            *platform,
                         struct nl_msg         *nlmsg,
                         const NMPlatformLink **out_link)
 {
-    const NMPObject        *obj        = NULL;
-    WaitForNlResponseResult seq_result = WAIT_FOR_NL_RESPONSE_RESULT_UNKNOWN;
-    gs_free char           *errmsg     = NULL;
+    const NMPObject        *obj = NULL;
+    WaitForNlResponseResult seq_result;
+    gs_free char           *extack_msg = NULL;
     int                     nle;
     char                    s_buf[256];
-    NMPCache               *cache = nm_platform_get_cache(platform);
+    NMPCache               *cache     = nm_platform_get_cache(platform);
+    int                     try_count = 0;
 
     event_handler_read_netlink(platform, NMP_NETLINK_ROUTE, FALSE);
 
-    nle = _netlink_send_nlmsg_rtnl(platform, nlmsg, &seq_result, &errmsg);
-    if (nle < 0) {
-        _LOGE("do-add-link[%s/%s]: failed sending netlink request \"%s\" (%d)",
-              name,
-              nm_link_type_to_string(link_type),
-              nm_strerror(nle),
-              -nle);
-        NM_SET_OUT(out_link, NULL);
-        return nle;
-    }
+    do {
+        seq_result = WAIT_FOR_NL_RESPONSE_RESULT_UNKNOWN;
+        nle        = _netlink_send_nlmsg_rtnl(platform, nlmsg, &seq_result, &extack_msg);
+        if (nle < 0) {
+            _LOGE("do-add-link[%s/%s]: failed sending netlink request \"%s\" (%d)",
+                  name,
+                  nm_link_type_to_string(link_type),
+                  nm_strerror(nle),
+                  -nle);
+            NM_SET_OUT(out_link, NULL);
+            return nle;
+        }
 
-    delayed_action_handle_all(platform);
+        delayed_action_handle_all(platform);
 
-    nm_assert(seq_result);
+        nm_assert(seq_result != WAIT_FOR_NL_RESPONSE_RESULT_UNKNOWN);
 
-    _NMLOG(seq_result == WAIT_FOR_NL_RESPONSE_RESULT_RESPONSE_OK ? LOGL_DEBUG : LOGL_WARN,
-           "do-add-link[%s/%s]: %s",
-           name,
-           nm_link_type_to_string(link_type),
-           wait_for_nl_response_to_string(seq_result, errmsg, s_buf, sizeof(s_buf)));
+        _NMLOG(seq_result == WAIT_FOR_NL_RESPONSE_RESULT_RESPONSE_OK ? LOGL_DEBUG : LOGL_WARN,
+               "do-add-link[%s/%s]: %s",
+               name,
+               nm_link_type_to_string(link_type),
+               wait_for_nl_response_to_string(seq_result, extack_msg, s_buf, sizeof(s_buf)));
+
+    } while (seq_result == WAIT_FOR_NL_RESPONSE_RESULT_FAILED_RESYNC
+             && ++try_count < RESYNC_RETRIES);
 
     if (out_link) {
         obj       = nmp_cache_lookup_link_full(cache, 0, name, FALSE, link_type, NULL, NULL);
@@ -8051,14 +8274,17 @@ static int
 do_add_addrroute(NMPlatform      *platform,
                  const NMPObject *obj_id,
                  struct nl_msg   *nlmsg,
-                 gboolean         suppress_netlink_failure)
+                 gboolean         suppress_netlink_failure,
+                 char           **out_extack_msg)
 {
     char                    sbuf1[NM_UTILS_TO_STRING_BUFFER_SIZE];
-    WaitForNlResponseResult seq_result = WAIT_FOR_NL_RESPONSE_RESULT_UNKNOWN;
-    gs_free char           *errmsg     = NULL;
+    WaitForNlResponseResult seq_result;
+    gs_free char           *extack_msg = NULL;
     int                     nle;
     char                    s_buf[256];
+    int                     try_count = 0;
 
+    nm_assert(!out_extack_msg || !*out_extack_msg);
     nm_assert(NM_IN_SET(NMP_OBJECT_GET_TYPE(obj_id),
                         NMP_OBJECT_TYPE_IP4_ADDRESS,
                         NMP_OBJECT_TYPE_IP6_ADDRESS,
@@ -8067,28 +8293,34 @@ do_add_addrroute(NMPlatform      *platform,
 
     event_handler_read_netlink(platform, NMP_NETLINK_ROUTE, FALSE);
 
-    nle = _netlink_send_nlmsg_rtnl(platform, nlmsg, &seq_result, &errmsg);
-    if (nle < 0) {
-        _LOGE("do-add-%s[%s]: failure sending netlink request \"%s\" (%d)",
-              NMP_OBJECT_GET_CLASS(obj_id)->obj_type_name,
-              nmp_object_to_string(obj_id, NMP_OBJECT_TO_STRING_ID, sbuf1, sizeof(sbuf1)),
-              nm_strerror(nle),
-              -nle);
-        return -NME_PL_NETLINK;
-    }
+    do {
+        seq_result = WAIT_FOR_NL_RESPONSE_RESULT_UNKNOWN;
+        nle        = _netlink_send_nlmsg_rtnl(platform, nlmsg, &seq_result, &extack_msg);
+        if (nle < 0) {
+            _LOGE("do-add-%s[%s]: failure sending netlink request \"%s\" (%d)",
+                  NMP_OBJECT_GET_CLASS(obj_id)->obj_type_name,
+                  nmp_object_to_string(obj_id, NMP_OBJECT_TO_STRING_ID, sbuf1, sizeof(sbuf1)),
+                  nm_strerror(nle),
+                  -nle);
+            NM_SET_OUT(out_extack_msg, g_steal_pointer(&extack_msg));
+            return -NME_PL_NETLINK;
+        }
 
-    delayed_action_handle_all(platform);
+        delayed_action_handle_all(platform);
 
-    nm_assert(seq_result);
+        nm_assert(seq_result != WAIT_FOR_NL_RESPONSE_RESULT_UNKNOWN);
 
-    _NMLOG((seq_result == WAIT_FOR_NL_RESPONSE_RESULT_RESPONSE_OK
-            || (suppress_netlink_failure && seq_result < 0))
-               ? LOGL_DEBUG
-               : LOGL_WARN,
-           "do-add-%s[%s]: %s",
-           NMP_OBJECT_GET_CLASS(obj_id)->obj_type_name,
-           nmp_object_to_string(obj_id, NMP_OBJECT_TO_STRING_ID, sbuf1, sizeof(sbuf1)),
-           wait_for_nl_response_to_string(seq_result, errmsg, s_buf, sizeof(s_buf)));
+        _NMLOG((seq_result == WAIT_FOR_NL_RESPONSE_RESULT_RESPONSE_OK
+                || (suppress_netlink_failure && seq_result < 0))
+                   ? LOGL_DEBUG
+                   : LOGL_WARN,
+               "do-add-%s[%s]: %s",
+               NMP_OBJECT_GET_CLASS(obj_id)->obj_type_name,
+               nmp_object_to_string(obj_id, NMP_OBJECT_TO_STRING_ID, sbuf1, sizeof(sbuf1)),
+               wait_for_nl_response_to_string(seq_result, extack_msg, s_buf, sizeof(s_buf)));
+
+    } while (seq_result == WAIT_FOR_NL_RESPONSE_RESULT_FAILED_RESYNC
+             && ++try_count < RESYNC_RETRIES);
 
     if (NMP_OBJECT_GET_TYPE(obj_id) == NMP_OBJECT_TYPE_IP6_ADDRESS) {
         /* In rare cases, the object is not yet ready as we received the ACK from
@@ -8102,6 +8334,7 @@ do_add_addrroute(NMPlatform      *platform,
             do_request_one_type_by_needle_object(platform, obj_id);
     }
 
+    NM_SET_OUT(out_extack_msg, g_steal_pointer(&extack_msg));
     return wait_for_nl_response_to_nmerr(seq_result);
 }
 
@@ -8109,54 +8342,60 @@ static gboolean
 do_delete_object(NMPlatform *platform, const NMPObject *obj_id, struct nl_msg *nlmsg)
 {
     char                    sbuf1[NM_UTILS_TO_STRING_BUFFER_SIZE];
-    WaitForNlResponseResult seq_result = WAIT_FOR_NL_RESPONSE_RESULT_UNKNOWN;
-    gs_free char           *errmsg     = NULL;
+    WaitForNlResponseResult seq_result;
+    gs_free char           *extack_msg = NULL;
     int                     nle;
     char                    s_buf[256];
     gboolean                success;
     const char             *log_detail = "";
+    int                     try_count  = 0;
 
     event_handler_read_netlink(platform, NMP_NETLINK_ROUTE, FALSE);
 
-    nle = _netlink_send_nlmsg_rtnl(platform, nlmsg, &seq_result, &errmsg);
-    if (nle < 0) {
-        _LOGE("do-delete-%s[%s]: failure sending netlink request \"%s\" (%d)",
-              NMP_OBJECT_GET_CLASS(obj_id)->obj_type_name,
-              nmp_object_to_string(obj_id, NMP_OBJECT_TO_STRING_ID, sbuf1, sizeof(sbuf1)),
-              nm_strerror(nle),
-              -nle);
-        return FALSE;
-    }
+    do {
+        seq_result = WAIT_FOR_NL_RESPONSE_RESULT_UNKNOWN;
+        nle        = _netlink_send_nlmsg_rtnl(platform, nlmsg, &seq_result, &extack_msg);
+        if (nle < 0) {
+            _LOGE("do-delete-%s[%s]: failure sending netlink request \"%s\" (%d)",
+                  NMP_OBJECT_GET_CLASS(obj_id)->obj_type_name,
+                  nmp_object_to_string(obj_id, NMP_OBJECT_TO_STRING_ID, sbuf1, sizeof(sbuf1)),
+                  nm_strerror(nle),
+                  -nle);
+            return FALSE;
+        }
 
-    delayed_action_handle_all(platform);
+        delayed_action_handle_all(platform);
 
-    nm_assert(seq_result);
+        nm_assert(seq_result != WAIT_FOR_NL_RESPONSE_RESULT_UNKNOWN);
 
-    success = TRUE;
-    if (seq_result == WAIT_FOR_NL_RESPONSE_RESULT_RESPONSE_OK) {
-        /* ok */
-    } else if (NM_IN_SET(-((int) seq_result), ESRCH, ENOENT))
-        log_detail = ", meaning the object was already removed";
-    else if (NM_IN_SET(-((int) seq_result), ENXIO)
-             && NM_IN_SET(NMP_OBJECT_GET_TYPE(obj_id), NMP_OBJECT_TYPE_IP6_ADDRESS)) {
-        /* On RHEL7 kernel, deleting a non existing address fails with ENXIO */
-        log_detail = ", meaning the address was already removed";
-    } else if (NM_IN_SET(-((int) seq_result), ENODEV)) {
-        log_detail = ", meaning the device was already removed";
-    } else if (NM_IN_SET(-((int) seq_result), EADDRNOTAVAIL)
-               && NM_IN_SET(NMP_OBJECT_GET_TYPE(obj_id),
-                            NMP_OBJECT_TYPE_IP4_ADDRESS,
-                            NMP_OBJECT_TYPE_IP6_ADDRESS))
-        log_detail = ", meaning the address was already removed";
-    else
-        success = FALSE;
+        success = TRUE;
+        if (seq_result == WAIT_FOR_NL_RESPONSE_RESULT_RESPONSE_OK) {
+            /* ok */
+        } else if (NM_IN_SET(-((int) seq_result), ESRCH, ENOENT))
+            log_detail = ", meaning the object was already removed";
+        else if (NM_IN_SET(-((int) seq_result), ENXIO)
+                 && NM_IN_SET(NMP_OBJECT_GET_TYPE(obj_id), NMP_OBJECT_TYPE_IP6_ADDRESS)) {
+            /* On RHEL7 kernel, deleting a non existing address fails with ENXIO */
+            log_detail = ", meaning the address was already removed";
+        } else if (NM_IN_SET(-((int) seq_result), ENODEV)) {
+            log_detail = ", meaning the device was already removed";
+        } else if (NM_IN_SET(-((int) seq_result), EADDRNOTAVAIL)
+                   && NM_IN_SET(NMP_OBJECT_GET_TYPE(obj_id),
+                                NMP_OBJECT_TYPE_IP4_ADDRESS,
+                                NMP_OBJECT_TYPE_IP6_ADDRESS))
+            log_detail = ", meaning the address was already removed";
+        else
+            success = FALSE;
 
-    _NMLOG(success ? LOGL_DEBUG : LOGL_WARN,
-           "do-delete-%s[%s]: %s%s",
-           NMP_OBJECT_GET_CLASS(obj_id)->obj_type_name,
-           nmp_object_to_string(obj_id, NMP_OBJECT_TO_STRING_ID, sbuf1, sizeof(sbuf1)),
-           wait_for_nl_response_to_string(seq_result, errmsg, s_buf, sizeof(s_buf)),
-           log_detail);
+        _NMLOG(success ? LOGL_DEBUG : LOGL_WARN,
+               "do-delete-%s[%s]: %s%s",
+               NMP_OBJECT_GET_CLASS(obj_id)->obj_type_name,
+               nmp_object_to_string(obj_id, NMP_OBJECT_TO_STRING_ID, sbuf1, sizeof(sbuf1)),
+               wait_for_nl_response_to_string(seq_result, extack_msg, s_buf, sizeof(s_buf)),
+               log_detail);
+
+    } while (seq_result == WAIT_FOR_NL_RESPONSE_RESULT_FAILED_RESYNC
+             && ++try_count < RESYNC_RETRIES);
 
     if (NM_IN_SET(NMP_OBJECT_GET_TYPE(obj_id),
                   NMP_OBJECT_TYPE_IP6_ADDRESS,
@@ -8185,14 +8424,15 @@ do_change_link(NMPlatform           *platform,
 {
     nm_auto_pop_netns NMPNetns *netns = NULL;
     int                         nle;
-    WaitForNlResponseResult     seq_result = WAIT_FOR_NL_RESPONSE_RESULT_UNKNOWN;
-    gs_free char               *errmsg     = NULL;
+    WaitForNlResponseResult     seq_result;
+    gs_free char               *extack_msg = NULL;
     char                        s_buf[256];
     int                         result;
     NMLogLevel                  log_level;
     const char                 *log_detail;
     gs_free char               *log_detail_free = NULL;
     const NMPObject            *obj_cache;
+    int                         try_count = 0;
 
     if (!nm_platform_netns_push(platform, &netns)) {
         log_level  = LOGL_ERR;
@@ -8202,12 +8442,13 @@ do_change_link(NMPlatform           *platform,
     }
 
 retry:
+    seq_result = WAIT_FOR_NL_RESPONSE_RESULT_UNKNOWN;
     result     = -NME_UNSPEC;
     log_level  = LOGL_WARN;
     log_detail = "";
     nm_clear_g_free(&log_detail_free);
 
-    nle = _netlink_send_nlmsg_rtnl(platform, nlmsg, &seq_result, &errmsg);
+    nle = _netlink_send_nlmsg_rtnl(platform, nlmsg, &seq_result, &extack_msg);
     if (nle < 0) {
         log_level = LOGL_ERR;
         log_detail_free =
@@ -8222,7 +8463,7 @@ retry:
 
     delayed_action_handle_all(platform);
 
-    nm_assert(seq_result);
+    nm_assert(seq_result != WAIT_FOR_NL_RESPONSE_RESULT_UNKNOWN);
 
     if (NM_IN_SET(seq_result, WAIT_FOR_NL_RESPONSE_RESULT_RESPONSE_OK, -EEXIST, -EADDRINUSE)) {
         log_level = LOGL_DEBUG;
@@ -8267,17 +8508,17 @@ out:
     _NMLOG(log_level,
            "do-change-link[%d]: %s%s",
            ifindex,
-           wait_for_nl_response_to_string(seq_result, errmsg, s_buf, sizeof(s_buf)),
+           wait_for_nl_response_to_string(seq_result, extack_msg, s_buf, sizeof(s_buf)),
            log_detail);
 
-    if (result == -EAGAIN)
+    if (result == -EAGAIN && ++try_count < RESYNC_RETRIES)
         goto retry;
 
     return result;
 }
 
 static int
-link_change(NMPlatform *platform, NMLinkType type, int ifindex, gconstpointer extra_data)
+link_change_extra(NMPlatform *platform, NMLinkType type, int ifindex, gconstpointer extra_data)
 {
     nm_auto_nlmsg struct nl_msg *nlmsg = NULL;
 
@@ -8352,6 +8593,82 @@ link_delete(NMPlatform *platform, int ifindex)
 
     nmp_object_stackinit_id_link(&obj_id, ifindex);
     return do_delete_object(platform, &obj_id, nlmsg);
+}
+
+static gboolean
+link_change(NMPlatform                   *platform,
+            int                           ifindex,
+            NMPlatformLinkProps          *props,
+            NMPortKind                    port_kind,
+            const NMPlatformLinkPortData *port_data,
+            NMPlatformLinkChangeFlags     flags)
+{
+    nm_auto_nlmsg struct nl_msg *nlmsg = NULL;
+    struct nlattr               *nl_info;
+    struct nlattr               *nl_port_data;
+
+    nlmsg = _nl_msg_new_link(RTM_NEWLINK, 0, ifindex, NULL);
+    if (!nlmsg)
+        return FALSE;
+
+    if (flags & NM_PLATFORM_LINK_CHANGE_TX_QUEUE_LENGTH)
+        NLA_PUT_U32(nlmsg, IFLA_TXQLEN, props->tx_queue_length);
+    if (flags & NM_PLATFORM_LINK_CHANGE_GSO_MAX_SIZE)
+        NLA_PUT_U32(nlmsg, IFLA_GSO_MAX_SIZE, props->gso_max_size);
+    if (flags & NM_PLATFORM_LINK_CHANGE_GSO_MAX_SEGMENTS)
+        NLA_PUT_U32(nlmsg, IFLA_GSO_MAX_SEGS, props->gso_max_segments);
+    if (flags & NM_PLATFORM_LINK_CHANGE_GRO_MAX_SIZE)
+        NLA_PUT_U32(nlmsg, IFLA_GRO_MAX_SIZE, props->gro_max_size);
+
+    switch (port_kind) {
+    case NM_PORT_KIND_BOND:
+
+        nm_assert(port_data);
+
+        if (!(nl_info = nla_nest_start(nlmsg, IFLA_LINKINFO)))
+            goto nla_put_failure;
+
+        nm_assert(nm_streq0("bond", nm_link_type_to_rtnl_type_string(NM_LINK_TYPE_BOND)));
+        NLA_PUT_STRING(nlmsg, IFLA_INFO_SLAVE_KIND, "bond");
+
+        if (!(nl_port_data = nla_nest_start(nlmsg, IFLA_INFO_SLAVE_DATA)))
+            goto nla_put_failure;
+
+        NLA_PUT_U16(nlmsg, IFLA_BOND_SLAVE_QUEUE_ID, port_data->bond.queue_id);
+
+        if (port_data->bond.prio_has)
+            NLA_PUT_S32(nlmsg, IFLA_BOND_SLAVE_PRIO, port_data->bond.prio);
+
+        nla_nest_end(nlmsg, nl_port_data);
+        nla_nest_end(nlmsg, nl_info);
+        break;
+    case NM_PORT_KIND_BRIDGE:
+
+        nm_assert(port_data);
+
+        if (!(nl_info = nla_nest_start(nlmsg, IFLA_LINKINFO)))
+            goto nla_put_failure;
+
+        nm_assert(nm_streq0("bridge", nm_link_type_to_rtnl_type_string(NM_LINK_TYPE_BRIDGE)));
+        NLA_PUT_STRING(nlmsg, IFLA_INFO_SLAVE_KIND, "bridge");
+
+        if (!(nl_port_data = nla_nest_start(nlmsg, IFLA_INFO_SLAVE_DATA)))
+            goto nla_put_failure;
+
+        NLA_PUT_U32(nlmsg, IFLA_BRPORT_COST, port_data->bridge.path_cost);
+        NLA_PUT_U16(nlmsg, IFLA_BRPORT_PRIORITY, port_data->bridge.priority);
+        NLA_PUT_U8(nlmsg, IFLA_BRPORT_MODE, port_data->bridge.hairpin);
+
+        nla_nest_end(nlmsg, nl_port_data);
+        nla_nest_end(nlmsg, nl_info);
+        break;
+    case NM_PORT_KIND_NONE:
+        break;
+    }
+
+    return do_change_link(platform, CHANGE_LINK_TYPE_UNSPEC, ifindex, nlmsg, NULL) == 0;
+nla_put_failure:
+    g_return_val_if_reached(FALSE);
 }
 
 static gboolean
@@ -8481,10 +8798,10 @@ link_supports_sriov(NMPlatform *platform, int ifindex)
     if (dirfd < 0)
         return FALSE;
 
-    num =
-        nm_platform_sysctl_get_int32(platform,
-                                     NMP_SYSCTL_PATHID_NETDIR(dirfd, ifname, "device/sriov_numvfs"),
-                                     -1);
+    num = nm_platform_sysctl_get_int32(
+        platform,
+        NMP_SYSCTL_PATHID_NETDIR_A(dirfd, ifname, "device/sriov_numvfs"),
+        -1);
 
     return num != -1;
 }
@@ -8565,141 +8882,394 @@ nla_put_failure:
     g_return_val_if_reached(FALSE);
 }
 
-static void
-sriov_idle_cb(gpointer user_data, GCancellable *cancellable)
+static gint64
+sriov_read_sysctl_uint(NMPlatform *platform,
+                       int         dirfd,
+                       const char *ifname,
+                       const char *dev_file,
+                       GError    **error)
 {
-    gs_unref_object NMPlatform *platform        = NULL;
-    gs_free_error GError       *cancelled_error = NULL;
-    gs_free_error GError       *error           = NULL;
-    NMPlatformAsyncCallback     callback;
-    gpointer                    callback_data;
+    const char *path;
+    gint64      val;
+
+    nm_assert(NM_STRLEN("device/%s") + strlen(dev_file));
+
+    path = nm_sprintf_bufa(256, "device/%s", dev_file);
+    val  = nm_platform_sysctl_get_int_checked(platform,
+                                             NMP_SYSCTL_PATHID_NETDIR_UNSAFE_A(dirfd, ifname, path),
+                                             10,
+                                             0,
+                                             G_MAXUINT,
+                                             -1);
+
+    if (val < 0) {
+        g_set_error(error,
+                    NM_UTILS_ERROR,
+                    NM_UTILS_ERROR_UNKNOWN,
+                    "couldn't read %s: %s",
+                    dev_file,
+                    nm_strerror_native(errno));
+        return -errno;
+    }
+
+    return val;
+}
+
+static gboolean
+sriov_set_autoprobe(NMPlatform  *platform,
+                    int          dirfd,
+                    const char  *ifname,
+                    NMOptionBool autoprobe,
+                    GError     **error)
+{
+    int current_autoprobe =
+        (int) sriov_read_sysctl_uint(platform, dirfd, ifname, "sriov_drivers_autoprobe", error);
+
+    if (current_autoprobe == -ENOENT) {
+        /* older kernel versions don't have this sysctl. Assume the value is "1". */
+        current_autoprobe = 1;
+        g_clear_error(error);
+    }
+
+    if (current_autoprobe < 0)
+        return FALSE;
+
+    if (autoprobe != NM_OPTION_BOOL_DEFAULT && current_autoprobe != autoprobe) {
+        if (!nm_platform_sysctl_set(
+                platform,
+                NMP_SYSCTL_PATHID_NETDIR_A(dirfd, ifname, "device/sriov_drivers_autoprobe"),
+                autoprobe == 1 ? "1" : "0")) {
+            g_set_error(error,
+                        NM_UTILS_ERROR,
+                        NM_UTILS_ERROR_UNKNOWN,
+                        "couldn't set SR-IOV drivers-autoprobe to %d: %s",
+                        (int) autoprobe,
+                        nm_strerror_native(errno));
+            return FALSE;
+        }
+    }
+
+    return TRUE;
+}
+
+#define _SRIOV_ASYNC_MAX_STEPS 4
+
+typedef struct _SriovAsyncState {
+    NMPlatform           *platform;
+    int                   ifindex;
+    NMPlatformSriovParams sriov_params;
+    void (*steps[_SRIOV_ASYNC_MAX_STEPS])(struct _SriovAsyncState *);
+    int                     current_step;
+    NMPlatformAsyncCallback callback;
+    gpointer                data;
+    GCancellable           *cancellable;
+} SriovAsyncState;
+
+static void
+sriov_async_invoke_callback(gpointer user_data, GCancellable *cancellable)
+{
+    gs_free_error GError   *cancelled_error = NULL;
+    gs_free_error GError   *error           = NULL;
+    NMPlatformAsyncCallback callback;
+    gpointer                callback_data;
 
     g_cancellable_set_error_if_cancelled(cancellable, &cancelled_error);
-    nm_utils_user_data_unpack(user_data, &platform, &error, &callback, &callback_data);
+    nm_utils_user_data_unpack(user_data, &error, &callback, &callback_data);
     callback(cancelled_error ?: error, callback_data);
 }
 
 static void
+sriov_async_finish_err(SriovAsyncState *async_state, GError *error)
+{
+    NMPlatform *platform = async_state->platform;
+
+    _LOGD("finished configuring SR-IOV, error: %s", error ? error->message : "none");
+
+    if (async_state->callback) {
+        /* nm_platform_link_set_sriov_params() promises to always call the callback,
+         * and always asynchronously. We might have reached here without doing
+         * any asynchronous task, so invoke the user's callback in the idle task
+         * to make it asynchronous. Actually, let's make it simple and do it
+         * always in this way, even if asynchronous tasks were made.
+         */
+        gpointer packed = nm_utils_user_data_pack(g_steal_pointer(&error),
+                                                  async_state->callback,
+                                                  async_state->data);
+        nm_utils_invoke_on_idle(async_state->cancellable, sriov_async_invoke_callback, packed);
+    }
+
+    g_object_unref(async_state->platform);
+    g_object_unref(async_state->cancellable);
+    g_free(async_state);
+    g_free(error);
+}
+
+static void
+sriov_async_call_next_step(SriovAsyncState *async_state)
+{
+    if (g_cancellable_is_cancelled(async_state->cancellable)) {
+        sriov_async_finish_err(async_state, NULL); /* The error will be set later */
+        return;
+    }
+
+    async_state->current_step++;
+
+    nm_assert(async_state->current_step >= 0);
+    nm_assert(async_state->current_step < _SRIOV_ASYNC_MAX_STEPS);
+    nm_assert(async_state->steps[async_state->current_step] != NULL);
+
+    async_state->steps[async_state->current_step](async_state);
+}
+
+static void
+sriov_async_sysctl_done_cb(GError *error, gpointer data)
+{
+    SriovAsyncState *async_state = data;
+
+    if (error)
+        sriov_async_finish_err(async_state, g_error_copy(error));
+    else
+        sriov_async_call_next_step(async_state);
+}
+
+static void
+sriov_async_set_num_vfs(SriovAsyncState *async_state, const char *val)
+{
+    NMPlatform           *platform = async_state->platform;
+    const char           *values[] = {val, NULL};
+    nm_auto_close int     dirfd    = -1;
+    char                  ifname[IFNAMSIZ];
+    gs_free_error GError *error = NULL;
+
+    dirfd = nm_platform_sysctl_open_netdir(platform, async_state->ifindex, ifname);
+    if (!dirfd) {
+        g_set_error(&error,
+                    NM_UTILS_ERROR,
+                    NM_UTILS_ERROR_UNKNOWN,
+                    "couldn't open netdir for device with ifindex %d",
+                    async_state->ifindex);
+        sriov_async_finish_err(async_state, g_steal_pointer(&error));
+        return;
+    }
+
+    sysctl_set_async(platform,
+                     NMP_SYSCTL_PATHID_NETDIR_A(dirfd, ifname, "device/sriov_numvfs"),
+                     values,
+                     sriov_async_sysctl_done_cb,
+                     async_state,
+                     async_state->cancellable);
+}
+
+static void
+sriov_async_step1_destroy_vfs(SriovAsyncState *async_state)
+{
+    NMPlatform *platform = async_state->platform;
+
+    _LOGD("destroying VFs before configuring SR-IOV");
+
+    sriov_async_set_num_vfs(async_state, "0");
+}
+
+static void
+sriov_async_step2_set_eswitch_mode(SriovAsyncState *async_state)
+{
+    NMPlatform             *platform       = async_state->platform;
+    NMLinuxPlatformPrivate *priv           = NM_LINUX_PLATFORM_GET_PRIVATE(platform);
+    gs_free NMDevlink      *devlink        = NULL;
+    gs_free_error GError   *error          = NULL;
+    NMDevlinkEswitchParams  eswitch_params = {
+         .mode        = async_state->sriov_params.eswitch_mode,
+         .inline_mode = async_state->sriov_params.eswitch_inline_mode,
+         .encap_mode  = async_state->sriov_params.eswitch_encap_mode,
+    };
+
+    _LOGD("setting eswitch params (mode=%d, inline-mode=%d, encap-mode=%d)",
+          (int) eswitch_params.mode,
+          (int) eswitch_params.inline_mode,
+          (int) eswitch_params.encap_mode);
+
+    /* We set eswitch mode as a sriov_async step because it's in the middle of
+     * other steps that are async. However, this step itself is synchronous. */
+    devlink = nm_devlink_new(platform, priv->sk_genl_sync, async_state->ifindex);
+    if (!nm_devlink_set_eswitch_params(devlink, eswitch_params, &error)) {
+        sriov_async_finish_err(async_state, g_steal_pointer(&error));
+        return;
+    }
+
+    sriov_async_call_next_step(async_state);
+}
+
+static void
+sriov_async_step3_create_vfs(SriovAsyncState *async_state)
+{
+    NMPlatform *platform = async_state->platform;
+    const char *val      = nm_sprintf_bufa(32, "%u", async_state->sriov_params.num_vfs);
+
+    _LOGD("setting sriov_numvfs to %u", async_state->sriov_params.num_vfs);
+
+    sriov_async_set_num_vfs(async_state, val);
+}
+
+static void
+sriov_async_step_finish_ok(SriovAsyncState *async_state)
+{
+    sriov_async_finish_err(async_state, NULL);
+}
+
+static int
+sriov_eswitch_get_needs_change(SriovAsyncState *async_state,
+                               gboolean        *out_needs_change,
+                               GError         **error)
+{
+    NMPlatform               *platform    = async_state->platform;
+    NMLinuxPlatformPrivate   *priv        = NM_LINUX_PLATFORM_GET_PRIVATE(platform);
+    _NMSriovEswitchMode       mode        = async_state->sriov_params.eswitch_mode;
+    _NMSriovEswitchInlineMode inline_mode = async_state->sriov_params.eswitch_inline_mode;
+    _NMSriovEswitchEncapMode  encap_mode  = async_state->sriov_params.eswitch_encap_mode;
+    NMDevlinkEswitchParams    current_params;
+    gs_free NMDevlink        *devlink = NULL;
+
+    nm_assert(out_needs_change);
+
+    if (mode == _NM_SRIOV_ESWITCH_MODE_PRESERVE
+        && inline_mode == _NM_SRIOV_ESWITCH_INLINE_MODE_PRESERVE
+        && encap_mode == _NM_SRIOV_ESWITCH_ENCAP_MODE_PRESERVE) {
+        *out_needs_change = FALSE;
+        return 0;
+    }
+
+    devlink = nm_devlink_new(platform, priv->sk_genl_sync, async_state->ifindex);
+
+    if (!nm_devlink_get_eswitch_params(devlink, &current_params, error))
+        return -1;
+
+    *out_needs_change = (mode != _NM_SRIOV_ESWITCH_MODE_PRESERVE && mode != current_params.mode)
+                        || (inline_mode != _NM_SRIOV_ESWITCH_INLINE_MODE_PRESERVE
+                            && inline_mode != current_params.inline_mode)
+                        || (encap_mode != _NM_SRIOV_ESWITCH_ENCAP_MODE_PRESERVE
+                            && encap_mode != current_params.encap_mode);
+    return 0;
+}
+
+/*
+ * Take special care when setting new values:
+ *  - don't touch anything if the right values are already set
+ *  - to change the number of VFs, eswitch mode or autoprobe we need to destroy existing VFs
+ *  - the autoprobe setting is irrelevant when numvfs is zero
+ */
+static void
 link_set_sriov_params_async(NMPlatform             *platform,
                             int                     ifindex,
-                            guint                   num_vfs,
-                            NMOptionBool            autoprobe,
+                            NMPlatformSriovParams   sriov_params,
                             NMPlatformAsyncCallback callback,
                             gpointer                data,
                             GCancellable           *cancellable)
 {
+    SriovAsyncState            *async_state;
     nm_auto_pop_netns NMPNetns *netns = NULL;
     gs_free_error GError       *error = NULL;
     nm_auto_close int           dirfd = -1;
-    int                         current_autoprobe;
-    guint                       i, total;
-    gint64                      current_num;
     char                        ifname[IFNAMSIZ];
-    gpointer                    packed;
-    const char                 *values[3];
-    char                        buf[64];
+    int                         max_vfs;
+    int                         current_num_vfs;
+    gboolean                    need_change_eswitch_params;
+    gboolean                    need_change_vfs;
+    gboolean                    need_destroy_vfs;
+    gboolean                    need_create_vfs;
+    int                         i;
 
     g_return_if_fail(callback || !data);
     g_return_if_fail(cancellable);
+
+    async_state               = g_new0(SriovAsyncState, 1);
+    async_state->platform     = g_object_ref(platform);
+    async_state->ifindex      = ifindex;
+    async_state->sriov_params = sriov_params;
+    async_state->current_step = -1;
+    async_state->callback     = callback;
+    async_state->data         = data;
+    async_state->cancellable  = g_object_ref(cancellable);
 
     if (!nm_platform_netns_push(platform, &netns)) {
         g_set_error_literal(&error,
                             NM_UTILS_ERROR,
                             NM_UTILS_ERROR_UNKNOWN,
-                            "couldn't change namespace");
-        goto out_idle;
+                            "couldn't change network namespace");
+        sriov_async_finish_err(async_state, g_steal_pointer(&error));
+        return;
     }
 
     dirfd = nm_platform_sysctl_open_netdir(platform, ifindex, ifname);
     if (!dirfd) {
-        g_set_error_literal(&error, NM_UTILS_ERROR, NM_UTILS_ERROR_UNKNOWN, "couldn't open netdir");
-        goto out_idle;
-    }
-
-    total = nm_platform_sysctl_get_int_checked(
-        platform,
-        NMP_SYSCTL_PATHID_NETDIR(dirfd, ifname, "device/sriov_totalvfs"),
-        10,
-        0,
-        G_MAXUINT,
-        0);
-    if (!errno && num_vfs > total) {
-        _LOGW("link: %d only supports %u VFs (requested %u)", ifindex, total, num_vfs);
-        num_vfs = total;
-    }
-
-    /*
-     * Take special care when setting new values:
-     *  - don't touch anything if the right values are already set
-     *  - to change the number of VFs or autoprobe we need to destroy existing VFs
-     *  - the autoprobe setting is irrelevant when numvfs is zero
-     */
-    current_num = nm_platform_sysctl_get_int_checked(
-        platform,
-        NMP_SYSCTL_PATHID_NETDIR(dirfd, ifname, "device/sriov_numvfs"),
-        10,
-        0,
-        G_MAXUINT,
-        -1);
-    current_autoprobe = nm_platform_sysctl_get_int_checked(
-        platform,
-        NMP_SYSCTL_PATHID_NETDIR(dirfd, ifname, "device/sriov_drivers_autoprobe"),
-        10,
-        0,
-        1,
-        -1);
-
-    if (current_autoprobe == -1 && errno == ENOENT) {
-        /* older kernel versions don't have this sysctl. Assume the value is
-         * "1". */
-        current_autoprobe = 1;
-    }
-
-    if (current_num == num_vfs
-        && (autoprobe == NM_OPTION_BOOL_DEFAULT || current_autoprobe == autoprobe))
-        goto out_idle;
-
-    if (NM_IN_SET(autoprobe, NM_OPTION_BOOL_TRUE, NM_OPTION_BOOL_FALSE)
-        && current_autoprobe != autoprobe
-        && !nm_platform_sysctl_set(
-            platform,
-            NMP_SYSCTL_PATHID_NETDIR(dirfd, ifname, "device/sriov_drivers_autoprobe"),
-            nm_sprintf_buf(buf, "%d", (int) autoprobe))) {
         g_set_error(&error,
                     NM_UTILS_ERROR,
                     NM_UTILS_ERROR_UNKNOWN,
-                    "couldn't set SR-IOV drivers-autoprobe to %d: %s",
-                    (int) autoprobe,
-                    nm_strerror_native(errno));
-        goto out_idle;
+                    "couldn't open netdir for device with ifindex %d",
+                    ifindex);
+        sriov_async_finish_err(async_state, g_steal_pointer(&error));
+        return;
     }
 
-    if (current_num == 0 && num_vfs == 0)
-        goto out_idle;
+    current_num_vfs = sriov_read_sysctl_uint(platform, dirfd, ifname, "sriov_numvfs", &error);
+    if (current_num_vfs < 0) {
+        sriov_async_finish_err(async_state, g_steal_pointer(&error));
+        return;
+    }
+
+    max_vfs = sriov_read_sysctl_uint(platform, dirfd, ifname, "sriov_totalvfs", &error);
+    if (max_vfs < 0) {
+        _LOGD("link: can't read max VFs (%s)", error->message);
+        g_clear_error(&error);
+        max_vfs = sriov_params.num_vfs; /* Try to create all */
+    }
+
+    if (sriov_params.num_vfs > max_vfs) {
+        _LOGW("link: device %d only supports %u VFs (requested %u)",
+              ifindex,
+              max_vfs,
+              sriov_params.num_vfs);
+        _LOGW("link: reducing num_vfs to %u for device %d", max_vfs, ifindex);
+        sriov_params.num_vfs              = max_vfs;
+        async_state->sriov_params.num_vfs = max_vfs;
+    }
+
+    /* Setting autoprobe goes first, we can do it synchronously */
+    if (sriov_params.num_vfs > 0
+        && !sriov_set_autoprobe(platform, dirfd, ifname, sriov_params.autoprobe, &error)) {
+        sriov_async_finish_err(async_state, g_steal_pointer(&error));
+        return;
+    }
+
+    /* Decide what actions we must do. Note that we might need to destroy the VFs even
+     * if num_vfs == current_num_vfs, for example to change the eswitch mode. Because of
+     * that, we might need to create VFs even if num_vfs == current_num_vfs.
+     * Steps in order (unnecessary steps are skipped):
+     *   1. Destroy VFs
+     *   2. Set eswitch mode
+     *   3. Create VFs
+     *   4. Invoke caller's callback
+     */
+    if (sriov_eswitch_get_needs_change(async_state, &need_change_eswitch_params, &error) < 0) {
+        sriov_async_finish_err(async_state, g_steal_pointer(&error));
+        return;
+    }
+    need_change_vfs  = sriov_params.num_vfs != current_num_vfs;
+    need_destroy_vfs = current_num_vfs > 0 && (need_change_eswitch_params || need_change_vfs);
+    need_create_vfs  = (current_num_vfs == 0 || need_destroy_vfs) && sriov_params.num_vfs > 0;
 
     i = 0;
-    if (current_num != 0)
-        values[i++] = "0";
-    if (num_vfs != 0)
-        values[i++] = nm_sprintf_bufa(32, "%u", num_vfs);
-    values[i++] = NULL;
+    if (need_destroy_vfs)
+        async_state->steps[i++] = sriov_async_step1_destroy_vfs;
+    if (need_change_eswitch_params)
+        async_state->steps[i++] = sriov_async_step2_set_eswitch_mode;
+    if (need_create_vfs)
+        async_state->steps[i++] = sriov_async_step3_create_vfs;
 
-    sysctl_set_async(platform,
-                     NMP_SYSCTL_PATHID_NETDIR(dirfd, ifname, "device/sriov_numvfs"),
-                     values,
-                     callback,
-                     data,
-                     cancellable);
-    return;
+    nm_assert(i < _SRIOV_ASYNC_MAX_STEPS);
 
-out_idle:
-    if (callback) {
-        packed = nm_utils_user_data_pack(g_object_ref(platform),
-                                         g_steal_pointer(&error),
-                                         callback,
-                                         data);
-        nm_utils_invoke_on_idle(cancellable, sriov_idle_cb, packed);
-    }
+    async_state->steps[i] = sriov_async_step_finish_ok;
+
+    sriov_async_call_next_step(async_state);
 }
 
 static gboolean
@@ -8871,6 +9441,47 @@ nla_put_failure:
     g_return_val_if_reached(FALSE);
 }
 
+static gboolean
+link_set_bridge_info(NMPlatform                            *platform,
+                     int                                    ifindex,
+                     const NMPlatformLinkSetBridgeInfoData *bridge_info)
+{
+    nm_auto_nlmsg struct nl_msg *nlmsg = NULL;
+    struct nlattr               *info;
+    struct nlattr               *data;
+    const char                  *kind;
+
+    nlmsg = _nl_msg_new_link(RTM_NEWLINK, 0, ifindex, NULL);
+    if (!nlmsg)
+        g_return_val_if_reached(-NME_BUG);
+
+    if (!(info = nla_nest_start(nlmsg, IFLA_LINKINFO)))
+        goto nla_put_failure;
+
+    kind = nm_link_type_to_rtnl_type_string(NM_LINK_TYPE_BRIDGE);
+    if (!kind)
+        goto nla_put_failure;
+
+    NLA_PUT_STRING(nlmsg, IFLA_INFO_KIND, kind);
+
+    if (!(data = nla_nest_start(nlmsg, IFLA_INFO_DATA)))
+        goto nla_put_failure;
+
+    if (bridge_info->vlan_filtering_has)
+        NLA_PUT_U8(nlmsg, IFLA_BR_VLAN_FILTERING, bridge_info->vlan_filtering_val);
+
+    if (bridge_info->vlan_default_pvid_has)
+        NLA_PUT_U16(nlmsg, IFLA_BR_VLAN_DEFAULT_PVID, bridge_info->vlan_default_pvid_val);
+
+    nla_nest_end(nlmsg, data);
+    nla_nest_end(nlmsg, info);
+
+    return (do_change_link(platform, CHANGE_LINK_TYPE_UNSPEC, ifindex, nlmsg, NULL) >= 0);
+
+nla_put_failure:
+    g_return_val_if_reached(FALSE);
+}
+
 static char *
 link_get_physical_port_id(NMPlatform *platform, int ifindex)
 {
@@ -8880,7 +9491,7 @@ link_get_physical_port_id(NMPlatform *platform, int ifindex)
     dirfd = nm_platform_sysctl_open_netdir(platform, ifindex, ifname_verified);
     if (dirfd < 0)
         return NULL;
-    return sysctl_get(platform, NMP_SYSCTL_PATHID_NETDIR(dirfd, ifname_verified, "phys_port_id"));
+    return sysctl_get(platform, NMP_SYSCTL_PATHID_NETDIR_A(dirfd, ifname_verified, "phys_port_id"));
 }
 
 static guint
@@ -8894,7 +9505,7 @@ link_get_dev_id(NMPlatform *platform, int ifindex)
         return 0;
     return nm_platform_sysctl_get_int_checked(
         platform,
-        NMP_SYSCTL_PATHID_NETDIR(dirfd, ifname_verified, "dev_id"),
+        NMP_SYSCTL_PATHID_NETDIR_A(dirfd, ifname_verified, "dev_id"),
         16,
         0,
         G_MAXUINT16,
@@ -9144,12 +9755,12 @@ _infiniband_partition_action(NMPlatform            *platform,
     if (action == INFINIBAND_ACTION_CREATE_CHILD)
         success =
             nm_platform_sysctl_set(platform,
-                                   NMP_SYSCTL_PATHID_NETDIR(dirfd, ifname_parent, "create_child"),
+                                   NMP_SYSCTL_PATHID_NETDIR_A(dirfd, ifname_parent, "create_child"),
                                    id);
     else
         success =
             nm_platform_sysctl_set(platform,
-                                   NMP_SYSCTL_PATHID_NETDIR(dirfd, ifname_parent, "delete_child"),
+                                   NMP_SYSCTL_PATHID_NETDIR_A(dirfd, ifname_parent, "delete_child"),
                                    id);
 
     if (!success) {
@@ -9158,7 +9769,7 @@ _infiniband_partition_action(NMPlatform            *platform,
         return FALSE;
     }
 
-    nmp_utils_new_infiniband_name(name, ifname_parent, p_key);
+    nm_net_devname_infiniband(name, ifname_parent, p_key);
     do_request_link(platform, 0, name);
 
     if (action == INFINIBAND_ACTION_DELETE_CHILD)
@@ -9291,11 +9902,11 @@ wifi_set_powersave(NMPlatform *platform, int ifindex, guint32 powersave)
 }
 
 static guint32
-wifi_find_frequency(NMPlatform *platform, int ifindex, const guint32 *freqs)
+wifi_find_frequency(NMPlatform *platform, int ifindex, const guint32 *freqs, gboolean ap)
 {
     WIFI_GET_WIFI_DATA_NETNS(wifi_data, platform, ifindex, 0);
 
-    return nm_wifi_utils_find_freq(wifi_data, freqs);
+    return nm_wifi_utils_find_freq(wifi_data, freqs, ap);
 }
 
 static void
@@ -9320,22 +9931,6 @@ wifi_set_wake_on_wlan(NMPlatform *platform, int ifindex, _NMSettingWirelessWakeO
     WIFI_GET_WIFI_DATA_NETNS(wifi_data, platform, ifindex, FALSE);
 
     return nm_wifi_utils_set_wake_on_wlan(wifi_data, wowl);
-}
-
-static gboolean
-wifi_get_csme_conn_info(NMPlatform *platform, int ifindex, NMPlatformCsmeConnInfo *out_conn_info)
-{
-    WIFI_GET_WIFI_DATA_NETNS(wifi_data, platform, ifindex, FALSE);
-
-    return nm_wifi_utils_get_csme_conn_info(wifi_data, out_conn_info);
-}
-
-static gboolean
-wifi_get_device_from_csme(NMPlatform *platform, int ifindex)
-{
-    WIFI_GET_WIFI_DATA_NETNS(wifi_data, platform, ifindex, FALSE);
-
-    return nm_wifi_utils_get_device_from_csme(wifi_data);
 }
 
 /*****************************************************************************/
@@ -9499,7 +10094,8 @@ ip4_address_add(NMPlatform *platform,
                 guint32     lifetime,
                 guint32     preferred,
                 guint32     flags,
-                const char *label)
+                const char *label,
+                char      **out_extack_msg)
 {
     NMPObject                    obj_id;
     nm_auto_nlmsg struct nl_msg *nlmsg = NULL;
@@ -9519,7 +10115,7 @@ ip4_address_add(NMPlatform *platform,
                                 label);
 
     nmp_object_stackinit_id_ip4_address(&obj_id, ifindex, addr, plen, peer_addr);
-    return (do_add_addrroute(platform, &obj_id, nlmsg, FALSE) >= 0);
+    return (do_add_addrroute(platform, &obj_id, nlmsg, FALSE, out_extack_msg) >= 0);
 }
 
 static gboolean
@@ -9530,7 +10126,8 @@ ip6_address_add(NMPlatform     *platform,
                 struct in6_addr peer_addr,
                 guint32         lifetime,
                 guint32         preferred,
-                guint32         flags)
+                guint32         flags,
+                char          **out_extack_msg)
 {
     NMPObject                    obj_id;
     nm_auto_nlmsg struct nl_msg *nlmsg = NULL;
@@ -9550,7 +10147,7 @@ ip6_address_add(NMPlatform     *platform,
                                 NULL);
 
     nmp_object_stackinit_id_ip6_address(&obj_id, ifindex, &addr);
-    return (do_add_addrroute(platform, &obj_id, nlmsg, FALSE) >= 0);
+    return (do_add_addrroute(platform, &obj_id, nlmsg, FALSE, out_extack_msg) >= 0);
 }
 
 static gboolean
@@ -9612,7 +10209,7 @@ ip6_address_delete(NMPlatform *platform, int ifindex, struct in6_addr addr, guin
 /*****************************************************************************/
 
 static int
-ip_route_add(NMPlatform *platform, NMPNlmFlags flags, NMPObject *obj_stack)
+ip_route_add(NMPlatform *platform, NMPNlmFlags flags, NMPObject *obj_stack, char **out_extack_msg)
 {
     nm_auto_nlmsg struct nl_msg *nlmsg = NULL;
 
@@ -9622,7 +10219,8 @@ ip_route_add(NMPlatform *platform, NMPNlmFlags flags, NMPObject *obj_stack)
     return do_add_addrroute(platform,
                             obj_stack,
                             nlmsg,
-                            NM_FLAGS_HAS(flags, NMP_NLM_FLAG_SUPPRESS_NETLINK_FAILURE));
+                            NM_FLAGS_HAS(flags, NMP_NLM_FLAG_SUPPRESS_NETLINK_FAILURE),
+                            out_extack_msg);
 }
 
 static gboolean
@@ -9723,9 +10321,10 @@ ip_route_get(NMPlatform   *platform,
 
         delayed_action_handle_all(platform);
 
-        /* Retry, if we failed due to a cache resync. That can happen when the netlink
-         * socket fills up and we lost the response. */
-    } while (seq_result == WAIT_FOR_NL_RESPONSE_RESULT_FAILED_RESYNC && ++try_count < 10);
+        nm_assert(seq_result != WAIT_FOR_NL_RESPONSE_RESULT_UNKNOWN);
+
+    } while (seq_result == WAIT_FOR_NL_RESPONSE_RESULT_FAILED_RESYNC
+             && ++try_count < RESYNC_RETRIES);
 
     if (seq_result < 0) {
         /* negative seq_result is an errno from kernel. Map it to negative
@@ -9749,29 +10348,37 @@ ip_route_get(NMPlatform   *platform,
 static int
 routing_rule_add(NMPlatform *platform, NMPNlmFlags flags, const NMPlatformRoutingRule *routing_rule)
 {
-    WaitForNlResponseResult      seq_result = WAIT_FOR_NL_RESPONSE_RESULT_UNKNOWN;
+    WaitForNlResponseResult      seq_result;
     nm_auto_nlmsg struct nl_msg *msg        = NULL;
-    gs_free char                *errmsg     = NULL;
+    gs_free char                *extack_msg = NULL;
     char                         s_buf[256];
     int                          nle;
+    int                          try_count = 0;
 
     msg = _nl_msg_new_routing_rule(RTM_NEWRULE, flags, routing_rule);
 
     event_handler_read_netlink(platform, NMP_NETLINK_ROUTE, FALSE);
 
-    nle = _netlink_send_nlmsg_rtnl(platform, msg, &seq_result, &errmsg);
-    if (nle < 0) {
-        _LOGE("do-add-rule: failed sending netlink request \"%s\" (%d)", nm_strerror(nle), -nle);
-        return -NME_PL_NETLINK;
-    }
+    do {
+        seq_result = WAIT_FOR_NL_RESPONSE_RESULT_UNKNOWN;
+        nle        = _netlink_send_nlmsg_rtnl(platform, msg, &seq_result, &extack_msg);
+        if (nle < 0) {
+            _LOGE("do-add-rule: failed sending netlink request \"%s\" (%d)",
+                  nm_strerror(nle),
+                  -nle);
+            return -NME_PL_NETLINK;
+        }
 
-    delayed_action_handle_all(platform);
+        delayed_action_handle_all(platform);
 
-    nm_assert(seq_result);
+        nm_assert(seq_result != WAIT_FOR_NL_RESPONSE_RESULT_UNKNOWN);
+
+    } while (seq_result == WAIT_FOR_NL_RESPONSE_RESULT_FAILED_RESYNC
+             && ++try_count < RESYNC_RETRIES);
 
     _NMLOG(seq_result == WAIT_FOR_NL_RESPONSE_RESULT_RESPONSE_OK ? LOGL_DEBUG : LOGL_WARN,
            "do-add-rule: %s",
-           wait_for_nl_response_to_string(seq_result, errmsg, s_buf, sizeof(s_buf)));
+           wait_for_nl_response_to_string(seq_result, extack_msg, s_buf, sizeof(s_buf)));
 
     if (seq_result == WAIT_FOR_NL_RESPONSE_RESULT_RESPONSE_OK)
         return 0;
@@ -9785,11 +10392,12 @@ routing_rule_add(NMPlatform *platform, NMPNlmFlags flags, const NMPlatformRoutin
 static int
 qdisc_add(NMPlatform *platform, NMPNlmFlags flags, const NMPlatformQdisc *qdisc)
 {
-    WaitForNlResponseResult      seq_result = WAIT_FOR_NL_RESPONSE_RESULT_UNKNOWN;
-    gs_free char                *errmsg     = NULL;
+    WaitForNlResponseResult      seq_result;
+    gs_free char                *extack_msg = NULL;
     int                          nle;
     char                         s_buf[256];
-    nm_auto_nlmsg struct nl_msg *msg = NULL;
+    nm_auto_nlmsg struct nl_msg *msg       = NULL;
+    int                          try_count = 0;
 
     /* Note: @qdisc must not be copied or kept alive because the lifetime of qdisc.kind
      * is undefined. */
@@ -9798,19 +10406,26 @@ qdisc_add(NMPlatform *platform, NMPNlmFlags flags, const NMPlatformQdisc *qdisc)
 
     event_handler_read_netlink(platform, NMP_NETLINK_ROUTE, FALSE);
 
-    nle = _netlink_send_nlmsg_rtnl(platform, msg, &seq_result, &errmsg);
-    if (nle < 0) {
-        _LOGE("do-add-qdisc: failed sending netlink request \"%s\" (%d)", nm_strerror(nle), -nle);
-        return -NME_PL_NETLINK;
-    }
+    do {
+        seq_result = WAIT_FOR_NL_RESPONSE_RESULT_UNKNOWN;
+        nle        = _netlink_send_nlmsg_rtnl(platform, msg, &seq_result, &extack_msg);
+        if (nle < 0) {
+            _LOGE("do-add-qdisc: failed sending netlink request \"%s\" (%d)",
+                  nm_strerror(nle),
+                  -nle);
+            return -NME_PL_NETLINK;
+        }
 
-    delayed_action_handle_all(platform);
+        delayed_action_handle_all(platform);
 
-    nm_assert(seq_result);
+        nm_assert(seq_result != WAIT_FOR_NL_RESPONSE_RESULT_UNKNOWN);
+
+    } while (seq_result == WAIT_FOR_NL_RESPONSE_RESULT_FAILED_RESYNC
+             && ++try_count < RESYNC_RETRIES);
 
     _NMLOG(seq_result == WAIT_FOR_NL_RESPONSE_RESULT_RESPONSE_OK ? LOGL_DEBUG : LOGL_WARN,
            "do-add-qdisc: %s",
-           wait_for_nl_response_to_string(seq_result, errmsg, s_buf, sizeof(s_buf)));
+           wait_for_nl_response_to_string(seq_result, extack_msg, s_buf, sizeof(s_buf)));
 
     if (seq_result == WAIT_FOR_NL_RESPONSE_RESULT_RESPONSE_OK)
         return 0;
@@ -9826,8 +10441,8 @@ tc_delete(NMPlatform *platform,
           guint32     parent,
           gboolean    log_error)
 {
-    WaitForNlResponseResult      seq_result = WAIT_FOR_NL_RESPONSE_RESULT_UNKNOWN;
-    gs_free char                *errmsg     = NULL;
+    WaitForNlResponseResult      seq_result;
+    gs_free char                *extack_msg = NULL;
     int                          nle;
     char                         s_buf[256];
     const char                  *log_tag;
@@ -9836,6 +10451,7 @@ tc_delete(NMPlatform *platform,
                   .tcm_ifindex = ifindex,
                   .tcm_parent  = parent,
     };
+    int try_count = 0;
 
     switch (nlmsg_type) {
     case RTM_DELQDISC:
@@ -9856,25 +10472,30 @@ tc_delete(NMPlatform *platform,
 
     event_handler_read_netlink(platform, NMP_NETLINK_ROUTE, FALSE);
 
-    nle = _netlink_send_nlmsg_rtnl(platform, msg, &seq_result, &errmsg);
-    if (nle < 0) {
-        _NMLOG(log_error ? LOGL_ERR : LOGL_DEBUG,
-               "%s: failed sending netlink request \"%s\" (%d)",
-               log_tag,
-               nm_strerror(nle),
-               -nle);
-        return -NME_PL_NETLINK;
-    }
+    do {
+        seq_result = WAIT_FOR_NL_RESPONSE_RESULT_UNKNOWN;
+        nle        = _netlink_send_nlmsg_rtnl(platform, msg, &seq_result, &extack_msg);
+        if (nle < 0) {
+            _NMLOG(log_error ? LOGL_ERR : LOGL_DEBUG,
+                   "%s: failed sending netlink request \"%s\" (%d)",
+                   log_tag,
+                   nm_strerror(nle),
+                   -nle);
+            return -NME_PL_NETLINK;
+        }
 
-    delayed_action_handle_all(platform);
+        delayed_action_handle_all(platform);
 
-    nm_assert(seq_result);
+        nm_assert(seq_result != WAIT_FOR_NL_RESPONSE_RESULT_UNKNOWN);
+
+    } while (seq_result == WAIT_FOR_NL_RESPONSE_RESULT_FAILED_RESYNC
+             && ++try_count < RESYNC_RETRIES);
 
     _NMLOG((seq_result == WAIT_FOR_NL_RESPONSE_RESULT_RESPONSE_OK || !log_error) ? LOGL_DEBUG
                                                                                  : LOGL_WARN,
            "%s: %s",
            log_tag,
-           wait_for_nl_response_to_string(seq_result, errmsg, s_buf, sizeof(s_buf)));
+           wait_for_nl_response_to_string(seq_result, extack_msg, s_buf, sizeof(s_buf)));
 
     if (seq_result == WAIT_FOR_NL_RESPONSE_RESULT_RESPONSE_OK)
         return 0;
@@ -9895,11 +10516,12 @@ qdisc_delete(NMPlatform *platform, int ifindex, guint32 parent, gboolean log_err
 static int
 tfilter_add(NMPlatform *platform, NMPNlmFlags flags, const NMPlatformTfilter *tfilter)
 {
-    WaitForNlResponseResult      seq_result = WAIT_FOR_NL_RESPONSE_RESULT_UNKNOWN;
-    gs_free char                *errmsg     = NULL;
+    WaitForNlResponseResult      seq_result;
+    gs_free char                *extack_msg = NULL;
     int                          nle;
     char                         s_buf[256];
-    nm_auto_nlmsg struct nl_msg *msg = NULL;
+    nm_auto_nlmsg struct nl_msg *msg       = NULL;
+    int                          try_count = 0;
 
     /* Note: @tfilter must not be copied or kept alive because the lifetime of tfilter.kind
      * and tfilter.action.kind is undefined. */
@@ -9908,19 +10530,26 @@ tfilter_add(NMPlatform *platform, NMPNlmFlags flags, const NMPlatformTfilter *tf
 
     event_handler_read_netlink(platform, NMP_NETLINK_ROUTE, FALSE);
 
-    nle = _netlink_send_nlmsg_rtnl(platform, msg, &seq_result, &errmsg);
-    if (nle < 0) {
-        _LOGE("do-add-tfilter: failed sending netlink request \"%s\" (%d)", nm_strerror(nle), -nle);
-        return -NME_PL_NETLINK;
-    }
+    do {
+        seq_result = WAIT_FOR_NL_RESPONSE_RESULT_UNKNOWN;
+        nle        = _netlink_send_nlmsg_rtnl(platform, msg, &seq_result, &extack_msg);
+        if (nle < 0) {
+            _LOGE("do-add-tfilter: failed sending netlink request \"%s\" (%d)",
+                  nm_strerror(nle),
+                  -nle);
+            return -NME_PL_NETLINK;
+        }
 
-    delayed_action_handle_all(platform);
+        delayed_action_handle_all(platform);
 
-    nm_assert(seq_result);
+        nm_assert(seq_result != WAIT_FOR_NL_RESPONSE_RESULT_UNKNOWN);
 
-    _NMLOG(seq_result == WAIT_FOR_NL_RESPONSE_RESULT_RESPONSE_OK ? LOGL_DEBUG : LOGL_WARN,
-           "do-add-tfilter: %s",
-           wait_for_nl_response_to_string(seq_result, errmsg, s_buf, sizeof(s_buf)));
+        _NMLOG(seq_result == WAIT_FOR_NL_RESPONSE_RESULT_RESPONSE_OK ? LOGL_DEBUG : LOGL_WARN,
+               "do-add-tfilter: %s",
+               wait_for_nl_response_to_string(seq_result, extack_msg, s_buf, sizeof(s_buf)));
+
+    } while (seq_result == WAIT_FOR_NL_RESPONSE_RESULT_FAILED_RESYNC
+             && ++try_count < RESYNC_RETRIES);
 
     if (seq_result == WAIT_FOR_NL_RESPONSE_RESULT_RESPONSE_OK)
         return 0;
@@ -10176,9 +10805,16 @@ continue_reading:
             int errsv;
 
             errsv = nlmsg_parse_error(msg.nm_nlh, &extack_msg);
-            if (errsv == 0)
+            if (errsv == 0) {
                 seq_result = WAIT_FOR_NL_RESPONSE_RESULT_RESPONSE_OK;
-            else {
+                if (extack_msg) {
+                    _LOGD("%s: recvmsg: warning message from kernel: %s%s%s for request %d",
+                          log_prefix,
+                          NM_PRINT_FMT_QUOTE_STRING(extack_msg),
+                          msg.nm_nlh->nlmsg_seq);
+                    extack_msg = NULL;
+                }
+            } else {
                 _LOGD("%s: recvmsg: error message from kernel: %s (%d)%s%s%s for request %d",
                       log_prefix,
                       nm_strerror(errsv),
@@ -10636,9 +11272,10 @@ mptcp_addr_update(NMPlatform *platform, NMOptionBool add, const NMPlatformMptcpA
         return nle;
     }
 
-    _LOGT("mptcp: %s address %s: success",
+    _LOGT("mptcp: %s address %s: success%s%s%s",
           cmd_str,
-          nm_platform_mptcp_addr_to_string(addr, sbuf, sizeof(sbuf)));
+          nm_platform_mptcp_addr_to_string(addr, sbuf, sizeof(sbuf)),
+          NM_PRINT_FMT_QUOTED(extack_msg[0] != '\0', " Warning: \"", extack_msg, "\"", ""));
 
     return 0;
 
@@ -11121,9 +11758,11 @@ nm_linux_platform_class_init(NMLinuxPlatformClass *klass)
     platform_class->sysctl_set_async = sysctl_set_async;
     platform_class->sysctl_get       = sysctl_get;
 
-    platform_class->link_add    = link_add;
+    platform_class->link_add          = link_add;
+    platform_class->link_change_extra = link_change_extra;
+    platform_class->link_delete       = link_delete;
+
     platform_class->link_change = link_change;
-    platform_class->link_delete = link_delete;
 
     platform_class->link_refresh = link_refresh;
 
@@ -11141,6 +11780,7 @@ nm_linux_platform_class_init(NMLinuxPlatformClass *klass)
     platform_class->link_set_sriov_params_async        = link_set_sriov_params_async;
     platform_class->link_set_sriov_vfs                 = link_set_sriov_vfs;
     platform_class->link_set_bridge_vlans              = link_set_bridge_vlans;
+    platform_class->link_set_bridge_info               = link_set_bridge_info;
 
     platform_class->link_get_physical_port_id = link_get_physical_port_id;
     platform_class->link_get_dev_id           = link_get_dev_id;
@@ -11172,8 +11812,6 @@ nm_linux_platform_class_init(NMLinuxPlatformClass *klass)
     platform_class->wifi_indicate_addressing_running = wifi_indicate_addressing_running;
     platform_class->wifi_get_wake_on_wlan            = wifi_get_wake_on_wlan;
     platform_class->wifi_set_wake_on_wlan            = wifi_set_wake_on_wlan;
-    platform_class->wifi_get_csme_conn_info          = wifi_get_csme_conn_info;
-    platform_class->wifi_get_device_from_csme        = wifi_get_device_from_csme;
 
     platform_class->mesh_get_channel = mesh_get_channel;
     platform_class->mesh_set_channel = mesh_set_channel;

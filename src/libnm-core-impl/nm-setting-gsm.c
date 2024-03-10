@@ -36,7 +36,9 @@ NM_GOBJECT_PROPERTIES_DEFINE_BASE(PROP_AUTO_CONFIG,
                                   PROP_DEVICE_ID,
                                   PROP_SIM_ID,
                                   PROP_SIM_OPERATOR_ID,
-                                  PROP_MTU, );
+                                  PROP_MTU,
+                                  PROP_INITIAL_EPS_CONFIG,
+                                  PROP_INITIAL_EPS_APN, );
 
 typedef struct {
     char   *number;
@@ -48,11 +50,13 @@ typedef struct {
     char   *apn;
     char   *network_id;
     char   *pin;
+    char   *initial_eps_apn;
     guint   password_flags;
     guint   pin_flags;
     guint32 mtu;
     bool    auto_config;
     bool    home_only;
+    bool    initial_eps_config;
 } NMSettingGsmPrivate;
 
 /**
@@ -61,20 +65,17 @@ typedef struct {
  * GSM-based Mobile Broadband Settings
  */
 struct _NMSettingGsm {
-    NMSetting parent;
-    /* In the past, this struct was public API. Preserve ABI! */
+    NMSetting           parent;
+    NMSettingGsmPrivate _priv;
 };
 
 struct _NMSettingGsmClass {
     NMSettingClass parent;
-    /* In the past, this struct was public API. Preserve ABI! */
-    gpointer padding[4];
 };
 
 G_DEFINE_TYPE(NMSettingGsm, nm_setting_gsm, NM_TYPE_SETTING)
 
-#define NM_SETTING_GSM_GET_PRIVATE(o) \
-    (G_TYPE_INSTANCE_GET_PRIVATE((o), NM_TYPE_SETTING_GSM, NMSettingGsmPrivate))
+#define NM_SETTING_GSM_GET_PRIVATE(o) _NM_GET_PRIVATE(o, NMSettingGsm, NM_IS_SETTING_GSM, NMSetting)
 
 /*****************************************************************************/
 
@@ -286,6 +287,103 @@ nm_setting_gsm_get_mtu(NMSettingGsm *setting)
     return NM_SETTING_GSM_GET_PRIVATE(setting)->mtu;
 }
 
+/**
+ * nm_setting_gsm_get_initial_eps_config:
+ * @setting: the #NMSettingGsm
+ *
+ * Returns: the #NMSettingGsm:initial-eps-bearer-configure property of the setting
+ *
+ * Since: 1.44
+ **/
+gboolean
+nm_setting_gsm_get_initial_eps_config(NMSettingGsm *setting)
+{
+    g_return_val_if_fail(NM_IS_SETTING_GSM(setting), FALSE);
+
+    return NM_SETTING_GSM_GET_PRIVATE(setting)->initial_eps_config;
+}
+
+/**
+ * nm_setting_gsm_get_initial_eps_apn:
+ * @setting: the #NMSettingGsm
+ *
+ * Returns: the #NMSettingGsm:initial-eps-bearer-apn property of the setting
+ *
+ * Since: 1.44
+ **/
+const char *
+nm_setting_gsm_get_initial_eps_apn(NMSettingGsm *setting)
+{
+    g_return_val_if_fail(NM_IS_SETTING_GSM(setting), NULL);
+
+    return NM_SETTING_GSM_GET_PRIVATE(setting)->initial_eps_apn;
+}
+
+static gboolean
+_verify_apn(const char *apn, gboolean allow_empty, const char *property_name, GError **error)
+{
+    gsize apn_len;
+    gsize i;
+
+    if (!apn)
+        return TRUE;
+
+    apn_len = strlen(apn);
+
+    if (!allow_empty && apn_len == 0) {
+        g_set_error(error,
+                    NM_CONNECTION_ERROR,
+                    NM_CONNECTION_ERROR_INVALID_PROPERTY,
+                    _("property value is empty"));
+        g_prefix_error(error, "%s.%s: ", NM_SETTING_GSM_SETTING_NAME, property_name);
+        return FALSE;
+    }
+
+    if (apn_len > 64) {
+        g_set_error(error,
+                    NM_CONNECTION_ERROR,
+                    NM_CONNECTION_ERROR_INVALID_PROPERTY,
+                    _("property value is too long (>64)"));
+        g_prefix_error(error, "%s.%s: ", NM_SETTING_GSM_SETTING_NAME, property_name);
+        return FALSE;
+    }
+
+    /* APNs roughly follow the same rules as DNS domain names.  Allowed
+     * characters are a-z, 0-9, . and -.  GSM 03.03 Section 9.1 states:
+     *
+     *   The syntax of the APN shall follow the Name Syntax defined in
+     *   RFC 2181 [14] and RFC 1035 [15]. The APN consists of one or
+     *   more labels. Each label is coded as one octet length field
+     *   followed by that number of octets coded as 8 bit ASCII characters.
+     *   Following RFC 1035 [15] the labels should consist only of the
+     *   alphabetic characters (A-Z and a-z), digits (0-9) and the
+     *   dash (-). The case of alphabetic characters is not significant.
+     *
+     * A dot (.) is commonly used to separate parts of the APN, and
+     * apparently the underscore (_) is used as well.  RFC 2181 indicates
+     * that no restrictions of any kind are placed on DNS labels, and thus
+     * it would appear that none are placed on APNs either, but many modems
+     * and networks will fail to accept APNs that include odd characters
+     * like space ( ) and such.
+     */
+    for (i = 0; i < apn_len; i++) {
+        if (g_ascii_isalnum(apn[i]))
+            continue;
+        if (NM_IN_SET(apn[i], '.', '_', '-'))
+            continue;
+
+        g_set_error(error,
+                    NM_CONNECTION_ERROR,
+                    NM_CONNECTION_ERROR_INVALID_PROPERTY,
+                    _("'%s' contains invalid char(s) (use [A-Za-z._-])"),
+                    apn);
+        g_prefix_error(error, "%s.%s: ", NM_SETTING_GSM_SETTING_NAME, property_name);
+        return FALSE;
+    }
+
+    return TRUE;
+}
+
 static gboolean
 verify(NMSetting *setting, NMConnection *connection, GError **error)
 {
@@ -300,51 +398,11 @@ verify(NMSetting *setting, NMConnection *connection, GError **error)
         return FALSE;
     }
 
-    if (priv->apn) {
-        gsize apn_len = strlen(priv->apn);
-        gsize i;
+    if (!_verify_apn(priv->apn, TRUE, NM_SETTING_GSM_APN, error))
+        return FALSE;
 
-        if (apn_len > 64) {
-            g_set_error(error,
-                        NM_CONNECTION_ERROR,
-                        NM_CONNECTION_ERROR_INVALID_PROPERTY,
-                        _("property value '%s' is empty or too long (>64)"),
-                        priv->apn);
-            g_prefix_error(error, "%s.%s: ", NM_SETTING_GSM_SETTING_NAME, NM_SETTING_GSM_APN);
-            return FALSE;
-        }
-
-        /* APNs roughly follow the same rules as DNS domain names.  Allowed
-         * characters are a-z, 0-9, . and -.  GSM 03.03 Section 9.1 states:
-         *
-         *   The syntax of the APN shall follow the Name Syntax defined in
-         *   RFC 2181 [14] and RFC 1035 [15]. The APN consists of one or
-         *   more labels. Each label is coded as one octet length field
-         *   followed by that number of octets coded as 8 bit ASCII characters.
-         *   Following RFC 1035 [15] the labels should consist only of the
-         *   alphabetic characters (A-Z and a-z), digits (0-9) and the
-         *   dash (-). The case of alphabetic characters is not significant.
-         *
-         * A dot (.) is commonly used to separate parts of the APN, and
-         * apparently the underscore (_) is used as well.  RFC 2181 indicates
-         * that no restrictions of any kind are placed on DNS labels, and thus
-         * it would appear that none are placed on APNs either, but many modems
-         * and networks will fail to accept APNs that include odd characters
-         * like space ( ) and such.
-         */
-        for (i = 0; i < apn_len; i++) {
-            if (!g_ascii_isalnum(priv->apn[i]) && (priv->apn[i] != '.') && (priv->apn[i] != '_')
-                && (priv->apn[i] != '-')) {
-                g_set_error(error,
-                            NM_CONNECTION_ERROR,
-                            NM_CONNECTION_ERROR_INVALID_PROPERTY,
-                            _("'%s' contains invalid char(s) (use [A-Za-z._-])"),
-                            priv->apn);
-                g_prefix_error(error, "%s.%s: ", NM_SETTING_GSM_SETTING_NAME, NM_SETTING_GSM_APN);
-                return FALSE;
-            }
-        }
-    }
+    if (!_verify_apn(priv->initial_eps_apn, FALSE, NM_SETTING_GSM_INITIAL_EPS_BEARER_APN, error))
+        return FALSE;
 
     if (priv->username && priv->username[0] == '\0') {
         g_set_error_literal(error,
@@ -504,8 +562,6 @@ nm_setting_gsm_class_init(NMSettingGsmClass *klass)
     NMSettingClass *setting_class       = NM_SETTING_CLASS(klass);
     GArray         *properties_override = _nm_sett_info_property_override_create_array();
 
-    g_type_class_add_private(klass, sizeof(NMSettingGsmPrivate));
-
     object_class->get_property = _nm_setting_property_get_property_direct;
     object_class->set_property = _nm_setting_property_set_property_direct;
 
@@ -546,7 +602,8 @@ nm_setting_gsm_class_init(NMSettingGsmClass *klass)
                                               NM_SETTING_PARAM_NONE,
                                               NMSettingGsmPrivate,
                                               number,
-                                              .is_deprecated = TRUE, );
+                                              .is_deprecated             = TRUE,
+                                              .direct_string_allow_empty = TRUE);
 
     /**
      * NMSettingGsm:username:
@@ -561,7 +618,8 @@ nm_setting_gsm_class_init(NMSettingGsmClass *klass)
                                               PROP_USERNAME,
                                               NM_SETTING_PARAM_NONE,
                                               NMSettingGsmPrivate,
-                                              username);
+                                              username,
+                                              .direct_string_allow_empty = TRUE);
 
     /**
      * NMSettingGsm:password:
@@ -576,7 +634,8 @@ nm_setting_gsm_class_init(NMSettingGsmClass *klass)
                                               PROP_PASSWORD,
                                               NM_SETTING_PARAM_SECRET,
                                               NMSettingGsmPrivate,
-                                              password);
+                                              password,
+                                              .direct_string_allow_empty = TRUE);
 
     /**
      * NMSettingGsm:password-flags:
@@ -599,6 +658,10 @@ nm_setting_gsm_class_init(NMSettingGsmClass *klass)
      * is important to use the correct APN for the user's mobile broadband plan.
      * The APN may only be composed of the characters a-z, 0-9, ., and - per GSM
      * 03.60 Section 14.9.
+     *
+     * If the APN is unset (the default) then it may be detected based on
+     * "auto-config" setting. The property can be explicitly set to the
+     * empty string to prevent that and use no APN.
      **/
     _nm_setting_property_define_direct_string(properties_override,
                                               obj_properties,
@@ -607,7 +670,8 @@ nm_setting_gsm_class_init(NMSettingGsmClass *klass)
                                               NM_SETTING_PARAM_NONE,
                                               NMSettingGsmPrivate,
                                               apn,
-                                              .direct_set_string_strip = TRUE);
+                                              .direct_set_string_strip   = TRUE,
+                                              .direct_string_allow_empty = TRUE);
 
     /**
      * NMSettingGsm:network-id:
@@ -625,7 +689,8 @@ nm_setting_gsm_class_init(NMSettingGsmClass *klass)
                                               NM_SETTING_PARAM_NONE,
                                               NMSettingGsmPrivate,
                                               network_id,
-                                              .direct_set_string_strip = TRUE);
+                                              .direct_set_string_strip   = TRUE,
+                                              .direct_string_allow_empty = TRUE);
 
     /**
      * NMSettingGsm:pin:
@@ -640,7 +705,8 @@ nm_setting_gsm_class_init(NMSettingGsmClass *klass)
                                               PROP_PIN,
                                               NM_SETTING_PARAM_SECRET,
                                               NMSettingGsmPrivate,
-                                              pin);
+                                              pin,
+                                              .direct_string_allow_empty = TRUE);
 
     /**
      * NMSettingGsm:pin-flags:
@@ -684,7 +750,8 @@ nm_setting_gsm_class_init(NMSettingGsmClass *klass)
                                               PROP_DEVICE_ID,
                                               NM_SETTING_PARAM_NONE,
                                               NMSettingGsmPrivate,
-                                              device_id);
+                                              device_id,
+                                              .direct_string_allow_empty = TRUE);
 
     /**
      * NMSettingGsm:sim-id:
@@ -702,7 +769,8 @@ nm_setting_gsm_class_init(NMSettingGsmClass *klass)
                                               PROP_SIM_ID,
                                               NM_SETTING_PARAM_NONE,
                                               NMSettingGsmPrivate,
-                                              sim_id);
+                                              sim_id,
+                                              .direct_string_allow_empty = TRUE);
 
     /**
      * NMSettingGsm:sim-operator-id:
@@ -721,7 +789,8 @@ nm_setting_gsm_class_init(NMSettingGsmClass *klass)
                                               PROP_SIM_OPERATOR_ID,
                                               NM_SETTING_PARAM_NONE,
                                               NMSettingGsmPrivate,
-                                              sim_operator_id);
+                                              sim_operator_id,
+                                              .direct_string_allow_empty = TRUE);
 
     /**
      * NMSettingGsm:mtu:
@@ -742,6 +811,42 @@ nm_setting_gsm_class_init(NMSettingGsmClass *klass)
                                               NMSettingGsmPrivate,
                                               mtu);
 
+    /**
+     * NMSettingGsm:initial-eps-bearer-configure:
+     *
+     * For LTE modems, this setting determines whether the initial EPS bearer
+     * shall be configured when bringing up the connection.  It is inferred TRUE
+     * if initial-eps-bearer-apn is set.
+     *
+     * Since: 1.44
+     **/
+    _nm_setting_property_define_direct_boolean(properties_override,
+                                               obj_properties,
+                                               NM_SETTING_GSM_INITIAL_EPS_BEARER_CONFIGURE,
+                                               PROP_INITIAL_EPS_CONFIG,
+                                               FALSE,
+                                               NM_SETTING_PARAM_NONE,
+                                               NMSettingGsmPrivate,
+                                               initial_eps_config);
+
+    /**
+     * NMSettingGsm:initial-eps-bearer-apn:
+     *
+     * For LTE modems, this sets the APN for the initial EPS bearer that is set
+     * up when attaching to the network.  Setting this parameter implies
+     * initial-eps-bearer-configure to be TRUE.
+     *
+     * Since: 1.44
+     **/
+    _nm_setting_property_define_direct_string(properties_override,
+                                              obj_properties,
+                                              NM_SETTING_GSM_INITIAL_EPS_BEARER_APN,
+                                              PROP_INITIAL_EPS_APN,
+                                              NM_SETTING_PARAM_NONE,
+                                              NMSettingGsmPrivate,
+                                              initial_eps_apn,
+                                              .direct_string_allow_empty = TRUE);
+
     /* Ignore incoming deprecated properties */
     _nm_properties_override_dbus(properties_override,
                                  "allowed-bands",
@@ -758,5 +863,5 @@ nm_setting_gsm_class_init(NMSettingGsmClass *klass)
                              NM_META_SETTING_TYPE_GSM,
                              NULL,
                              properties_override,
-                             NM_SETT_INFO_PRIVATE_OFFSET_FROM_CLASS);
+                             G_STRUCT_OFFSET(NMSettingGsm, _priv));
 }

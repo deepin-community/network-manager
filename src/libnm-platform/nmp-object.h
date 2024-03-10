@@ -254,6 +254,10 @@ typedef struct {
 } NMPObjectLnkGre;
 
 typedef struct {
+    NMPlatformLnkHsr _public;
+} NMPObjectLnkHsr;
+
+typedef struct {
     NMPlatformLnkInfiniband _public;
 } NMPObjectLnkInfiniband;
 
@@ -376,6 +380,9 @@ struct _NMPObject {
 
         NMPlatformLnkGre lnk_gre;
         NMPObjectLnkGre  _lnk_gre;
+
+        NMPlatformLnkHsr lnk_hsr;
+        NMPObjectLnkHsr  _lnk_hsr;
 
         NMPlatformLnkInfiniband lnk_infiniband;
         NMPObjectLnkInfiniband  _lnk_infiniband;
@@ -530,6 +537,7 @@ _NMP_OBJECT_TYPE_IS_OBJ_WITH_IFINDEX(NMPObjectType obj_type)
     case NMP_OBJECT_TYPE_LNK_BOND:
     case NMP_OBJECT_TYPE_LNK_GRE:
     case NMP_OBJECT_TYPE_LNK_GRETAP:
+    case NMP_OBJECT_TYPE_LNK_HSR:
     case NMP_OBJECT_TYPE_LNK_INFINIBAND:
     case NMP_OBJECT_TYPE_LNK_IP6TNL:
     case NMP_OBJECT_TYPE_LNK_IP6GRE:
@@ -1182,21 +1190,6 @@ nm_platform_lookup_object_by_addr_family(NMPlatform   *platform,
 }
 
 /*****************************************************************************/
-
-static inline gboolean
-nmp_object_get_force_commit(const NMPObject *obj)
-{
-    switch (NMP_OBJECT_GET_TYPE(obj)) {
-    case NMP_OBJECT_TYPE_IP4_ADDRESS:
-    case NMP_OBJECT_TYPE_IP6_ADDRESS:
-        return NMP_OBJECT_CAST_IP_ADDRESS(obj)->a_force_commit;
-    case NMP_OBJECT_TYPE_IP4_ROUTE:
-    case NMP_OBJECT_TYPE_IP6_ROUTE:
-        return NMP_OBJECT_CAST_IP_ROUTE(obj)->r_force_commit;
-    default:
-        return nm_assert_unreachable_val(FALSE);
-    }
-}
 
 static inline const char *
 nmp_object_link_get_ifname(const NMPObject *obj)

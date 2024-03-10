@@ -192,7 +192,10 @@ can_auto_connect(NMDevice *device, NMSettingsConnection *sett_conn, char **speci
 }
 
 static gboolean
-check_connection_compatible(NMDevice *device, NMConnection *connection, GError **error)
+check_connection_compatible(NMDevice     *device,
+                            NMConnection *connection,
+                            gboolean      check_properties,
+                            GError      **error)
 {
     NMDeviceBt         *self = NM_DEVICE_BT(device);
     NMDeviceBtPrivate  *priv = NM_DEVICE_BT_GET_PRIVATE(self);
@@ -200,7 +203,7 @@ check_connection_compatible(NMDevice *device, NMConnection *connection, GError *
     const char         *bdaddr;
 
     if (!NM_DEVICE_CLASS(nm_device_bt_parent_class)
-             ->check_connection_compatible(device, connection, error))
+             ->check_connection_compatible(device, connection, check_properties, error))
         return FALSE;
 
     if (!get_connection_bt_type_check(self, connection, NULL, error))
@@ -1303,7 +1306,11 @@ static const NMDBusInterfaceInfoExtended interface_info_device_bluetooth = {
     .parent = NM_DEFINE_GDBUS_INTERFACE_INFO_INIT(
         NM_DBUS_INTERFACE_DEVICE_BLUETOOTH,
         .properties = NM_DEFINE_GDBUS_PROPERTY_INFOS(
-            NM_DEFINE_DBUS_PROPERTY_INFO_EXTENDED_READABLE("HwAddress", "s", NM_DEVICE_HW_ADDRESS),
+            NM_DEFINE_DBUS_PROPERTY_INFO_EXTENDED_READABLE(
+                "HwAddress",
+                "s",
+                NM_DEVICE_HW_ADDRESS,
+                .annotations = NM_GDBUS_ANNOTATION_INFO_LIST_DEPRECATED(), ),
             NM_DEFINE_DBUS_PROPERTY_INFO_EXTENDED_READABLE("Name", "s", NM_DEVICE_BT_NAME),
             NM_DEFINE_DBUS_PROPERTY_INFO_EXTENDED_READABLE("BtCapabilities",
                                                            "u",

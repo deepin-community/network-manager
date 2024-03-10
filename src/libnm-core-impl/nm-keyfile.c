@@ -1219,9 +1219,14 @@ mac_address_parser(KeyfileReaderInfo *info,
 
     tmp_string = nm_keyfile_plugin_kf_get_string(info->keyfile, setting_name, key, NULL);
 
-    if (cloned_mac_addr && NM_CLONED_MAC_IS_SPECIAL(tmp_string)) {
-        mac_str = tmp_string;
-        goto out;
+    if (cloned_mac_addr) {
+        gboolean is_wifi;
+
+        is_wifi = NM_IS_SETTING_WIRELESS(setting);
+        if (NM_CLONED_MAC_IS_SPECIAL(tmp_string, is_wifi)) {
+            mac_str = tmp_string;
+            goto out;
+        }
     }
 
     if (tmp_string && nm_utils_hwaddr_aton(tmp_string, addr_bin, addr_len))
@@ -3911,9 +3916,9 @@ nm_keyfile_read_ensure_uuid(NMConnection *connection, const char *fallback_uuid_
  *   the relative path is made absolute using @base_dir. This must
  *   be an absolute path.
  * @handler_flags: the #NMKeyfileHandlerFlags.
- * @handler: (allow-none) (scope call): read handler
+ * @handler: (nullable) (scope call): read handler
  * @user_data: user data for read handler
- * @error: (allow-none) (out): error
+ * @error: error
  *
  * Tries to create a NMConnection from a keyfile. The resulting keyfile is
  * not normalized and might not even verify.
@@ -4256,7 +4261,7 @@ _write_setting_wireguard(NMSetting *setting, KeyfileWriterInfo *info)
  * nm_keyfile_write:
  * @connection: the #NMConnection to persist to keyfile.
  * @handler_flags: the #NMKeyfileHandlerFlags.
- * @handler: (allow-none) (scope call): optional handler for events and
+ * @handler: (nullable) (scope call): optional handler for events and
  *   to override the default behavior.
  * @user_data: argument for @handler.
  * @error: the #GError in case writing fails.
@@ -4554,13 +4559,14 @@ nm_keyfile_handler_data_fail_with_error(NMKeyfileHandlerData *handler_data, GErr
 /**
  * nm_keyfile_handler_data_get_context:
  * @handler_data: the #NMKeyfileHandlerData for any event.
- * @out_kf_group_name: (out) (allow-none) (transfer none): if the event is in the
- *   context of a keyfile group, the group name.
- * @out_kf_key_name: (out) (allow-none) (transfer none): if the event is in the
- *   context of a keyfile value, the key name.
- * @out_cur_setting: (out) (allow-none) (transfer none): if the event happens while
- *   handling a particular #NMSetting instance.
- * @out_cur_property_name: (out) (allow-none) (transfer none): the property name if applicable.
+ * @out_kf_group_name: (out) (optional) (nullable) (transfer none): if the event
+ *   is in the context of a keyfile group, the group name.
+ * @out_kf_key_name: (out) (optional) (nullable) (transfer none): if the event
+ *   is in the context of a keyfile value, the key name.
+ * @out_cur_setting: (out) (optional) (nullable) (transfer none): if the event
+ *   happens while handling a particular #NMSetting instance.
+ * @out_cur_property_name: (out) (optional) (nullable) (transfer none): the
+ *   property name if applicable.
  *
  * Get context information of the current event. This function can be called
  * on all events, but the context information may be unset.
@@ -4605,8 +4611,8 @@ _nm_keyfile_handler_data_warn_get_message(const NMKeyfileHandlerData *handler_da
  * nm_keyfile_handler_data_warn_get:
  * @handler_data: the #NMKeyfileHandlerData for a %NM_KEYFILE_HANDLER_TYPE_WARN
  *  event.
- * @out_message: (out) (allow-none) (transfer none): the warning message.
- * @out_severity: (out) (allow-none): the #NMKeyfileWarnSeverity warning severity.
+ * @out_message: (out) (optional) (transfer none): the warning message.
+ * @out_severity: (out) (optional): the #NMKeyfileWarnSeverity warning severity.
  *
  * Since: 1.30
  */

@@ -44,20 +44,18 @@ typedef struct {
  * Bonding Settings
  */
 struct _NMSettingBond {
-    NMSetting parent;
-    /* In the past, this struct was public API. Preserve ABI! */
+    NMSetting            parent;
+    NMSettingBondPrivate _priv;
 };
 
 struct _NMSettingBondClass {
     NMSettingClass parent;
-    /* In the past, this struct was public API. Preserve ABI! */
-    gpointer padding[4];
 };
 
 G_DEFINE_TYPE(NMSettingBond, nm_setting_bond, NM_TYPE_SETTING)
 
 #define NM_SETTING_BOND_GET_PRIVATE(o) \
-    (G_TYPE_INSTANCE_GET_PRIVATE((o), NM_TYPE_SETTING_BOND, NMSettingBondPrivate))
+    _NM_GET_PRIVATE(o, NMSettingBond, NM_IS_SETTING_BOND, NMSetting)
 
 /*****************************************************************************/
 
@@ -92,6 +90,9 @@ static const char *const valid_options_lst[] = {
     NM_SETTING_BOND_OPTION_TLB_DYNAMIC_LB,
     NM_SETTING_BOND_OPTION_LP_INTERVAL,
     NM_SETTING_BOND_OPTION_PEER_NOTIF_DELAY,
+    NM_SETTING_BOND_OPTION_ARP_MISSED_MAX,
+    NM_SETTING_BOND_OPTION_LACP_ACTIVE,
+    NM_SETTING_BOND_OPTION_NS_IP6_TARGET,
     NULL,
 };
 
@@ -133,6 +134,7 @@ _nm_assert_bond_meta(const OptionMeta *option_meta)
         }));
         return TRUE;
     case NM_BOND_OPTION_TYPE_IP:
+    case NM_BOND_OPTION_TYPE_IP6:
         nm_assert(option_meta->val);
         /* fall-through */
     case NM_BOND_OPTION_TYPE_IFNAME:
@@ -154,8 +156,9 @@ static char const *const _option_default_strv_arp_validate[] =
     NM_MAKE_STRV("none", "active", "backup", "all", "filter", "filter_active", "filter_backup");
 static char const *const _option_default_strv_fail_over_mac[] =
     NM_MAKE_STRV("none", "active", "follow");
-static char const *const _option_default_strv_lacp_rate[] = NM_MAKE_STRV("slow", "fast");
-static char const *const _option_default_strv_mode[]      = NM_MAKE_STRV("balance-rr",
+static char const *const _option_default_strv_lacp_rate[]   = NM_MAKE_STRV("slow", "fast");
+static char const *const _option_default_strv_lacp_active[] = NM_MAKE_STRV("off", "on");
+static char const *const _option_default_strv_mode[]        = NM_MAKE_STRV("balance-rr",
                                                                     "active-backup",
                                                                     "balance-xor",
                                                                     "broadcast",
@@ -194,12 +197,15 @@ static NM_UTILS_STRING_TABLE_LOOKUP_STRUCT_DEFINE(
      {"any", NM_BOND_OPTION_TYPE_BOTH, 0, 1, _option_default_strv_arp_all_targets}},
     {NM_SETTING_BOND_OPTION_ARP_INTERVAL, {"0", NM_BOND_OPTION_TYPE_INT, 0, G_MAXINT}},
     {NM_SETTING_BOND_OPTION_ARP_IP_TARGET, {"", NM_BOND_OPTION_TYPE_IP}},
+    {NM_SETTING_BOND_OPTION_ARP_MISSED_MAX, {"0", NM_BOND_OPTION_TYPE_INT, 0, 255}},
     {NM_SETTING_BOND_OPTION_ARP_VALIDATE,
      {"none", NM_BOND_OPTION_TYPE_BOTH, 0, 6, _option_default_strv_arp_validate}},
     {NM_SETTING_BOND_OPTION_BALANCE_SLB, {"0", NM_BOND_OPTION_TYPE_INT, 0, 1}},
     {NM_SETTING_BOND_OPTION_DOWNDELAY, {"0", NM_BOND_OPTION_TYPE_INT, 0, G_MAXINT}},
     {NM_SETTING_BOND_OPTION_FAIL_OVER_MAC,
      {"none", NM_BOND_OPTION_TYPE_BOTH, 0, 2, _option_default_strv_fail_over_mac}},
+    {NM_SETTING_BOND_OPTION_LACP_ACTIVE,
+     {"on", NM_BOND_OPTION_TYPE_BOTH, 0, 1, _option_default_strv_lacp_active}},
     {NM_SETTING_BOND_OPTION_LACP_RATE,
      {"slow", NM_BOND_OPTION_TYPE_BOTH, 0, 1, _option_default_strv_lacp_rate}},
     {NM_SETTING_BOND_OPTION_LP_INTERVAL, {"1", NM_BOND_OPTION_TYPE_INT, 1, G_MAXINT}},
@@ -207,6 +213,7 @@ static NM_UTILS_STRING_TABLE_LOOKUP_STRUCT_DEFINE(
     {NM_SETTING_BOND_OPTION_MIN_LINKS, {"0", NM_BOND_OPTION_TYPE_INT, 0, G_MAXINT}},
     {NM_SETTING_BOND_OPTION_MODE,
      {"balance-rr", NM_BOND_OPTION_TYPE_BOTH, 0, 6, _option_default_strv_mode}},
+    {NM_SETTING_BOND_OPTION_NS_IP6_TARGET, {"", NM_BOND_OPTION_TYPE_IP6}},
     {NM_SETTING_BOND_OPTION_NUM_GRAT_ARP, {"1", NM_BOND_OPTION_TYPE_INT, 0, 255}},
     {NM_SETTING_BOND_OPTION_NUM_UNSOL_NA, {"1", NM_BOND_OPTION_TYPE_INT, 0, 255}},
     {NM_SETTING_BOND_OPTION_PACKETS_PER_SLAVE, {"1", NM_BOND_OPTION_TYPE_INT, 0, 65535}},
@@ -504,12 +511,12 @@ validate_list(const char *name, const char *value, const OptionMeta *option_meta
 }
 
 static gboolean
-validate_ip(const char *name, const char *value, GError **error)
+validate_ip(int addr_family, const char *name, const char *value, GError **error)
 {
     gs_free const char **addrs = NULL;
     gsize                i;
 
-    addrs = nm_utils_bond_option_arp_ip_targets_split(value);
+    addrs = nm_utils_bond_option_ip_split(value);
     if (!addrs) {
         g_set_error(error,
                     NM_CONNECTION_ERROR,
@@ -518,13 +525,18 @@ validate_ip(const char *name, const char *value, GError **error)
                     name);
         return FALSE;
     }
+
+    /* An empty list is invalid. */
+    nm_assert(addrs[0]);
+
     for (i = 0; addrs[i]; i++) {
-        if (!nm_inet_parse_bin(AF_INET, addrs[i], NULL, NULL)) {
+        if (!nm_inet_parse_bin(addr_family, addrs[i], NULL, NULL)) {
             g_set_error(error,
                         NM_CONNECTION_ERROR,
                         NM_CONNECTION_ERROR_INVALID_PROPERTY,
-                        _("'%s' is not a valid IPv4 address for '%s' option"),
+                        _("'%s' is not a valid %s address for '%s' option"),
                         addrs[i],
+                        addr_family == AF_INET ? "IPv4" : "IPv6",
                         name);
             return FALSE;
         }
@@ -574,7 +586,10 @@ _nm_setting_bond_validate_option(const char *name, const char *value, GError **e
         goto handle_error;
     case NM_BOND_OPTION_TYPE_IP:
         nm_assert(nm_streq0(name, NM_SETTING_BOND_OPTION_ARP_IP_TARGET));
-        return validate_ip(name, value, error);
+        return validate_ip(AF_INET, name, value, error);
+    case NM_BOND_OPTION_TYPE_IP6:
+        nm_assert(nm_streq0(name, NM_SETTING_BOND_OPTION_NS_IP6_TARGET));
+        return validate_ip(AF_INET6, name, value, error);
     case NM_BOND_OPTION_TYPE_MAC:
         success = nm_utils_hwaddr_valid(value, ETH_ALEN);
         goto handle_error;
@@ -601,7 +616,7 @@ handle_error:
 /**
  * nm_setting_bond_validate_option:
  * @name: the name of the option to validate
- * @value: (allow-none): the value of the option to validate.
+ * @value: (nullable): the value of the option to validate.
  *
  * Checks whether @name is a valid bond option and @value is a valid value for
  * the @name. If @value is %NULL, the function only validates the option name.
@@ -703,13 +718,13 @@ nm_setting_bond_remove_option(NMSettingBond *setting, const char *name)
 
 /**
  * nm_setting_bond_get_valid_options:
- * @setting: (allow-none): the #NMSettingBond
+ * @setting: (nullable): the #NMSettingBond
  *
  * Returns a list of valid bond options.
  *
  * The @setting argument is unused and may be passed as %NULL.
  *
- * Returns: (transfer none): a %NULL-terminated array of strings of valid bond options.
+ * Returns: (transfer none) (nullable): a %NULL-terminated array of strings of valid bond options.
  **/
 const char **
 nm_setting_bond_get_valid_options(NMSettingBond *setting)
@@ -846,12 +861,15 @@ verify(NMSetting *setting, NMConnection *connection, GError **error)
     NMSettingBondPrivate    *priv = NM_SETTING_BOND_GET_PRIVATE(setting);
     int                      miimon;
     int                      arp_interval;
+    int                      arp_missed_max;
     int                      num_grat_arp;
     int                      num_unsol_na;
     int                      peer_notif_delay;
     const char              *mode_str;
     const char              *arp_ip_target = NULL;
+    const char              *ns_ip6_target;
     const char              *lacp_rate;
+    const char              *lacp_active;
     const char              *primary;
     const char              *s;
     NMBondMode               bond_mode;
@@ -876,6 +894,8 @@ verify(NMSetting *setting, NMConnection *connection, GError **error)
 
     miimon       = _atoi(_bond_get_option_or_default(self, NM_SETTING_BOND_OPTION_MIIMON));
     arp_interval = _atoi(_bond_get_option_or_default(self, NM_SETTING_BOND_OPTION_ARP_INTERVAL));
+    arp_missed_max =
+        _atoi(_bond_get_option_or_default(self, NM_SETTING_BOND_OPTION_ARP_MISSED_MAX));
     num_grat_arp = _atoi(_bond_get_option_or_default(self, NM_SETTING_BOND_OPTION_NUM_GRAT_ARP));
     num_unsol_na = _atoi(_bond_get_option_or_default(self, NM_SETTING_BOND_OPTION_NUM_UNSOL_NA));
     peer_notif_delay =
@@ -886,6 +906,7 @@ verify(NMSetting *setting, NMConnection *connection, GError **error)
      * arp_interval conflicts [ alb, tlb ]
      * arp_interval needs arp_ip_target
      * arp_validate does not work with [ BOND_MODE_8023AD, BOND_MODE_TLB, BOND_MODE_ALB ]
+     * arp_missed_max does not work with [ BOND_MODE_8023AD, BOND_MODE_TLB, BOND_MODE_ALB ]
      * downdelay needs miimon
      * updelay needs miimon
      * peer_notif_delay needs miimon enabled
@@ -926,6 +947,17 @@ verify(NMSetting *setting, NMConnection *connection, GError **error)
                         NM_SETTING_BOND_OPTION_MODE,
                         mode_str,
                         NM_SETTING_BOND_OPTION_ARP_INTERVAL);
+            g_prefix_error(error, "%s.%s: ", NM_SETTING_BOND_SETTING_NAME, NM_SETTING_BOND_OPTIONS);
+            return FALSE;
+        }
+        if (arp_missed_max > 0) {
+            g_set_error(error,
+                        NM_CONNECTION_ERROR,
+                        NM_CONNECTION_ERROR_INVALID_PROPERTY,
+                        _("'%s=%s' is incompatible with '%s > 0'"),
+                        NM_SETTING_BOND_OPTION_MODE,
+                        mode_str,
+                        NM_SETTING_BOND_OPTION_ARP_MISSED_MAX);
             g_prefix_error(error, "%s.%s: ", NM_SETTING_BOND_SETTING_NAME, NM_SETTING_BOND_OPTIONS);
             return FALSE;
         }
@@ -1028,18 +1060,20 @@ verify(NMSetting *setting, NMConnection *connection, GError **error)
         }
     }
 
-    /* arp_ip_target can only be used with arp_interval, and must
+    /* arp_ip_target and ns_ip6_target can only be used with arp_interval, and must
      * contain a comma-separated list of IPv4 addresses.
      */
+    ns_ip6_target = _bond_get_option(self, NM_SETTING_BOND_OPTION_NS_IP6_TARGET);
     arp_ip_target = _bond_get_option(self, NM_SETTING_BOND_OPTION_ARP_IP_TARGET);
     if (arp_interval > 0) {
-        if (!arp_ip_target) {
+        if (!arp_ip_target && !ns_ip6_target) {
             g_set_error(error,
                         NM_CONNECTION_ERROR,
                         NM_CONNECTION_ERROR_INVALID_PROPERTY,
-                        _("'%s' option requires '%s' option to be set"),
+                        _("'%s' option requires '%s' or '%s'option to be set"),
                         NM_SETTING_BOND_OPTION_ARP_INTERVAL,
-                        NM_SETTING_BOND_OPTION_ARP_IP_TARGET);
+                        NM_SETTING_BOND_OPTION_ARP_IP_TARGET,
+                        NM_SETTING_BOND_OPTION_NS_IP6_TARGET);
             g_prefix_error(error, "%s.%s: ", NM_SETTING_BOND_SETTING_NAME, NM_SETTING_BOND_OPTIONS);
             return FALSE;
         }
@@ -1054,10 +1088,32 @@ verify(NMSetting *setting, NMConnection *connection, GError **error)
             g_prefix_error(error, "%s.%s: ", NM_SETTING_BOND_SETTING_NAME, NM_SETTING_BOND_OPTIONS);
             return FALSE;
         }
+        if (ns_ip6_target) {
+            g_set_error(error,
+                        NM_CONNECTION_ERROR,
+                        NM_CONNECTION_ERROR_INVALID_PROPERTY,
+                        _("'%s' option requires '%s' option to be set"),
+                        NM_SETTING_BOND_OPTION_NS_IP6_TARGET,
+                        NM_SETTING_BOND_OPTION_ARP_INTERVAL);
+            g_prefix_error(error, "%s.%s: ", NM_SETTING_BOND_SETTING_NAME, NM_SETTING_BOND_OPTIONS);
+            return FALSE;
+        }
     }
 
     lacp_rate = _bond_get_option(self, NM_SETTING_BOND_OPTION_LACP_RATE);
     if (lacp_rate && bond_mode != NM_BOND_MODE_8023AD && !NM_IN_STRSET(lacp_rate, "0", "slow")) {
+        g_set_error(error,
+                    NM_CONNECTION_ERROR,
+                    NM_CONNECTION_ERROR_INVALID_PROPERTY,
+                    _("'%s' option is only valid with mode '%s'"),
+                    NM_SETTING_BOND_OPTION_LACP_RATE,
+                    "802.3ad");
+        g_prefix_error(error, "%s.%s: ", NM_SETTING_BOND_SETTING_NAME, NM_SETTING_BOND_OPTIONS);
+        return FALSE;
+    }
+
+    lacp_active = _bond_get_option(self, NM_SETTING_BOND_OPTION_LACP_ACTIVE);
+    if (lacp_active && bond_mode != NM_BOND_MODE_8023AD) {
         g_set_error(error,
                     NM_CONNECTION_ERROR,
                     NM_CONNECTION_ERROR_INVALID_PROPERTY,
@@ -1264,8 +1320,6 @@ nm_setting_bond_class_init(NMSettingBondClass *klass)
     NMSettingClass *setting_class       = NM_SETTING_CLASS(klass);
     GArray         *properties_override = _nm_sett_info_property_override_create_array();
 
-    g_type_class_add_private(klass, sizeof(NMSettingBondPrivate));
-
     object_class->get_property = get_property;
     object_class->set_property = set_property;
     object_class->finalize     = finalize;
@@ -1322,5 +1376,5 @@ nm_setting_bond_class_init(NMSettingBondClass *klass)
                              NM_META_SETTING_TYPE_BOND,
                              NULL,
                              properties_override,
-                             NM_SETT_INFO_PRIVATE_OFFSET_FROM_CLASS);
+                             G_STRUCT_OFFSET(NMSettingBond, _priv));
 }

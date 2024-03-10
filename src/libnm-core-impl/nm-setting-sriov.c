@@ -9,6 +9,7 @@
 
 #include "nm-setting-private.h"
 #include "nm-utils-private.h"
+#include "nm-core-enum-types.h"
 
 /**
  * SECTION:nm-setting-sriov
@@ -18,7 +19,13 @@
 
 /*****************************************************************************/
 
-NM_GOBJECT_PROPERTIES_DEFINE(NMSettingSriov, PROP_TOTAL_VFS, PROP_VFS, PROP_AUTOPROBE_DRIVERS, );
+NM_GOBJECT_PROPERTIES_DEFINE(NMSettingSriov,
+                             PROP_TOTAL_VFS,
+                             PROP_VFS,
+                             PROP_AUTOPROBE_DRIVERS,
+                             PROP_ESWITCH_MODE,
+                             PROP_ESWITCH_INLINE_MODE,
+                             PROP_ESWITCH_ENCAP_MODE, );
 
 /**
  * NMSettingSriov:
@@ -32,6 +39,9 @@ struct _NMSettingSriov {
     GPtrArray *vfs;
     int        autoprobe_drivers;
     guint32    total_vfs;
+    int        eswitch_mode;
+    int        eswitch_inline_mode;
+    int        eswitch_encap_mode;
 };
 
 struct _NMSettingSriovClass {
@@ -286,7 +296,7 @@ nm_sriov_vf_get_index(const NMSriovVF *vf)
  * nm_sriov_vf_set_attribute:
  * @vf: the #NMSriovVF
  * @name: the name of a route attribute
- * @value: (transfer none) (allow-none): the value
+ * @value: (transfer none) (nullable): the value
  *
  * Sets the named attribute on @vf to the given value.
  *
@@ -364,8 +374,8 @@ const NMVariantAttributeSpec *const _nm_sriov_vf_attribute_spec[] = {
  * nm_sriov_vf_attribute_validate:
  * @name: the attribute name
  * @value: the attribute value
- * @known: (out): on return, whether the attribute name is a known one
- * @error: (allow-none): return location for a #GError, or %NULL
+ * @known: (out) (optional): on return, whether the attribute name is a known one
+ * @error: return location for a #GError, or %NULL
  *
  * Validates a VF attribute, i.e. checks that the attribute is a known one,
  * the value is of the correct type and well-formed.
@@ -533,7 +543,7 @@ vlan_id_compare(gconstpointer a, gconstpointer b, gpointer user_data)
 /**
  * nm_sriov_vf_get_vlan_ids:
  * @vf: the #NMSriovVF
- * @length: (out) (allow-none): on return, the number of VLANs configured
+ * @length: (out) (optional): on return, the number of VLANs configured
  *
  * Returns the VLANs currently configured on the VF. Currently kernel only
  * supports one VLAN per VF.
@@ -833,6 +843,54 @@ nm_setting_sriov_get_autoprobe_drivers(NMSettingSriov *setting)
     g_return_val_if_fail(NM_IS_SETTING_SRIOV(setting), NM_TERNARY_DEFAULT);
 
     return setting->autoprobe_drivers;
+}
+
+/**
+ * nm_setting_sriov_get_eswitch_mode:
+ * @setting: the #NMSettingSriov
+ *
+ * Returns: the value contained in the #NMSettingSriov:eswitch-mode property.
+ *
+ * Since: 1.46
+ */
+NMSriovEswitchMode
+nm_setting_sriov_get_eswitch_mode(NMSettingSriov *setting)
+{
+    g_return_val_if_fail(NM_IS_SETTING_SRIOV(setting), NM_SRIOV_ESWITCH_MODE_PRESERVE);
+
+    return setting->eswitch_mode;
+}
+
+/**
+ * nm_setting_sriov_get_eswitch_inline_mode:
+ * @setting: the #NMSettingSriov
+ *
+ * Returns: the value contained in the #NMSettingSriov:eswitch-inline-mode property.
+ *
+ * Since: 1.46
+ */
+NMSriovEswitchInlineMode
+nm_setting_sriov_get_eswitch_inline_mode(NMSettingSriov *setting)
+{
+    g_return_val_if_fail(NM_IS_SETTING_SRIOV(setting), NM_SRIOV_ESWITCH_INLINE_MODE_PRESERVE);
+
+    return setting->eswitch_inline_mode;
+}
+
+/**
+ * nm_setting_sriov_get_eswitch_encap_mode:
+ * @setting: the #NMSettingSriov
+ *
+ * Returns: the value contained in the #NMSettingSriov:eswitch-encap-mode property.
+ *
+ * Since: 1.46
+ */
+NMSriovEswitchEncapMode
+nm_setting_sriov_get_eswitch_encap_mode(NMSettingSriov *setting)
+{
+    g_return_val_if_fail(NM_IS_SETTING_SRIOV(setting), NM_SRIOV_ESWITCH_ENCAP_MODE_PRESERVE);
+
+    return setting->eswitch_encap_mode;
 }
 
 static int
@@ -1330,6 +1388,79 @@ nm_setting_sriov_class_init(NMSettingSriovClass *klass)
                                                     NM_SETTING_PARAM_FUZZY_IGNORE,
                                                     NMSettingSriov,
                                                     autoprobe_drivers);
+
+    /**
+     * NMSettingSriov:eswitch-mode
+     *
+     * Select the eswitch mode of the device. Currently it's only supported for
+     * PCI PF devices, and only if the eswitch device is managed from the same
+     * PCI address than the PF.
+     *
+     * If set to %NM_SRIOV_ESWITCH_MODE_PRESERVE (default) the eswitch mode won't be
+     * modified by NetworkManager.
+     *
+     * Since: 1.46
+     */
+    _nm_setting_property_define_direct_enum(properties_override,
+                                            obj_properties,
+                                            NM_SETTING_SRIOV_ESWITCH_MODE,
+                                            PROP_ESWITCH_MODE,
+                                            NM_TYPE_SRIOV_ESWITCH_MODE,
+                                            NM_SRIOV_ESWITCH_MODE_PRESERVE,
+                                            NM_SETTING_PARAM_FUZZY_IGNORE,
+                                            NULL,
+                                            NMSettingSriov,
+                                            eswitch_mode);
+
+    /**
+     * NMSettingSriov:eswitch-inline-mode
+     *
+     * Select the eswitch inline-mode of the device. Some HWs need the VF driver to put
+     * part of the packet headers on the TX descriptor so the e-switch can do proper
+     * matching and steering.
+     *
+     * Currently it's only supported for PCI PF devices, and only if the eswitch device
+     * is managed from the same PCI address than the PF.
+     *
+     * If set to %NM_SRIOV_ESWITCH_INLINE_MODE_PRESERVE (default) the eswitch inline-mode
+     * won't be modified by NetworkManager.
+     *
+     * Since: 1.46
+     */
+    _nm_setting_property_define_direct_enum(properties_override,
+                                            obj_properties,
+                                            NM_SETTING_SRIOV_ESWITCH_INLINE_MODE,
+                                            PROP_ESWITCH_INLINE_MODE,
+                                            NM_TYPE_SRIOV_ESWITCH_INLINE_MODE,
+                                            NM_SRIOV_ESWITCH_INLINE_MODE_PRESERVE,
+                                            NM_SETTING_PARAM_FUZZY_IGNORE,
+                                            NULL,
+                                            NMSettingSriov,
+                                            eswitch_inline_mode);
+
+    /**
+     * NMSettingSriov:eswitch-encap-mode
+     *
+     * Select the eswitch encapsulation support.
+     *
+     * Currently it's only supported for PCI PF devices, and only if the eswitch device
+     * is managed from the same PCI address than the PF.
+     *
+     * If set to %NM_SRIOV_ESWITCH_ENCAP_MODE_PRESERVE (default) the eswitch encap-mode
+     * won't be modified by NetworkManager.
+     *
+     * Since: 1.46
+     */
+    _nm_setting_property_define_direct_enum(properties_override,
+                                            obj_properties,
+                                            NM_SETTING_SRIOV_ESWITCH_ENCAP_MODE,
+                                            PROP_ESWITCH_ENCAP_MODE,
+                                            NM_TYPE_SRIOV_ESWITCH_ENCAP_MODE,
+                                            NM_SRIOV_ESWITCH_ENCAP_MODE_PRESERVE,
+                                            NM_SETTING_PARAM_FUZZY_IGNORE,
+                                            NULL,
+                                            NMSettingSriov,
+                                            eswitch_encap_mode);
 
     g_object_class_install_properties(object_class, _PROPERTY_ENUMS_LAST, obj_properties);
 

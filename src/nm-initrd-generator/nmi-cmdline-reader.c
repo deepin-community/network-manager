@@ -39,6 +39,7 @@ typedef struct {
     gboolean ignore_auto_dns;
     int      dhcp_timeout;
     char    *dhcp4_vci;
+    char    *dhcp_dscp;
 
     gint64 carrier_timeout_sec;
 } Reader;
@@ -73,6 +74,7 @@ reader_destroy(Reader *reader, gboolean free_hash)
     nm_clear_g_free(&reader->hostname);
     g_hash_table_unref(reader->znet_ifnames);
     nm_clear_g_free(&reader->dhcp4_vci);
+    nm_clear_g_free(&reader->dhcp_dscp);
     nm_g_slice_free(reader);
     if (!free_hash)
         return g_steal_pointer(&hash);
@@ -122,6 +124,8 @@ reader_create_connection(Reader                  *reader,
                  reader->dhcp_timeout,
                  NM_SETTING_IP4_CONFIG_DHCP_VENDOR_CLASS_IDENTIFIER,
                  reader->dhcp4_vci,
+                 NM_SETTING_IP_CONFIG_DHCP_DSCP,
+                 reader->dhcp_dscp,
                  NM_SETTING_IP_CONFIG_REQUIRED_TIMEOUT,
                  NMI_IP_REQUIRED_TIMEOUT_MSEC,
                  NULL);
@@ -486,12 +490,12 @@ _parse_ip_method(const char *kind)
     nm_strv_sort(strv, -1);
     nm_strv_cleanup_const(strv, TRUE, TRUE);
 
-    if (nm_strv_find_first(strv, -1, "auto") >= 0) {
+    if (nm_strv_contains(strv, -1, "auto")) {
         /* if "auto" is present, then "dhcp4", "dhcp6", and "local6" is implied. */
         _strv_remove(strv, "dhcp4");
         _strv_remove(strv, "dhcp6");
         _strv_remove(strv, "local6");
-    } else if (nm_strv_find_first(strv, -1, "dhcp6") >= 0) {
+    } else if (nm_strv_contains(strv, -1, "dhcp6")) {
         /* if "dhcp6" is present, then "local6" is implied. */
         _strv_remove(strv, "local6");
     }
@@ -924,9 +928,9 @@ reader_parse_master(Reader *reader, char *argument, const char *type_name, const
         connection = reader_get_connection(reader, slave, NULL, TRUE);
         s_con      = nm_connection_get_setting_connection(connection);
         g_object_set(s_con,
-                     NM_SETTING_CONNECTION_SLAVE_TYPE,
+                     NM_SETTING_CONNECTION_PORT_TYPE,
                      type_name,
-                     NM_SETTING_CONNECTION_MASTER,
+                     NM_SETTING_CONNECTION_CONTROLLER,
                      master,
                      NULL);
     } while (slaves && *slaves != '\0');
@@ -1274,7 +1278,41 @@ reader_parse_ethtool(Reader *reader, char *argument)
 static void
 _normalize_conn(gpointer key, gpointer value, gpointer user_data)
 {
-    NMConnection *connection = value;
+    NMConnection      *connection = value;
+    NMSettingIPConfig *s_ip4 = NULL, *s_ip6 = NULL;
+
+    s_ip4 = nm_connection_get_setting_ip4_config(connection);
+    if (s_ip4) {
+        const char *method = nm_setting_ip_config_get_method(s_ip4);
+
+        if (!nm_streq(method, NM_SETTING_IP4_CONFIG_METHOD_AUTO)) {
+            g_object_set(s_ip4,
+                         NM_SETTING_IP_CONFIG_DHCP_HOSTNAME,
+                         NULL,
+                         NM_SETTING_IP_CONFIG_DHCP_TIMEOUT,
+                         NULL,
+                         NM_SETTING_IP4_CONFIG_DHCP_VENDOR_CLASS_IDENTIFIER,
+                         NULL,
+                         NM_SETTING_IP_CONFIG_DHCP_DSCP,
+                         NULL,
+                         NULL);
+        }
+    }
+
+    s_ip6 = nm_connection_get_setting_ip6_config(connection);
+    if (s_ip6) {
+        const char *method = nm_setting_ip_config_get_method(s_ip6);
+
+        if (!nm_streq(method, NM_SETTING_IP6_CONFIG_METHOD_AUTO)
+            && !nm_streq(method, NM_SETTING_IP6_CONFIG_METHOD_DHCP)) {
+            g_object_set(s_ip6,
+                         NM_SETTING_IP_CONFIG_DHCP_HOSTNAME,
+                         NULL,
+                         NM_SETTING_IP_CONFIG_DHCP_TIMEOUT,
+                         NULL,
+                         NULL);
+        }
+    }
 
     nm_connection_normalize(connection, NULL, NULL, NULL);
 }
@@ -1397,13 +1435,20 @@ nmi_cmdline_reader_parse(const char        *etc_connections_dir,
         } else if (nm_streq(tag, "rd.net.dhcp.vendor-class")) {
             if (nm_utils_validate_dhcp4_vendor_class_id(argument, NULL))
                 nm_strdup_reset(&reader->dhcp4_vci, argument);
+        } else if (nm_streq(tag, "rd.net.dhcp.dscp")) {
+            gs_free_error GError *error = NULL;
+
+            if (nm_utils_validate_dhcp_dscp(argument, &error))
+                nm_strdup_reset(&reader->dhcp_dscp, argument);
+            else
+                _LOGW(LOGD_CORE, "Ignoring 'rd.net.dhcp.dscp=%s': %s", argument, error->message);
         } else if (nm_streq(tag, "rd.net.timeout.carrier")) {
             reader->carrier_timeout_sec =
                 _nm_utils_ascii_str_to_int64(argument, 10, 0, G_MAXINT32, 0);
         }
     }
 
-    reader->dhcp_timeout = NM_CLAMP(dhcp_timeout * dhcp_num_tries, 1, G_MAXINT32);
+    reader->dhcp_timeout = NM_CLAMP(dhcp_timeout * dhcp_num_tries, 1u, (guint32) G_MAXINT32);
 
     for (i = 0; argv[i]; i++) {
         gs_free char *argument_clone = NULL;
@@ -1459,8 +1504,9 @@ nmi_cmdline_reader_parse(const char        *etc_connections_dir,
         } else if (g_ascii_strcasecmp(tag, "BOOTIF") == 0) {
             nm_clear_g_free(&bootif_val);
             bootif_val = g_strdup(argument);
-        } else if (nm_streq(tag, "rd.ethtool"))
+        } else if (nm_streq(tag, "rd.ethtool")) {
             reader_parse_ethtool(reader, argument);
+        }
     }
 
     for (i = 0; i < reader->vlan_parents->len; i++) {

@@ -53,7 +53,7 @@ nmtst_ref_string_find(const char *cstr)
 {
     /* WARNING: only use for testing. See nmtst_ref_string_find_len() why. */
     if (!cstr)
-        return FALSE;
+        return NULL;
     return nmtst_ref_string_find_len(cstr, strlen(cstr));
 }
 
@@ -83,7 +83,8 @@ nm_ref_string_unref(NMRefString *rstr)
 
     /* fast-path: first try to decrement the ref-count without bringing it
      * to zero. */
-    r = rstr->_ref_count;
+    r = g_atomic_int_get(&rstr->_ref_count);
+
     if (G_LIKELY(r > 1 && g_atomic_int_compare_and_exchange(&rstr->_ref_count, r, r - 1)))
         return;
 

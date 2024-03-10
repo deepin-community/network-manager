@@ -219,6 +219,7 @@ data_edit = sed \
 	-e 's|@NM_CONFIG_DEFAULT_LOGGING_AUDIT_TEXT[@]|$(NM_CONFIG_DEFAULT_LOGGING_AUDIT_TEXT)|g' \
 	-e 's|@NM_CONFIG_DEFAULT_MAIN_RC_MANAGER[@]|$(NM_CONFIG_DEFAULT_MAIN_RC_MANAGER)|g' \
 	-e 's|@NM_CONFIG_DEFAULT_MAIN_DHCP[@]|$(NM_CONFIG_DEFAULT_MAIN_DHCP)|g' \
+	-e 's|@NM_CONFIG_DEFAULT_MAIN_MIGRATE_IFCFG_RH_TEXT[@]|$(NM_CONFIG_DEFAULT_MAIN_MIGRATE_IFCFG_RH_TEXT)|g' \
 	-e 's|@NM_CONFIG_DEFAULT_WIFI_BACKEND_TEXT[@]|$(NM_CONFIG_DEFAULT_WIFI_BACKEND_TEXT)|g'
 
 ###############################################################################
@@ -399,6 +400,7 @@ src_libnm_std_aux_libnm_std_aux_la_SOURCES = \
 	src/libnm-std-aux/nm-std-aux.h \
 	src/libnm-std-aux/nm-std-utils.c \
 	src/libnm-std-aux/nm-std-utils.h \
+	src/libnm-std-aux/unaligned-fundamental.h \
 	src/libnm-std-aux/unaligned.h \
 	$(NULL)
 
@@ -647,7 +649,6 @@ src_libnm_platform_libnm_platform_la_SOURCES = \
 	\
 	src/linux-headers/ethtool.h \
 	src/linux-headers/mptcp.h \
-	src/linux-headers/nl80211-vnd-intel.h \
 	src/linux-headers/nl802154.h \
 	\
 	src/nm-compat-headers/linux/if_addr.h \
@@ -671,6 +672,8 @@ src_libnm_platform_libnm_platform_la_SOURCES = \
 	src/libnm-platform/nmp-object.h \
 	src/libnm-platform/nmp-plobj.c \
 	src/libnm-platform/nmp-plobj.h \
+	src/libnm-platform/devlink/nm-devlink.c \
+	src/libnm-platform/devlink/nm-devlink.h \
 	src/libnm-platform/wifi/nm-wifi-utils-nl80211.c \
 	src/libnm-platform/wifi/nm-wifi-utils-nl80211.h \
 	src/libnm-platform/wifi/nm-wifi-utils-private.h \
@@ -1020,6 +1023,8 @@ introspection_sources = \
 	introspection/org.freedesktop.NetworkManager.Device.Dummy.h \
 	introspection/org.freedesktop.NetworkManager.Device.Generic.c \
 	introspection/org.freedesktop.NetworkManager.Device.Generic.h \
+	introspection/org.freedesktop.NetworkManager.Device.Hsr.c \
+	introspection/org.freedesktop.NetworkManager.Device.Hsr.h \
 	introspection/org.freedesktop.NetworkManager.Device.IPTunnel.c \
 	introspection/org.freedesktop.NetworkManager.Device.IPTunnel.h \
 	introspection/org.freedesktop.NetworkManager.Device.Infiniband.c \
@@ -1111,6 +1116,7 @@ DBUS_INTERFACE_DOCS = \
 	docs/api/dbus-org.freedesktop.NetworkManager.Device.Bridge.xml \
 	docs/api/dbus-org.freedesktop.NetworkManager.Device.Dummy.xml \
 	docs/api/dbus-org.freedesktop.NetworkManager.Device.Generic.xml \
+	docs/api/dbus-org.freedesktop.NetworkManager.Device.Hsr.xml \
 	docs/api/dbus-org.freedesktop.NetworkManager.Device.IPTunnel.xml \
 	docs/api/dbus-org.freedesktop.NetworkManager.Device.Infiniband.xml \
 	docs/api/dbus-org.freedesktop.NetworkManager.Device.Loopback.xml \
@@ -1180,6 +1186,7 @@ dbusinterfaces_DATA = \
 	introspection/org.freedesktop.NetworkManager.Device.Bridge.xml \
 	introspection/org.freedesktop.NetworkManager.Device.Dummy.xml \
 	introspection/org.freedesktop.NetworkManager.Device.Generic.xml \
+	introspection/org.freedesktop.NetworkManager.Device.Hsr.xml \
 	introspection/org.freedesktop.NetworkManager.Device.IPTunnel.xml \
 	introspection/org.freedesktop.NetworkManager.Device.Infiniband.xml \
 	introspection/org.freedesktop.NetworkManager.Device.Loopback.xml \
@@ -1259,11 +1266,13 @@ src_libnm_core_impl_lib_h_pub_real = \
 	src/libnm-core-public/nm-setting-generic.h \
 	src/libnm-core-public/nm-setting-gsm.h \
 	src/libnm-core-public/nm-setting-hostname.h \
+	src/libnm-core-public/nm-setting-hsr.h \
 	src/libnm-core-public/nm-setting-infiniband.h \
 	src/libnm-core-public/nm-setting-ip-config.h \
 	src/libnm-core-public/nm-setting-ip-tunnel.h \
 	src/libnm-core-public/nm-setting-ip4-config.h \
 	src/libnm-core-public/nm-setting-ip6-config.h \
+	src/libnm-core-public/nm-setting-link.h \
 	src/libnm-core-public/nm-setting-loopback.h \
 	src/libnm-core-public/nm-setting-macsec.h \
 	src/libnm-core-public/nm-setting-macvlan.h \
@@ -1313,7 +1322,6 @@ src_libnm_core_public_mkenums_h = \
 src_libnm_core_impl_lib_h_priv = \
 	src/libnm-core-impl/nm-connection-private.h \
 	src/libnm-core-impl/nm-default-libnm-core.h \
-	src/libnm-core-impl/nm-property-compare.h \
 	src/libnm-core-impl/nm-setting-private.h \
 	src/libnm-core-impl/nm-team-utils.h \
 	src/libnm-core-impl/nm-utils-private.h \
@@ -1340,11 +1348,13 @@ src_libnm_core_impl_lib_c_settings_real = \
 	src/libnm-core-impl/nm-setting-generic.c \
 	src/libnm-core-impl/nm-setting-gsm.c \
 	src/libnm-core-impl/nm-setting-hostname.c \
+	src/libnm-core-impl/nm-setting-hsr.c \
 	src/libnm-core-impl/nm-setting-infiniband.c \
 	src/libnm-core-impl/nm-setting-ip-config.c \
 	src/libnm-core-impl/nm-setting-ip-tunnel.c \
 	src/libnm-core-impl/nm-setting-ip4-config.c \
 	src/libnm-core-impl/nm-setting-ip6-config.c \
+	src/libnm-core-impl/nm-setting-link.c \
 	src/libnm-core-impl/nm-setting-loopback.c \
 	src/libnm-core-impl/nm-setting-macsec.c \
 	src/libnm-core-impl/nm-setting-macvlan.c \
@@ -1387,7 +1397,6 @@ src_libnm_core_impl_lib_c_real = \
 	src/libnm-core-impl/nm-keyfile-utils.c \
 	src/libnm-core-impl/nm-keyfile.c \
 	src/libnm-core-impl/nm-meta-setting-base-impl.c \
-	src/libnm-core-impl/nm-property-compare.c \
 	src/libnm-core-impl/nm-setting.c \
 	src/libnm-core-impl/nm-simple-connection.c \
 	src/libnm-core-impl/nm-team-utils.c \
@@ -1593,7 +1602,6 @@ EXTRA_DIST += \
 ###############################################################################
 
 check_programs += \
-	src/libnm-core-impl/tests/test-compare \
 	src/libnm-core-impl/tests/test-crypto \
 	src/libnm-core-impl/tests/test-general \
 	src/libnm-core-impl/tests/test-keyfile \
@@ -1622,7 +1630,6 @@ src_libnm_core_impl_tests_cppflags = \
 	$(SANITIZER_EXEC_CFLAGS) \
 	$(NULL)
 
-src_libnm_core_impl_tests_test_compare_CPPFLAGS = $(src_libnm_core_impl_tests_cppflags)
 src_libnm_core_impl_tests_test_crypto_CPPFLAGS = $(src_libnm_core_impl_tests_cppflags)
 src_libnm_core_impl_tests_test_general_CPPFLAGS = $(src_libnm_core_impl_tests_cppflags)
 src_libnm_core_impl_tests_test_keyfile_CPPFLAGS = $(src_libnm_core_impl_tests_cppflags)
@@ -1659,7 +1666,6 @@ src_libnm_core_impl_tests_ldflags = \
 	$(SANITIZER_EXEC_LDFLAGS) \
 	$(NULL)
 
-src_libnm_core_impl_tests_test_compare_LDADD = $(src_libnm_core_impl_tests_ldadd)
 src_libnm_core_impl_tests_test_crypto_LDADD = $(src_libnm_core_impl_tests_ldadd)
 src_libnm_core_impl_tests_test_general_LDADD = $(src_libnm_core_impl_tests_ldadd)
 src_libnm_core_impl_tests_test_keyfile_LDADD = $(src_libnm_core_impl_tests_ldadd)
@@ -1667,7 +1673,6 @@ src_libnm_core_impl_tests_test_secrets_LDADD = $(src_libnm_core_impl_tests_ldadd
 src_libnm_core_impl_tests_test_setting_LDADD = $(src_libnm_core_impl_tests_ldadd)
 src_libnm_core_impl_tests_test_settings_defaults_LDADD = $(src_libnm_core_impl_tests_ldadd)
 
-src_libnm_core_impl_tests_test_compare_LDFLAGS = $(src_libnm_core_impl_tests_ldflags)
 src_libnm_core_impl_tests_test_crypto_LDFLAGS = $(src_libnm_core_impl_tests_ldflags)
 src_libnm_core_impl_tests_test_general_LDFLAGS = $(src_libnm_core_impl_tests_ldflags)
 src_libnm_core_impl_tests_test_keyfile_LDFLAGS = $(src_libnm_core_impl_tests_ldflags)
@@ -1675,7 +1680,6 @@ src_libnm_core_impl_tests_test_secrets_LDFLAGS = $(src_libnm_core_impl_tests_ldf
 src_libnm_core_impl_tests_test_setting_LDFLAGS = $(src_libnm_core_impl_tests_ldflags)
 src_libnm_core_impl_tests_test_settings_defaults_LDFLAGS = $(src_libnm_core_impl_tests_ldflags)
 
-$(src_libnm_core_impl_tests_test_compare_OBJECTS): $(src_libnm_core_public_mkenums_h)
 $(src_libnm_core_impl_tests_test_crypto_OBJECTS): $(src_libnm_core_public_mkenums_h)
 $(src_libnm_core_impl_tests_test_general_OBJECTS): $(src_libnm_core_public_mkenums_h)
 $(src_libnm_core_impl_tests_test_keyfile_OBJECTS): $(src_libnm_core_public_mkenums_h)
@@ -1738,6 +1742,7 @@ libnm_lib_h_pub_real = \
 	src/libnm-client-public/nm-device-dummy.h \
 	src/libnm-client-public/nm-device-ethernet.h \
 	src/libnm-client-public/nm-device-generic.h \
+	src/libnm-client-public/nm-device-hsr.h \
 	src/libnm-client-public/nm-device-infiniband.h \
 	src/libnm-client-public/nm-device-ip-tunnel.h \
 	src/libnm-client-public/nm-device-loopback.h \
@@ -1809,6 +1814,7 @@ libnm_lib_c_real = \
 	src/libnm-client-impl/nm-device-dummy.c \
 	src/libnm-client-impl/nm-device-ethernet.c \
 	src/libnm-client-impl/nm-device-generic.c \
+	src/libnm-client-impl/nm-device-hsr.c \
 	src/libnm-client-impl/nm-device-infiniband.c \
 	src/libnm-client-impl/nm-device-ip-tunnel.c \
 	src/libnm-client-impl/nm-device-loopback.c \
@@ -1859,6 +1865,11 @@ nodist_libnminclude_HEADERS += \
 	$(src_libnm_client_public_mkenums_h)
 
 EXTRA_DIST += src/libnm-client-public/meson.build
+
+check-local-nm-autoptr:
+	$(srcdir)/tools/check-nm-autoptr.sh
+
+check_local += check-local-nm-autoptr
 
 ###############################################################################
 
@@ -2018,7 +2029,7 @@ src_libnm_client_impl_NM_1_0_gir_FILES = \
 	$(libnm_lib_h_pub_real) \
 	$(src_libnm_client_public_mkenums_c) \
 	$(libnm_lib_c_real)
-src_libnm_client_impl_NM_1_0_gir_SCANNERFLAGS = --warn-all --identifier-prefix=NM --symbol-prefix=nm
+src_libnm_client_impl_NM_1_0_gir_SCANNERFLAGS = --warn-all --identifier-prefix=NM --symbol-prefix=nm --c-include="NetworkManager.h"
 
 src/libnm-client-impl/libnm.typelib: src/libnm-client-impl/libnm.gir
 	$(INTROSPECTION_COMPILER) --includedir=$(srcdir)/src/libnm-core-public --includedir=$(builddir)/src/libnm-core-public --includedir=$(srcdir)/libnm-client-public --includedir=$(builddir)/libnm-client-public $< -o $@
@@ -2033,7 +2044,10 @@ libnm_noinst_data = \
 	src/libnm-client-impl/nm-property-infos-ifcfg-rh.xml \
 	src/libnm-client-impl/nm-property-infos-keyfile.xml \
 	src/libnm-client-impl/nm-property-infos-nmcli.xml \
-	src/libnm-client-impl/nm-settings-docs-gir.xml \
+	src/libnm-client-impl/nm-settings-docs-gir-dbus.xml \
+	src/libnm-client-impl/nm-settings-docs-gir-ifcfg-rh.xml \
+	src/libnm-client-impl/nm-settings-docs-gir-keyfile.xml \
+	src/libnm-client-impl/nm-settings-docs-gir-nmcli.xml \
 	src/libnmc-setting/settings-docs-input.xml \
 	$(NULL)
 
@@ -2079,7 +2093,7 @@ endif
 
 libnm_docs_sources = $(src_libnm_core_impl_lib_c_settings_real)
 
-src/libnm-client-impl/nm-property-infos-%.xml: tools/generate-docs-nm-property-infos.py src/libnm-core-impl/libnm-core-impl.la $(libnm_docs_sources)
+src/libnm-client-impl/nm-property-infos-%.xml: tools/generate-docs-nm-property-infos.py src/libnm-core-impl/libnm-core-impl.la src/libnm-client-impl/NM-1.0.gir $(libnm_docs_sources)
 	$(AM_V_GEN) \
 		"$(PYTHON)" \
 		$(srcdir)/tools/generate-docs-nm-property-infos.py \
@@ -2087,7 +2101,7 @@ src/libnm-client-impl/nm-property-infos-%.xml: tools/generate-docs-nm-property-i
 		$@ \
 		$(wordlist 3,1000,$^)
 
-src/libnm-client-impl/nm-settings-docs-gir.xml: tools/generate-docs-nm-settings-docs-gir.py src/libnm-client-impl/NM-1.0.gir src/libnm-client-impl/NM-1.0.typelib src/libnm-client-impl/libnm.la $(libnm_docs_sources)
+src/libnm-client-impl/nm-settings-docs-gir-%.xml: tools/generate-docs-nm-settings-docs-gir.py src/libnm-client-impl/NM-1.0.gir src/libnm-client-impl/NM-1.0.typelib src/libnm-client-impl/libnm.la $(libnm_docs_sources)
 	$(AM_V_GEN) \
 	export GI_TYPELIB_PATH=$(abs_builddir)/src/libnm-client-impl$${GI_TYPELIB_PATH:+:$$GI_TYPELIB_PATH}; \
 	export LD_LIBRARY_PATH=$(abs_builddir)/src/libnm-client-impl/.libs$${LD_LIBRARY_PATH:+:$$LD_LIBRARY_PATH}; \
@@ -2095,15 +2109,22 @@ src/libnm-client-impl/nm-settings-docs-gir.xml: tools/generate-docs-nm-settings-
 	"$(PYTHON)" \
 	$(srcdir)/tools/generate-docs-nm-settings-docs-gir.py \
 		--gir $(builddir)/src/libnm-client-impl/NM-1.0.gir \
-		--output $@
+		--output $@ \
+		--target $(patsubst nm-settings-docs-gir-%.xml,%,$(notdir $@))
 
-man/nm-settings-docs-nmcli.xml: src/nmcli/gen-metadata-nm-settings-nmcli.xml src/libnm-client-impl/nm-property-infos-nmcli.xml src/libnm-client-impl/nm-settings-docs-gir.xml tools/generate-docs-nm-settings-docs-merge.py man/common.ent
-	$(AM_V_GEN) "$(PYTHON)" $(srcdir)/tools/generate-docs-nm-settings-docs-merge.py --only-from-first $@ $(wordlist 1,3,$^)
+man/nm-settings-docs-nmcli.xml: src/nmcli/gen-metadata-nm-settings-nmcli.xml src/libnm-client-impl/nm-property-infos-nmcli.xml src/libnm-client-impl/nm-settings-docs-gir-nmcli.xml tools/generate-docs-nm-settings-docs-merge.py man/common.ent
+	$(AM_V_GEN) \
+		"$(PYTHON)" \
+		"$(srcdir)/tools/generate-docs-nm-settings-docs-merge.py" \
+		"$@" \
+		--only-properties-from \
+		"$<" \
+		$(wordlist 1,3,$^)
 
-src/libnmc-setting/settings-docs-input.xml: src/libnm-client-impl/nm-property-infos-nmcli.xml src/libnm-client-impl/nm-settings-docs-gir.xml tools/generate-docs-nm-settings-docs-merge.py
+src/libnmc-setting/settings-docs-input.xml: src/libnm-client-impl/nm-property-infos-nmcli.xml src/libnm-client-impl/nm-settings-docs-gir-nmcli.xml tools/generate-docs-nm-settings-docs-merge.py
 	$(AM_V_GEN) "$(PYTHON)" $(srcdir)/tools/generate-docs-nm-settings-docs-merge.py $@ $(wordlist 1,2,$^)
 
-man/nm-settings-docs-%.xml: src/libnm-client-impl/nm-property-infos-%.xml src/libnm-client-impl/nm-settings-docs-gir.xml tools/generate-docs-nm-settings-docs-merge.py man/common.ent
+man/nm-settings-docs-%.xml: src/libnm-client-impl/nm-property-infos-%.xml src/libnm-client-impl/nm-settings-docs-gir-%.xml tools/generate-docs-nm-settings-docs-merge.py man/common.ent
 	$(AM_V_GEN) "$(PYTHON)" $(srcdir)/tools/generate-docs-nm-settings-docs-merge.py $@ $(wordlist 1,2,$^)
 
 
@@ -2302,12 +2323,13 @@ src_libnm_systemd_shared_libnm_systemd_shared_la_SOURCES = \
 	src/libnm-systemd-shared/nm-sd-utils-shared.c \
 	src/libnm-systemd-shared/nm-sd-utils-shared.h \
 	src/libnm-systemd-shared/sd-adapt-shared/architecture.h \
+	src/libnm-systemd-shared/sd-adapt-shared/argv-util.h \
 	src/libnm-systemd-shared/sd-adapt-shared/arphrd-list.h \
 	src/libnm-systemd-shared/sd-adapt-shared/blockdev-util.h \
 	src/libnm-systemd-shared/sd-adapt-shared/build.h \
 	src/libnm-systemd-shared/sd-adapt-shared/chase-symlinks.h \
+	src/libnm-systemd-shared/sd-adapt-shared/chase.h \
 	src/libnm-systemd-shared/sd-adapt-shared/copy.h \
-	src/libnm-systemd-shared/sd-adapt-shared/def.h \
 	src/libnm-systemd-shared/sd-adapt-shared/dhcp-server-internal.h \
 	src/libnm-systemd-shared/sd-adapt-shared/dirent-util.h \
 	src/libnm-systemd-shared/sd-adapt-shared/errno-list.h \
@@ -2317,7 +2339,9 @@ src_libnm_systemd_shared_libnm_systemd_shared_la_SOURCES = \
 	src/libnm-systemd-shared/sd-adapt-shared/hmac.h \
 	src/libnm-systemd-shared/sd-adapt-shared/idn-util.h \
 	src/libnm-systemd-shared/sd-adapt-shared/ioprio.h \
+	src/libnm-systemd-shared/sd-adapt-shared/mallinfo-util.h \
 	src/libnm-systemd-shared/sd-adapt-shared/memfd-util.h \
+	src/libnm-systemd-shared/sd-adapt-shared/memstream-util.h \
 	src/libnm-systemd-shared/sd-adapt-shared/missing_fs.h \
 	src/libnm-systemd-shared/sd-adapt-shared/missing_ioprio.h \
 	src/libnm-systemd-shared/sd-adapt-shared/missing_keyctl.h \
@@ -2327,22 +2351,26 @@ src_libnm_systemd_shared_libnm_systemd_shared_la_SOURCES = \
 	src/libnm-systemd-shared/sd-adapt-shared/missing_syscall_def.h \
 	src/libnm-systemd-shared/sd-adapt-shared/missing_timerfd.h \
 	src/libnm-systemd-shared/sd-adapt-shared/mkdir.h \
+	src/libnm-systemd-shared/sd-adapt-shared/mountpoint-util.h \
 	src/libnm-systemd-shared/sd-adapt-shared/namespace-util.h \
 	src/libnm-systemd-shared/sd-adapt-shared/netif-util.h \
 	src/libnm-systemd-shared/sd-adapt-shared/nm-sd-adapt-shared.h \
 	src/libnm-systemd-shared/sd-adapt-shared/nulstr-util.h \
 	src/libnm-systemd-shared/sd-adapt-shared/os-util.h \
+	src/libnm-systemd-shared/sd-adapt-shared/psi-util.h \
 	src/libnm-systemd-shared/sd-adapt-shared/raw-clone.h \
 	src/libnm-systemd-shared/sd-adapt-shared/rlimit-util.h \
 	src/libnm-systemd-shared/sd-adapt-shared/sync-util.h \
 	src/libnm-systemd-shared/sd-adapt-shared/sysctl-util.h \
 	src/libnm-systemd-shared/sd-adapt-shared/terminal-util.h \
+	src/libnm-systemd-shared/sd-adapt-shared/unaligned-fundamental.h \
 	src/libnm-systemd-shared/sd-adapt-shared/unaligned.h \
 	src/libnm-systemd-shared/sd-adapt-shared/virt.h \
 	src/libnm-systemd-shared/src/basic/alloc-util.c \
 	src/libnm-systemd-shared/src/basic/alloc-util.h \
 	src/libnm-systemd-shared/src/basic/async.h \
 	src/libnm-systemd-shared/src/basic/cgroup-util.h \
+	src/libnm-systemd-shared/src/basic/constants.h \
 	src/libnm-systemd-shared/src/basic/dns-def.h \
 	src/libnm-systemd-shared/src/basic/env-file.c \
 	src/libnm-systemd-shared/src/basic/env-file.h \
@@ -2379,9 +2407,12 @@ src_libnm_systemd_shared_libnm_systemd_shared_la_SOURCES = \
 	src/libnm-systemd-shared/src/basic/inotify-util.h \
 	src/libnm-systemd-shared/src/basic/io-util.c \
 	src/libnm-systemd-shared/src/basic/io-util.h \
+	src/libnm-systemd-shared/src/basic/label.c \
+	src/libnm-systemd-shared/src/basic/label.h \
 	src/libnm-systemd-shared/src/basic/list.h \
 	src/libnm-systemd-shared/src/basic/locale-util.c \
 	src/libnm-systemd-shared/src/basic/locale-util.h \
+	src/libnm-systemd-shared/src/basic/lock-util.h \
 	src/libnm-systemd-shared/src/basic/log.h \
 	src/libnm-systemd-shared/src/basic/macro.h \
 	src/libnm-systemd-shared/src/basic/memory-util.c \
@@ -2393,9 +2424,11 @@ src_libnm_systemd_shared_libnm_systemd_shared_la_SOURCES = \
 	src/libnm-systemd-shared/src/basic/missing_socket.h \
 	src/libnm-systemd-shared/src/basic/missing_stat.h \
 	src/libnm-systemd-shared/src/basic/missing_syscall.h \
+	src/libnm-systemd-shared/src/basic/missing_threads.h \
 	src/libnm-systemd-shared/src/basic/missing_type.h \
 	src/libnm-systemd-shared/src/basic/ordered-set.c \
 	src/libnm-systemd-shared/src/basic/ordered-set.h \
+	src/libnm-systemd-shared/src/basic/origin-id.h \
 	src/libnm-systemd-shared/src/basic/parse-util.c \
 	src/libnm-systemd-shared/src/basic/parse-util.h \
 	src/libnm-systemd-shared/src/basic/path-util.c \
@@ -2435,9 +2468,9 @@ src_libnm_systemd_shared_libnm_systemd_shared_la_SOURCES = \
 	src/libnm-systemd-shared/src/basic/user-util.h \
 	src/libnm-systemd-shared/src/basic/utf8.c \
 	src/libnm-systemd-shared/src/basic/utf8.h \
-	src/libnm-systemd-shared/src/basic/util.c \
-	src/libnm-systemd-shared/src/basic/util.h \
+	src/libnm-systemd-shared/src/fundamental/logarithm.h \
 	src/libnm-systemd-shared/src/fundamental/macro-fundamental.h \
+	src/libnm-systemd-shared/src/fundamental/memory-util-fundamental.h \
 	src/libnm-systemd-shared/src/fundamental/sha256.c \
 	src/libnm-systemd-shared/src/fundamental/sha256.h \
 	src/libnm-systemd-shared/src/fundamental/string-util-fundamental.c \
@@ -2463,6 +2496,7 @@ src_libnm_systemd_core_libnm_systemd_core_la_cppflags = \
 	-I$(srcdir)/src/libnm-systemd-core/sd-adapt-core \
 	-I$(srcdir)/src/libnm-systemd-core/src/systemd \
 	-I$(srcdir)/src/libnm-systemd-core/src/libsystemd-network \
+	-I$(srcdir)/src/libnm-systemd-core/src/libsystemd/sd-device \
 	-I$(srcdir)/src/libnm-systemd-core/src/libsystemd/sd-event \
 	$(NULL)
 
@@ -2477,13 +2511,12 @@ src_libnm_systemd_core_libnm_systemd_core_la_SOURCES = \
 	src/libnm-systemd-core/nm-sd.h \
 	src/libnm-systemd-core/sd-adapt-core/condition.h \
 	src/libnm-systemd-core/sd-adapt-core/conf-parser.h \
-	src/libnm-systemd-core/sd-adapt-core/device-util.h \
 	src/libnm-systemd-core/sd-adapt-core/khash.h \
 	src/libnm-systemd-core/sd-adapt-core/network-util.h \
 	src/libnm-systemd-core/sd-adapt-core/nm-sd-adapt-core.c \
 	src/libnm-systemd-core/sd-adapt-core/nm-sd-adapt-core.h \
 	src/libnm-systemd-core/sd-adapt-core/sd-daemon.h \
-	src/libnm-systemd-core/sd-adapt-core/sd-device.h \
+	src/libnm-systemd-core/sd-adapt-core/sd-messages.h \
 	src/libnm-systemd-core/sd-adapt-core/udev-util.h \
 	src/libnm-systemd-core/src/libsystemd-network/dhcp-identifier.c \
 	src/libnm-systemd-core/src/libsystemd-network/dhcp-identifier.h \
@@ -2498,6 +2531,7 @@ src_libnm_systemd_core_libnm_systemd_core_la_SOURCES = \
 	src/libnm-systemd-core/src/libsystemd-network/network-common.h \
 	src/libnm-systemd-core/src/libsystemd-network/sd-dhcp6-client.c \
 	src/libnm-systemd-core/src/libsystemd-network/sd-dhcp6-lease.c \
+	src/libnm-systemd-core/src/libsystemd/sd-device/device-util.h \
 	src/libnm-systemd-core/src/libsystemd/sd-event/event-source.h \
 	src/libnm-systemd-core/src/libsystemd/sd-event/event-util.c \
 	src/libnm-systemd-core/src/libsystemd/sd-event/event-util.h \
@@ -2506,6 +2540,7 @@ src_libnm_systemd_core_libnm_systemd_core_la_SOURCES = \
 	src/libnm-systemd-core/src/libsystemd/sd-id128/id128-util.h \
 	src/libnm-systemd-core/src/libsystemd/sd-id128/sd-id128.c \
 	src/libnm-systemd-core/src/systemd/_sd-common.h \
+	src/libnm-systemd-core/src/systemd/sd-device.h \
 	src/libnm-systemd-core/src/systemd/sd-dhcp6-client.h \
 	src/libnm-systemd-core/src/systemd/sd-dhcp6-lease.h \
 	src/libnm-systemd-core/src/systemd/sd-dhcp6-option.h \
@@ -2624,6 +2659,8 @@ src_core_libNetworkManager_la_SOURCES = \
 	src/core/devices/nm-device-dummy.h \
 	src/core/devices/nm-device-ethernet.c \
 	src/core/devices/nm-device-ethernet.h \
+	src/core/devices/nm-device-hsr.c \
+	src/core/devices/nm-device-hsr.h \
 	src/core/devices/nm-device-infiniband.c \
 	src/core/devices/nm-device-infiniband.h \
 	src/core/devices/nm-device-ip-tunnel.c \
@@ -3285,9 +3322,13 @@ src_core_ppp_nm_pppd_plugin_la_CPPFLAGS = \
 	-I$(builddir)/src \
 	-I$(builddir)/src/libnm-core-public \
 	-I$(srcdir)/src/libnm-core-public \
-	$(GLIB_CFLAGS)
+	$(GLIB_CFLAGS) \
+	$(PPPD_CFLAGS) \
+	$(NULL)
 
 src_core_ppp_nm_pppd_plugin_la_SOURCES = \
+	src/core/ppp/nm-pppd-compat.c \
+	src/core/ppp/nm-pppd-compat.h \
 	src/core/ppp/nm-pppd-plugin.c \
 	src/core/ppp/nm-pppd-plugin.h \
 	src/core/ppp/nm-ppp-status.h
@@ -3326,6 +3367,12 @@ src_core_ppp_libnm_ppp_plugin_la_LIBADD = \
 	$(NULL)
 
 $(src_core_ppp_libnm_ppp_plugin_la_OBJECTS): $(src_libnm_core_public_mkenums_h)
+
+check-local-ppp-plugin: src/core/NetworkManager src/core/ppp/libnm-ppp-plugin.la
+	$(srcdir)/tools/check-exports.sh $(builddir)/src/core/ppp/.libs/libnm-ppp-plugin.so "$(srcdir)/src/core/ppp/nm-ppp-plugin.ver"
+	$(call check_so_symbols,$(builddir)/src/core/ppp/.libs/libnm-ppp-plugin.so)
+
+check_local += check-local-ppp-plugin
 
 endif
 
@@ -3561,7 +3608,9 @@ EXTRA_DIST += \
 	src/core/settings/plugins/ifcfg-rh/tests/network-scripts/ifcfg-test-fcoe-fabric \
 	src/core/settings/plugins/ifcfg-rh/tests/network-scripts/ifcfg-test-fcoe-vn2vn \
 	src/core/settings/plugins/ifcfg-rh/tests/network-scripts/ifcfg-test-ibft \
-	src/core/settings/plugins/ifcfg-rh/tests/network-scripts/ifcfg-test-infiniband \
+	src/core/settings/plugins/ifcfg-rh/tests/network-scripts/ifcfg-test-infiniband0 \
+	src/core/settings/plugins/ifcfg-rh/tests/network-scripts/ifcfg-test-infiniband1 \
+	src/core/settings/plugins/ifcfg-rh/tests/network-scripts/ifcfg-test-infiniband2 \
 	src/core/settings/plugins/ifcfg-rh/tests/network-scripts/ifcfg-test-ip6-disabled.cexpected \
 	src/core/settings/plugins/ifcfg-rh/tests/network-scripts/ifcfg-test-ipoib \
 	src/core/settings/plugins/ifcfg-rh/tests/network-scripts/ifcfg-test-link_local \
@@ -5176,6 +5225,8 @@ src_nmtui_nmtui_SOURCES = \
 	src/nmtui/nmtui-edit.h \
 	src/nmtui/nmtui-hostname.c \
 	src/nmtui/nmtui-hostname.h \
+	src/nmtui/nmtui-radio.c \
+	src/nmtui/nmtui-radio.h \
 	\
 	src/nmtui/nm-editor-bindings.c \
 	src/nmtui/nm-editor-bindings.h \
@@ -5252,8 +5303,8 @@ src_nmtui_nmtui_SOURCES = \
 	src/nmtui/nmt-route-entry.h \
 	src/nmtui/nmt-route-table.c \
 	src/nmtui/nmt-route-table.h \
-	src/nmtui/nmt-slave-list.c \
-	src/nmtui/nmt-slave-list.h \
+	src/nmtui/nmt-port-list.c \
+	src/nmtui/nmt-port-list.h \
 	src/nmtui/nmt-utils.c \
 	src/nmtui/nmt-utils.h \
 	src/nmtui/nmt-widget-list.c \
@@ -5395,12 +5446,14 @@ src/nm-cloud-setup/nm-cloud-setup.service: $(srcdir)/src/nm-cloud-setup/nm-cloud
 	$(AM_V_GEN) $(data_edit) $< >$@
 
 install-data-hook-cloud-setup: install-data-hook-dispatcher
-	$(INSTALL_SCRIPT) "$(srcdir)/src/nm-cloud-setup/90-nm-cloud-setup.sh" "$(DESTDIR)$(nmlibdir)/dispatcher.d/no-wait.d/"
+	$(INSTALL_SCRIPT) "$(srcdir)/src/nm-cloud-setup/90-nm-cloud-setup.sh" "$(DESTDIR)$(nmlibdir)/dispatcher.d/pre-up.d/"
+	ln -fs ../pre-up.d/90-nm-cloud-setup.sh "$(DESTDIR)$(nmlibdir)/dispatcher.d/no-wait.d/90-nm-cloud-setup.sh"
 	ln -fs no-wait.d/90-nm-cloud-setup.sh "$(DESTDIR)$(nmlibdir)/dispatcher.d/90-nm-cloud-setup.sh"
 
 install_data_hook += install-data-hook-cloud-setup
 
 uninstall-hook-cloud-setup:
+	rm -f "$(DESTDIR)$(nmlibdir)/dispatcher.d/pre-up.d/90-nm-cloud-setup.sh"
 	rm -f "$(DESTDIR)$(nmlibdir)/dispatcher.d/no-wait.d/90-nm-cloud-setup.sh"
 	rm -f "$(DESTDIR)$(nmlibdir)/dispatcher.d/90-nm-cloud-setup.sh"
 
@@ -5456,9 +5509,16 @@ endif
 ###############################################################################
 
 check-local-tests-client: src/nmcli/nmcli src/tests/client/test-client.py
-	LIBTOOL="$(LIBTOOL)" "$(srcdir)/src/tests/client/test-client.sh" "$(builddir)" "$(srcdir)" "$(PYTHON)" --
+	LIBTOOL="$(LIBTOOL)" "$(srcdir)/src/tests/client/test-client.sh" "$(builddir)" "$(srcdir)" "$(PYTHON)" -- TestNmcli
 
 check_local += check-local-tests-client
+
+check-local-tests-cloud-setup: src/nm-cloud-setup/nm-cloud-setup src/tests/client/test-client.py
+	LIBTOOL="$(LIBTOOL)" "$(srcdir)/src/tests/client/test-client.sh" "$(builddir)" "$(srcdir)" "$(PYTHON)" -- TestNmCloudSetup
+
+if BUILD_NM_CLOUD_SETUP
+check_local += check-local-tests-cloud-setup
+endif
 
 CLEANFILES += src/tests/client/test-client.log
 
@@ -5470,6 +5530,8 @@ EXTRA_DIST += \
 	src/tests/client/test-client.check-on-disk/test_003.expected \
 	src/tests/client/test-client.check-on-disk/test_004.expected \
 	src/tests/client/test-client.check-on-disk/test_offline.expected \
+	src/tests/client/test-client.check-on-disk/test_version_warn.expected \
+	src/tests/client/test-client.check-on-disk/test_daemon_not_running.expected \
 	\
 	src/tests/client/meson.build \
 	$(NULL)
@@ -5497,13 +5559,8 @@ systemdsystemunit_DATA += \
 data/NetworkManager.service: $(srcdir)/data/NetworkManager.service.in
 	$(AM_V_GEN) $(data_edit) $< >$@
 
-if HAVE_SYSTEMD_200
 data/NetworkManager-wait-online.service: $(srcdir)/data/NetworkManager-wait-online.service.in
 	$(AM_V_GEN) $(data_edit) $< >$@
-else
-data/NetworkManager-wait-online.service: $(srcdir)/data/NetworkManager-wait-online-systemd-pre200.service.in
-	$(AM_V_GEN) $(data_edit) $< >$@
-endif
 
 data/NetworkManager-dispatcher.service: $(srcdir)/data/NetworkManager-dispatcher.service.in
 	$(AM_V_GEN) $(data_edit) $< >$@
@@ -5537,7 +5594,6 @@ EXTRA_DIST += \
 	data/85-nm-unmanaged.rules \
 	data/90-nm-thunderbolt.rules \
 	data/NetworkManager-dispatcher.service.in \
-	data/NetworkManager-wait-online-systemd-pre200.service.in \
 	data/NetworkManager-wait-online.service.in \
 	data/NetworkManager.service.in \
 	data/nm-priv-helper.service.in \
@@ -5721,6 +5777,11 @@ EXTRA_DIST += \
 	vapi/libnm.deps \
 	vapi/meson.build
 
+check-local-vapi:
+	$(srcdir)/tools/check-vapi.sh
+
+check_local += check-local-vapi
+
 ###############################################################################
 
 girdir = $(datadir)/gir-1.0
@@ -5782,19 +5843,23 @@ EXTRA_DIST += \
 	\
 	src/contrib/nm-vpn-editor-plugin-call.h \
 	\
+	tools/check-compare-generated.sh \
 	tools/check-config-options.sh \
 	tools/check-docs.sh \
 	tools/check-exports.sh \
-	tools/check-compare-generated.sh \
 	tools/check-gitlab-ci.sh \
+	tools/check-nm-autoptr.sh \
 	tools/check-tree.sh \
+	tools/check-vapi.sh \
 	tools/create-exports-NetworkManager.sh \
 	tools/debug-helper.py \
+	tools/enums-to-docbook.pl \
 	tools/meson-post-install.sh \
+	tools/meson-dist-data.sh \
 	tools/run-nm-test.sh \
+	tools/test-cloud-meta-mock.py \
 	tools/test-networkmanager-service.py \
 	tools/test-sudo-wrapper.sh \
-	tools/enums-to-docbook.pl \
 	\
 	src/core/settings/plugins/meson.build \
 	\

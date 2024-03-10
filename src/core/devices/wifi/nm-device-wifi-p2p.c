@@ -15,6 +15,7 @@
 #include "NetworkManagerUtils.h"
 #include "devices/nm-device-private.h"
 #include "libnm-core-aux-intern/nm-libnm-core-utils.h"
+#include "libnm-core-aux-intern/nm-common-macros.h"
 #include "libnm-core-intern/nm-core-internal.h"
 #include "libnm-glib-aux/nm-ref-string.h"
 #include "libnm-platform/nm-platform.h"
@@ -233,10 +234,13 @@ is_available(NMDevice *device, NMDeviceCheckDevAvailableFlags flags)
 }
 
 static gboolean
-check_connection_compatible(NMDevice *device, NMConnection *connection, GError **error)
+check_connection_compatible(NMDevice     *device,
+                            NMConnection *connection,
+                            gboolean      check_properties,
+                            GError      **error)
 {
     if (!NM_DEVICE_CLASS(nm_device_wifi_p2p_parent_class)
-             ->check_connection_compatible(device, connection, error))
+             ->check_connection_compatible(device, connection, check_properties, error))
         return FALSE;
 
     /* TODO: Allow limitting the interface using the HW-address? */
@@ -585,7 +589,7 @@ act_stage3_ip_config(NMDevice *device, int addr_family)
             nm_device_devip_set_state(device, AF_INET, NM_DEVICE_IP_STATE_READY, l3cd);
 
             /* This just disables the addressing indicator. */
-            method = NM_SETTING_IP4_CONFIG_METHOD_DISABLED;
+            method = NM_SETTING_IP4_CONFIG_METHOD_MANUAL;
         }
     }
 
@@ -643,7 +647,7 @@ get_auto_ip_config_method(NMDevice *device, int addr_family)
     if (addr_family == AF_INET && priv->group_iface
         && !nm_supplicant_interface_get_p2p_group_owner(priv->group_iface)
         && nm_supplicant_interface_get_p2p_assigned_addr(priv->group_iface, NULL, NULL))
-        return NM_SETTING_IP4_CONFIG_METHOD_DISABLED;
+        return NM_SETTING_IP4_CONFIG_METHOD_MANUAL;
 
     /* Override the AUTO method to mean shared if we are group owner. */
     if (priv->group_iface && nm_supplicant_interface_get_p2p_group_owner(priv->group_iface)) {
@@ -979,23 +983,24 @@ device_state_changed(NMDevice           *device,
 }
 
 static void
-impl_device_wifi_p2p_start_find(NMDBusObject                      *obj,
-                                const NMDBusInterfaceInfoExtended *interface_info,
-                                const NMDBusMethodInfoExtended    *method_info,
-                                GDBusConnection                   *connection,
-                                const char                        *sender,
-                                GDBusMethodInvocation             *invocation,
-                                GVariant                          *parameters)
+p2p_start_find_auth_cb(NMDevice              *device,
+                       GDBusMethodInvocation *invocation,
+                       NMAuthSubject         *subject,
+                       GError                *error,
+                       gpointer               user_data)
 {
-    NMDeviceWifiP2P           *self    = NM_DEVICE_WIFI_P2P(obj);
+    NMDeviceWifiP2P           *self    = NM_DEVICE_WIFI_P2P(device);
     NMDeviceWifiP2PPrivate    *priv    = NM_DEVICE_WIFI_P2P_GET_PRIVATE(self);
-    gs_unref_variant GVariant *options = NULL;
+    gs_unref_variant GVariant *options = user_data;
     const char                *opts_key;
     GVariant                  *opts_val;
     GVariantIter               iter;
     gint32                     timeout = 30;
 
-    g_variant_get(parameters, "(@a{sv})", &options);
+    if (error) {
+        g_dbus_method_invocation_return_gerror(invocation, error);
+        return;
+    }
 
     g_variant_iter_init(&iter, options);
     while (g_variant_iter_next(&iter, "{&sv}", &opts_key, &opts_val)) {
@@ -1047,16 +1052,42 @@ impl_device_wifi_p2p_start_find(NMDBusObject                      *obj,
 }
 
 static void
-impl_device_wifi_p2p_stop_find(NMDBusObject                      *obj,
-                               const NMDBusInterfaceInfoExtended *interface_info,
-                               const NMDBusMethodInfoExtended    *method_info,
-                               GDBusConnection                   *connection,
-                               const char                        *sender,
-                               GDBusMethodInvocation             *invocation,
-                               GVariant                          *parameters)
+impl_device_wifi_p2p_start_find(NMDBusObject                      *obj,
+                                const NMDBusInterfaceInfoExtended *interface_info,
+                                const NMDBusMethodInfoExtended    *method_info,
+                                GDBusConnection                   *connection,
+                                const char                        *sender,
+                                GDBusMethodInvocation             *invocation,
+                                GVariant                          *parameters)
 {
-    NMDeviceWifiP2P        *self = NM_DEVICE_WIFI_P2P(obj);
+    gs_unref_variant GVariant *options = NULL;
+
+    g_variant_get(parameters, "(@a{sv})", &options);
+
+    nm_device_auth_request(NM_DEVICE(obj),
+                           invocation,
+                           NULL,
+                           NM_AUTH_PERMISSION_WIFI_SCAN,
+                           TRUE,
+                           NULL,
+                           p2p_start_find_auth_cb,
+                           g_steal_pointer(&options));
+}
+
+static void
+p2p_stop_find_auth_cb(NMDevice              *device,
+                      GDBusMethodInvocation *invocation,
+                      NMAuthSubject         *subject,
+                      GError                *error,
+                      gpointer               user_data)
+{
+    NMDeviceWifiP2P        *self = NM_DEVICE_WIFI_P2P(device);
     NMDeviceWifiP2PPrivate *priv = NM_DEVICE_WIFI_P2P_GET_PRIVATE(self);
+
+    if (error) {
+        g_dbus_method_invocation_return_gerror(invocation, error);
+        return;
+    }
 
     if (!priv->mgmt_iface) {
         g_dbus_method_invocation_return_error_literal(
@@ -1070,6 +1101,25 @@ impl_device_wifi_p2p_stop_find(NMDBusObject                      *obj,
     nm_supplicant_interface_p2p_stop_find(priv->mgmt_iface);
 
     g_dbus_method_invocation_return_value(invocation, NULL);
+}
+
+static void
+impl_device_wifi_p2p_stop_find(NMDBusObject                      *obj,
+                               const NMDBusInterfaceInfoExtended *interface_info,
+                               const NMDBusMethodInfoExtended    *method_info,
+                               GDBusConnection                   *connection,
+                               const char                        *sender,
+                               GDBusMethodInvocation             *invocation,
+                               GVariant                          *parameters)
+{
+    nm_device_auth_request(NM_DEVICE(obj),
+                           invocation,
+                           NULL,
+                           NM_AUTH_PERMISSION_WIFI_SCAN,
+                           TRUE,
+                           NULL,
+                           p2p_stop_find_auth_cb,
+                           NULL);
 }
 
 /*****************************************************************************/
@@ -1168,7 +1218,11 @@ static const NMDBusInterfaceInfoExtended interface_info_device_wifi_p2p = {
         .signals    = NM_DEFINE_GDBUS_SIGNAL_INFOS(&nm_signal_info_wifi_p2p_peer_added,
                                                 &nm_signal_info_wifi_p2p_peer_removed, ),
         .properties = NM_DEFINE_GDBUS_PROPERTY_INFOS(
-            NM_DEFINE_DBUS_PROPERTY_INFO_EXTENDED_READABLE("HwAddress", "s", NM_DEVICE_HW_ADDRESS),
+            NM_DEFINE_DBUS_PROPERTY_INFO_EXTENDED_READABLE(
+                "HwAddress",
+                "s",
+                NM_DEVICE_HW_ADDRESS,
+                .annotations = NM_GDBUS_ANNOTATION_INFO_LIST_DEPRECATED(), ),
             NM_DEFINE_DBUS_PROPERTY_INFO_EXTENDED_READABLE("Peers",
                                                            "ao",
                                                            NM_DEVICE_WIFI_P2P_PEERS), ), ),

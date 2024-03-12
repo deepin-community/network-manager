@@ -1,0 +1,13 @@
+Index: network-manager/src/libnm-systemd-shared/sd-adapt-shared/nm-sd-adapt-shared.h
+===================================================================
+--- network-manager.orig/src/libnm-systemd-shared/sd-adapt-shared/nm-sd-adapt-shared.h
++++ network-manager/src/libnm-systemd-shared/sd-adapt-shared/nm-sd-adapt-shared.h
+@@ -72,7 +72,7 @@ struct statx;
+ static inline pid_t
+ raw_getpid(void)
+ {
+-#if defined(__alpha__)
++#if defined(__alpha__) || defined(__sw_64__)
+     return (pid_t) syscall(__NR_getxpid);
+ #else
+     return (pid_t) syscall(__NR_getpid);

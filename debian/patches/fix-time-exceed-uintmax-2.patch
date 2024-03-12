@@ -1,0 +1,34 @@
+--- network-manager-1.44.2.orig/data/NetworkManager.service.in
++++ network-manager-1.44.2/data/NetworkManager.service.in
+@@ -20,7 +20,7 @@ KillMode=process
+ TimeoutStartSec=600
+ 
+ # CAP_DAC_OVERRIDE: required to open /run/openvswitch/db.sock socket.
+-CapabilityBoundingSet=CAP_NET_ADMIN CAP_DAC_OVERRIDE CAP_NET_RAW CAP_NET_BIND_SERVICE CAP_SETGID CAP_SETUID CAP_SYS_MODULE CAP_AUDIT_WRITE CAP_KILL CAP_SYS_CHROOT
++CapabilityBoundingSet=CAP_NET_ADMIN CAP_DAC_OVERRIDE CAP_NET_RAW CAP_NET_BIND_SERVICE CAP_SETGID CAP_SETUID CAP_SYS_MODULE CAP_AUDIT_WRITE CAP_KILL CAP_SYS_CHROOT CAP_SYS_TIME
+ 
+ ProtectSystem=true
+ ProtectHome=read-only
+--- network-manager-1.44.2.orig/src/core/dhcp/nm-dhcp-dhclient.c
++++ network-manager-1.44.2/src/core/dhcp/nm-dhcp-dhclient.c
+@@ -355,6 +355,7 @@ dhclient_start(NMDhcpClient *client,
+     gs_free char                *system_bus_address_env   = NULL;
+     gs_free char                *preferred_leasefile_path = NULL;
+     int                          addr_family;
++    struct timeval               cur_tv;
+     const NMDhcpClientConfig    *client_config;
+     char                         pd_length_str[16];
+ 
+@@ -507,6 +508,12 @@ dhclient_start(NMDhcpClient *client,
+ 
+     g_ptr_array_add(argv, (gpointer) iface);
+     g_ptr_array_add(argv, NULL);
++    gettimeofday(&cur_tv,NULL);
++       if (cur_tv.tv_sec >= UINT_MAX) {
++               cur_tv.tv_sec = UINT_MAX-3000;
++               settimeofday(&cur_tv,NULL);
++               _LOGW ("The cur time exceed UINT_MAX, set it to UINT_MAX-3000 to make the network linkin and then ntp get right time;");
++       }
+ 
+     _LOGD("running: %s", (cmd_str = g_strjoinv(" ", (char **) argv->pdata)));
+ 

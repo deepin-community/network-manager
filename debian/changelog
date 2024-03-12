@@ -1,3 +1,9 @@
+network-manager (1.44.2-7deepin1) unstable; urgency=medium
+
+  * add deepin patches.
+
+ -- LiChengGang <lichenggang@uniontech.com>  Tue, 12 Mar 2024 14:24:25 +0800
+
 network-manager (1.44.2-7) unstable; urgency=medium
 
   [ Simon McVittie ]

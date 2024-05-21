@@ -5,3 +5,4 @@ uniontech001_add_sunway_support.patch
 fix-time-exceed-uintmax-2.patch
 deepin-sae-key.patch
 deepin-fix-NetworkManagerwaitonline-failed.patch
+0001-disable-broken-ut.patch

@@ -1,3 +1,10 @@
+network-manager (1.44.2-7deepin3) unstable; urgency=medium
+
+  * add flags of active connection interface
+  * 
+
+ -- fuleyi <fuleyi@uniontech.com>  Tue, 02 Jul 2024 16:32:01 +0800
+
 network-manager (1.44.2-7deepin2) unstable; urgency=medium
 
   * fix: disable broken ut

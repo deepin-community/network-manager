@@ -1,0 +1,276 @@
+Subject: [PATCH] chore: 增加ActivateConnection2接口
+---
+Index: src/core/nm-active-connection.c
+IDEA additional info:
+Subsystem: com.intellij.openapi.diff.impl.patch.CharsetEP
+<+>UTF-8
+===================================================================
+diff --git a/src/core/nm-active-connection.c b/src/core/nm-active-connection.c
+--- a/src/core/nm-active-connection.c	(revision 209a8d9c77b1304f21f45160c5d5bb223aa1b1a4)
++++ b/src/core/nm-active-connection.c	(revision 58ede40b27dc1ea54ad506c19579f88924c085b4)
+@@ -32,7 +32,7 @@
+     char *pending_activation_id;
+ 
+     NMActivationStateFlags state_flags;
+-
++    guint32 flags;
+     NMActiveConnectionState state;
+     bool                    is_default : 1;
+     bool                    is_default6 : 1;
+@@ -82,6 +82,7 @@
+                              PROP_VPN,
+                              PROP_MASTER,
+                              PROP_CONTROLLER,
++                             PROP_FLAGS,
+ 
+                              PROP_INT_SETTINGS_CONNECTION,
+                              PROP_INT_APPLIED_CONNECTION,
+@@ -754,6 +755,13 @@
+     return NM_ACTIVE_CONNECTION_GET_PRIVATE(self)->master;
+ }
+ 
++guint32
++nm_active_connection_get_flags (NMActiveConnection *connection)
++{
++	g_return_val_if_fail (NM_IS_ACTIVE_CONNECTION (connection), NULL);
++	return NM_ACTIVE_CONNECTION_GET_PRIVATE (connection)->flags;
++}
++
+ /**
+  * nm_active_connection_get_master_ready:
+  * @self: the #NMActiveConnection
+@@ -1351,6 +1359,9 @@
+             master_device = nm_active_connection_get_device(priv->master);
+         nm_dbus_utils_g_value_set_object_path(value, master_device);
+         break;
++    case PROP_FLAGS:
++        g_value_set_uint (value, nm_active_connection_get_flags (self));
++        break;
+     case PROP_INT_SUBJECT:
+         g_value_set_object(value, priv->subject);
+         break;
+@@ -1602,6 +1613,7 @@
+                                                            "o",
+                                                            NM_ACTIVE_CONNECTION_DHCP6_CONFIG),
+             NM_DEFINE_DBUS_PROPERTY_INFO_EXTENDED_READABLE("Vpn", "b", NM_ACTIVE_CONNECTION_VPN),
++            NM_DEFINE_DBUS_PROPERTY_INFO_EXTENDED_READABLE("Flags", "u", NM_ACTIVE_CONNECTION_FLAGS),
+             NM_DEFINE_DBUS_PROPERTY_INFO_EXTENDED_READABLE("Controller",
+                                                            "o",
+                                                            NM_ACTIVE_CONNECTION_CONTROLLER),
+@@ -1681,6 +1693,17 @@
+                           G_MAXUINT32,
+                           NM_ACTIVATION_STATE_FLAG_NONE,
+                           G_PARAM_READWRITE | G_PARAM_CONSTRUCT_ONLY | G_PARAM_STATIC_STRINGS);
++    /**
++	 * PROP_FLAGS
++	 *
++	 * the flags of device
++	*/
++    obj_properties[PROP_FLAGS] =
++        g_param_spec_uint (NM_ACTIVE_CONNECTION_FLAGS, "", "",
++                                                       0, G_MAXUINT32,
++                                                       0,
++                                                       G_PARAM_READABLE |
++                                                       G_PARAM_STATIC_STRINGS);
+ 
+     obj_properties[PROP_DEFAULT] = g_param_spec_boolean(NM_ACTIVE_CONNECTION_DEFAULT,
+                                                         "",
+Index: src/core/nm-active-connection.h
+IDEA additional info:
+Subsystem: com.intellij.openapi.diff.impl.patch.CharsetEP
+<+>UTF-8
+===================================================================
+diff --git a/src/core/nm-active-connection.h b/src/core/nm-active-connection.h
+--- a/src/core/nm-active-connection.h	(revision 209a8d9c77b1304f21f45160c5d5bb223aa1b1a4)
++++ b/src/core/nm-active-connection.h	(revision 58ede40b27dc1ea54ad506c19579f88924c085b4)
+@@ -39,6 +39,7 @@
+ #define NM_ACTIVE_CONNECTION_VPN             "vpn"
+ #define NM_ACTIVE_CONNECTION_MASTER          "master"
+ #define NM_ACTIVE_CONNECTION_CONTROLLER      "controller"
++#define NM_ACTIVE_CONNECTION_FLAGS                "flags"
+ 
+ /* Internal non-exported properties */
+ #define NM_ACTIVE_CONNECTION_INT_SETTINGS_CONNECTION "int-settings-connection"
+@@ -186,4 +187,5 @@
+ 
+ void nm_active_connection_clear_secrets(NMActiveConnection *self);
+ 
++guint32                        nm_active_connection_get_flags                (NMActiveConnection *connection);
+ #endif /* __NETWORKMANAGER_ACTIVE_CONNECTION_H__ */
+Index: src/core/nm-manager.c
+IDEA additional info:
+Subsystem: com.intellij.openapi.diff.impl.patch.CharsetEP
+<+>UTF-8
+===================================================================
+diff --git a/src/core/nm-manager.c b/src/core/nm-manager.c
+--- a/src/core/nm-manager.c	(revision 209a8d9c77b1304f21f45160c5d5bb223aa1b1a4)
++++ b/src/core/nm-manager.c	(revision 58ede40b27dc1ea54ad506c19579f88924c085b4)
+@@ -6584,6 +6584,7 @@
+     NMManagerPrivate                   *priv      = NM_MANAGER_GET_PRIVATE(self);
+     gs_unref_object NMActiveConnection *active    = NULL;
+     gs_unref_object NMAuthSubject      *subject   = NULL;
++    gs_unref_variant GVariant          *options   = NULL;
+     NMSettingsConnection               *sett_conn = NULL;
+     NMDevice                           *device    = NULL;
+     gboolean                            is_vpn    = FALSE;
+@@ -6591,6 +6592,30 @@
+     const char                         *connection_path;
+     const char                         *device_path;
+     const char                         *specific_object_path;
++    guint32                            flags      = 0;
++
++    if (nm_streq (method_info->parent.name, "ActivateConnection2")) {
++        g_variant_get (parameters, "(&o&o&o@a{sv})", &connection_path, &device_path, &specific_object_path, &options);
++    } else {
++        g_variant_get (parameters, "(&o&o&o)", &connection_path, &device_path, &specific_object_path);
++    }
++    if (options) {
++        GVariantIter iter;
++        const char *option_name;
++        GVariant *option_value;
++
++        g_variant_iter_init (&iter, options);
++        while (g_variant_iter_next (&iter, "{&sv}", &option_name, &option_value)) {
++            gs_unref_variant GVariant *option_value_free = NULL;
++
++            option_value_free = option_value;
++
++            if (   nm_streq (option_name, "flags")
++               && g_variant_is_of_type (option_value, G_VARIANT_TYPE_INT32)) {
++                  flags = g_variant_get_int32 (option_value);
++            }
++        }
++    }
+ 
+     g_variant_get(parameters, "(&o&o&o)", &connection_path, &device_path, &specific_object_path);
+ 
+@@ -6644,7 +6669,7 @@
+                                           &error);
+     if (!subject)
+         goto error;
+-
++    nm_auth_subject_set_flag(subject, flags);
+     active = _new_active_connection(self,
+                                     is_vpn,
+                                     sett_conn,
+@@ -6824,6 +6849,7 @@
+     gboolean                            is_volatile  = FALSE;
+     gboolean                            bind_dbus_client = FALSE;
+     AsyncOpType                         async_op_type;
++    guint32                             flags = 0;
+ 
+     if (nm_streq(method_info->parent.name, "AddAndActivateConnection2")) {
+         async_op_type = ASYNC_OP_TYPE_AC_AUTH_ADD_AND_ACTIVATE2;
+@@ -6855,7 +6881,10 @@
+ 
+             option_value_free = option_value;
+ 
+-            if (nm_streq(option_name, "persist")
++            if (   nm_streq (option_name, "flags")
++               && g_variant_is_of_type (option_value, G_VARIANT_TYPE_INT32)) {
++                    flags = g_variant_get_int32 (option_value);
++            } else if (nm_streq(option_name, "persist")
+                 && g_variant_is_of_type(option_value, G_VARIANT_TYPE_STRING)) {
+                 s = g_variant_get_string(option_value, NULL);
+ 
+@@ -6927,7 +6956,7 @@
+                                           &error);
+     if (!subject)
+         goto error;
+-
++    nm_auth_subject_set_flag(subject, flags);
+     if (is_vpn) {
+         /* Try to fill the VPN's connection setting and name at least */
+         if (!nm_connection_get_setting_vpn(incompl_conn)) {
+@@ -9378,6 +9407,18 @@
+                         NM_DEFINE_GDBUS_ARG_INFO("specific_object", "o"), ),
+                     .out_args = NM_DEFINE_GDBUS_ARG_INFOS(
+                         NM_DEFINE_GDBUS_ARG_INFO("active_connection", "o"), ), ),
++                .handle = impl_manager_activate_connection, ),
++            NM_DEFINE_DBUS_METHOD_INFO_EXTENDED(
++                NM_DEFINE_GDBUS_METHOD_INFO_INIT(
++                "ActivateConnection2",
++                .in_args = NM_DEFINE_GDBUS_ARG_INFOS(
++                    NM_DEFINE_GDBUS_ARG_INFO("connection", "o"),
++                    NM_DEFINE_GDBUS_ARG_INFO("device", "o"),
++                    NM_DEFINE_GDBUS_ARG_INFO("specific_object", "o"),
++                    NM_DEFINE_GDBUS_ARG_INFO ("options", 		 "a{sv}"),
++                ),
++                .out_args = NM_DEFINE_GDBUS_ARG_INFOS(
++                NM_DEFINE_GDBUS_ARG_INFO("active_connection", "o"), ), ),
+                 .handle = impl_manager_activate_connection, ),
+             NM_DEFINE_DBUS_METHOD_INFO_EXTENDED(
+                 NM_DEFINE_GDBUS_METHOD_INFO_INIT(
+Index: src/libnm-core-aux-intern/nm-auth-subject.c
+IDEA additional info:
+Subsystem: com.intellij.openapi.diff.impl.patch.CharsetEP
+<+>UTF-8
+===================================================================
+diff --git a/src/libnm-core-aux-intern/nm-auth-subject.c b/src/libnm-core-aux-intern/nm-auth-subject.c
+--- a/src/libnm-core-aux-intern/nm-auth-subject.c	(revision 209a8d9c77b1304f21f45160c5d5bb223aa1b1a4)
++++ b/src/libnm-core-aux-intern/nm-auth-subject.c	(revision 58ede40b27dc1ea54ad506c19579f88924c085b4)
+@@ -30,6 +30,7 @@
+ 
+ typedef struct {
+     NMAuthSubjectType subject_type;
++    guint32 flags;
+     struct {
+         gulong  pid;
+         gulong  uid;
+@@ -185,6 +186,23 @@
+                         NULL);
+ }
+ 
++/**
++ * nm_auth_subject_get_flag();
++ * get flags from NMAuthSubject object
++ * Returns: the flag of #NMAuthSubject
++*/
++guint32  nm_auth_subject_get_flag (NMAuthSubject *self)
++{
++	CHECK_SUBJECT (self, NULL);
++	return priv->flags;
++}
++
++void nm_auth_subject_set_flag (NMAuthSubject *self, guint32 flags)
++{
++	CHECK_SUBJECT (self, NULL);
++	priv->flags = flags;
++}
++
+ /**
+  * nm_auth_subject_new_unix_session():
+  *
+@@ -330,7 +348,7 @@
+ _clear_private(NMAuthSubject *self)
+ {
+     NMAuthSubjectPrivate *priv = NM_AUTH_SUBJECT_GET_PRIVATE(self);
+-
++    priv->flags = 0;
+     priv->subject_type     = NM_AUTH_SUBJECT_TYPE_INVALID;
+     priv->unix_process.pid = G_MAXULONG;
+     priv->unix_process.uid = G_MAXULONG;
+@@ -350,6 +368,7 @@
+ {
+     NMAuthSubject        *self = NM_AUTH_SUBJECT(object);
+     NMAuthSubjectPrivate *priv = NM_AUTH_SUBJECT_GET_PRIVATE(self);
++    priv->flags = 0;
+ 
+     /* validate that the created instance. */
+ 
+Index: src/libnm-core-aux-intern/nm-auth-subject.h
+IDEA additional info:
+Subsystem: com.intellij.openapi.diff.impl.patch.CharsetEP
+<+>UTF-8
+===================================================================
+diff --git a/src/libnm-core-aux-intern/nm-auth-subject.h b/src/libnm-core-aux-intern/nm-auth-subject.h
+--- a/src/libnm-core-aux-intern/nm-auth-subject.h	(revision 209a8d9c77b1304f21f45160c5d5bb223aa1b1a4)
++++ b/src/libnm-core-aux-intern/nm-auth-subject.h	(revision 58ede40b27dc1ea54ad506c19579f88924c085b4)
+@@ -55,5 +55,7 @@
+ const char *nm_auth_subject_to_string(NMAuthSubject *self, char *buf, gsize buf_len);
+ 
+ GVariant *nm_auth_subject_unix_to_polkit_gvariant(NMAuthSubject *self);
++guint32  nm_auth_subject_get_flag (NMAuthSubject *self);
+ 
++void nm_auth_subject_set_flag (NMAuthSubject *self, guint32 flags);
+ #endif /* __NETWORKMANAGER_AUTH_SUBJECT_H__ */

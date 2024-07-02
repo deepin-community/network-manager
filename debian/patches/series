@@ -6,3 +6,4 @@ fix-time-exceed-uintmax-2.patch
 deepin-sae-key.patch
 deepin-fix-NetworkManagerwaitonline-failed.patch
 0001-disable-broken-ut.patch
+uniontech002_add_activeconnection_flags.patch

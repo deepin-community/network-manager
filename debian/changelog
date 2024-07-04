@@ -1,3 +1,9 @@
+network-manager (1.44.2-7deepin3) unstable; urgency=medium
+
+  * Update patches
+
+ -- xiangzelong <xiangzelong@deepin.org>  Thu, 04 Jul 2024 13:40:23 +0800
+
 network-manager (1.44.2-7deepin2) unstable; urgency=medium
 
   * fix: disable broken ut
@@ -3474,4 +3480,3 @@ network-manager (0.2+cvs20040928-1) unstable; urgency=low
   * Initial Release.
 
  -- Thom May <thom@debian.org>  Sun,  3 Oct 2004 11:54:56 +0100
-

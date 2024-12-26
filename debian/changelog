@@ -1,3 +1,9 @@
+network-manager (1.44.2-7deepin5) unstable; urgency=medium
+
+  * add supplicant dbus property SAEConfirmMismatch.
+
+ -- xinpeng.wang <wangxinpeng@uniontech.com>  Thu, 26 Dec 2024 14:08:17 +0800
+
 network-manager (1.44.2-7deepin4) unstable; urgency=medium
 
   * add flags of active connection interface

@@ -3,7 +3,7 @@ core-add-reason-argument-to-NMActiveConnection-device_sta.patch
 core-propagate-the-user-requested-reason-for-act-request-.patch
 uniontech001_add_sunway_support.patch
 fix-time-exceed-uintmax-2.patch
-deepin-sae-key.patch
 deepin-fix-NetworkManagerwaitonline-failed.patch
 0001-disable-broken-ut.patch
 uniontech002_add_activeconnection_flags.patch
+uniontech-sae-display-wrong-password-hint.patch

@@ -158,9 +158,19 @@ typedef struct {
              * is disabled. */
             guint acd_timeout_msec;
 
+            /* The DSCP value to use */
+            guint8 dscp;
+
+            /* Whether the DSCP value is explicitly set (or it is the default
+             * one) */
+            bool dscp_explicit : 1;
+
             /* Set BOOTP broadcast flag in request packets, so that servers
              * will always broadcast replies. */
             bool request_broadcast : 1;
+
+            /* Whether to send or not the client identifier */
+            bool send_client_id : 1;
 
         } v4;
         struct {
@@ -232,7 +242,7 @@ const NMDhcpClientConfig *nm_dhcp_client_get_config(NMDhcpClient *self);
 
 pid_t nm_dhcp_client_get_pid(NMDhcpClient *self);
 
-const NML3ConfigData *nm_dhcp_client_get_lease(NMDhcpClient *self);
+const NML3ConfigData *nm_dhcp_client_get_lease(NMDhcpClient *self, gboolean ignore_acd_pending);
 
 void nm_dhcp_client_stop(NMDhcpClient *self, gboolean release);
 

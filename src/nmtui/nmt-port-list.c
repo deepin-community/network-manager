@@ -103,11 +103,11 @@ nmt_port_list_connection_filter(NmtEditConnectionList *list,
     s_con = nm_connection_get_setting_connection(connection);
     g_return_val_if_fail(s_con != NULL, FALSE);
 
-    port_type = nm_setting_connection_get_slave_type(s_con);
+    port_type = nm_setting_connection_get_port_type(s_con);
     if (g_strcmp0(port_type, priv->controller_type) != 0)
         return FALSE;
 
-    controller = nm_setting_connection_get_master(s_con);
+    controller = nm_setting_connection_get_controller(s_con);
     if (!controller)
         return FALSE;
 
@@ -124,7 +124,7 @@ nmt_port_list_add_connection(NmtEditConnectionList *list)
 {
     NmtPortListPrivate *priv = NMT_PORT_LIST_GET_PRIVATE(list);
 
-    nmt_add_connection_full(_("Select the type of slave connection you wish to add."),
+    nmt_add_connection_full(_("Select the type of port connection you wish to add."),
                             NULL,
                             priv->controller,
                             priv->type_filter,

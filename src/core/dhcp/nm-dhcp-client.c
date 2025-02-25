@@ -275,10 +275,25 @@ nm_dhcp_client_create_options_dict(NMDhcpClient *self, gboolean static_keys)
     return options;
 }
 
+/**
+ * nm_dhcp_client_get_lease():
+ * @self: the client
+ * @ignore_acd_pending: FALSE means to only return the lease that already
+ * passed ACD, thus it is in use by us. TRUE means to return a new lease
+ * that might still be pending of Address Collision Detection (ACD) check,
+ * if there is one, or return the current lease that passed ACD if not.
+ *
+ * Returns the current lease that passed ACD or a pending lease still under
+ * ACD check.
+ *
+ */
 const NML3ConfigData *
-nm_dhcp_client_get_lease(NMDhcpClient *self)
+nm_dhcp_client_get_lease(NMDhcpClient *self, gboolean ignore_acd_pending)
 {
-    return NM_DHCP_CLIENT_GET_PRIVATE(self)->l3cd_curr;
+    if (ignore_acd_pending)
+        return NM_DHCP_CLIENT_GET_PRIVATE(self)->l3cd_curr;
+    else
+        return NM_DHCP_CLIENT_GET_PRIVATE(self)->l3cd_next;
 }
 
 /*****************************************************************************/
@@ -527,7 +542,7 @@ _acd_reglist_data_remove(NMDhcpClient *self, guint idx, gboolean do_log)
 
     nm_clear_l3cd(&reglist_data->l3cd);
 
-    nm_l3cfg_commit_on_idle_schedule(priv->config.l3cfg, NM_L3_CFG_COMMIT_TYPE_UPDATE);
+    nm_l3cfg_commit_on_idle_schedule(priv->config.l3cfg, NM_L3_CFG_COMMIT_TYPE_AUTO);
 
     g_array_remove_index(priv->v4.acd.reglist, idx);
 
@@ -824,9 +839,10 @@ _nm_dhcp_client_notify(NMDhcpClient         *self,
 
     _acd_check_lease(self, &acd_state);
 
-    options = priv->l3cd_next ? nm_dhcp_lease_get_options(
-                  nm_l3_config_data_get_dhcp_lease(priv->l3cd_next, priv->config.addr_family))
-                              : NULL;
+    options = priv->l3cd_next
+                  ? nm_dhcp_lease_get_options(
+                        nm_l3_config_data_get_dhcp_lease(priv->l3cd_next, priv->config.addr_family))
+                  : NULL;
 
     if (_LOGI_ENABLED()) {
         const char *req_str =
@@ -898,6 +914,12 @@ _nm_dhcp_client_notify(NMDhcpClient         *self,
     }
 
     l3_cfg_notify_check_connected(self);
+
+    if (!priv->l3cd_curr) {
+        /* When the lease is lost, any cached ACD information is no longer relevant.
+         * Remove it so that it doesn't interfere with a new lease we might get. */
+        _acd_state_reset(self, TRUE, TRUE);
+    }
 
     _emit_notify(self,
                  NM_DHCP_CLIENT_NOTIFY_TYPE_LEASE_UPDATE,

@@ -66,7 +66,7 @@
 
 #define NM_DEVICE_TYPE_DESC          "type-desc"          /* Internal only */
 #define NM_DEVICE_IFINDEX            "ifindex"            /* Internal only */
-#define NM_DEVICE_MASTER             "master"             /* Internal only */
+#define NM_DEVICE_CONTROLLER         "controller"         /* Internal only */
 #define NM_DEVICE_HAS_PENDING_ACTION "has-pending-action" /* Internal only */
 
 /* Internal signals */
@@ -186,9 +186,9 @@ typedef struct _NMDeviceClass {
      * a delta in the MTU allowed value due the encapsulation overhead */
     guint16 mtu_parent_delta;
 
-    /* Whether the device type is a master-type. This depends purely on the
+    /* Whether the device type is a controller-type. This depends purely on the
      * type (NMDeviceClass), not the actual device instance. */
-    bool is_master : 1;
+    bool is_controller : 1;
 
     /* Force setting the MTU actually means first setting the MTU
      * to (desired_MTU-1) and then setting the desired_MTU
@@ -375,10 +375,10 @@ typedef struct _NMDeviceClass {
     /* Update the connection with currently configured L2 settings */
     void (*update_connection)(NMDevice *device, NMConnection *connection);
 
-    gboolean (*master_update_slave_connection)(NMDevice     *self,
-                                               NMDevice     *slave,
-                                               NMConnection *connection,
-                                               GError      **error);
+    gboolean (*controller_update_port_connection)(NMDevice     *self,
+                                                  NMDevice     *port,
+                                                  NMConnection *connection,
+                                                  GError      **error);
 
     /* Attachs a port asynchronously. Returns TRUE/FALSE on immediate
      * success/error; in such cases, the callback is not invoked. If the
@@ -502,11 +502,11 @@ gboolean  nm_device_parent_notify_changed(NMDevice *self,
 const char *nm_device_parent_find_for_connection(NMDevice   *self,
                                                  const char *current_setting_parent);
 
-/* Master */
-gboolean nm_device_is_master(NMDevice *dev);
+/* Controller */
+gboolean nm_device_is_controller(NMDevice *dev);
 
-/* Slave */
-NMDevice *nm_device_get_master(NMDevice *dev);
+/* Port */
+NMDevice *nm_device_get_controller(NMDevice *dev);
 
 NMActRequest          *nm_device_get_act_request(NMDevice *dev);
 NMSettingsConnection  *nm_device_get_settings_connection(NMDevice *dev);
@@ -526,14 +526,14 @@ gboolean nm_device_is_available(NMDevice *dev, NMDeviceCheckDevAvailableFlags fl
 gboolean nm_device_has_carrier(NMDevice *dev);
 
 NMConnection *nm_device_generate_connection(NMDevice *self,
-                                            NMDevice *master,
+                                            NMDevice *controller,
                                             gboolean *out_maybe_later,
                                             GError  **error);
 
-gboolean nm_device_master_update_slave_connection(NMDevice     *master,
-                                                  NMDevice     *slave,
-                                                  NMConnection *connection,
-                                                  GError      **error);
+gboolean nm_device_controller_update_port_connection(NMDevice     *controller,
+                                                     NMDevice     *port,
+                                                     NMConnection *connection,
+                                                     GError      **error);
 
 gboolean
 nm_device_can_auto_connect(NMDevice *self, NMSettingsConnection *sett_conn, char **specific_object);
@@ -549,7 +549,8 @@ gboolean nm_device_check_connection_compatible(NMDevice     *device,
                                                gboolean      check_properties,
                                                GError      **error);
 
-gboolean nm_device_check_slave_connection_compatible(NMDevice *device, NMConnection *connection);
+gboolean nm_device_check_port_connection_compatible(NMDevice *device, NMConnection *connection);
+gboolean nm_device_can_be_parent(NMDevice *device);
 
 gboolean nm_device_can_assume_connections(NMDevice *self);
 gboolean nm_device_unmanage_on_quit(NMDevice *self);
@@ -560,7 +561,8 @@ int      nm_device_spec_match_list_full(NMDevice *self, const GSList *specs, int
 gboolean nm_device_is_activating(NMDevice *dev);
 gboolean nm_device_autoconnect_allowed(NMDevice *self);
 
-NMDeviceState nm_device_get_state(NMDevice *device);
+NMDeviceState       nm_device_get_state(NMDevice *device);
+NMDeviceStateReason nm_device_get_state_reason(NMDevice *device);
 
 gboolean nm_device_get_enabled(NMDevice *device);
 
@@ -601,9 +603,9 @@ void nm_device_copy_ip6_dns_config(NMDevice *self, NMDevice *from_device);
  *   them by default
  * @NM_UNMANAGED_USER_UDEV: %TRUE when unmanaged by user decision (via UDev rule)
  * @NM_UNMANAGED_EXTERNAL_DOWN: %TRUE when unmanaged because !IFF_UP and not created by NM
- * @NM_UNMANAGED_IS_SLAVE: indicates that the device is enslaved. Note that
- *   setting the NM_UNMANAGED_IS_SLAVE to %TRUE makes no sense, this flag has only
- *   meaning to set a slave device as managed if the parent is managed too.
+ * @NM_UNMANAGED_IS_PORT: indicates that the device is attached as port. Note that
+ *   setting the NM_UNMANAGED_IS_PORT to %TRUE makes no sense, this flag has only
+ *   meaning to set a port device as managed if the parent is managed too.
  */
 typedef enum {
     NM_UNMANAGED_NONE = 0,
@@ -622,7 +624,7 @@ typedef enum {
     NM_UNMANAGED_USER_CONF     = (1LL << 6),
     NM_UNMANAGED_USER_UDEV     = (1LL << 7),
     NM_UNMANAGED_EXTERNAL_DOWN = (1LL << 8),
-    NM_UNMANAGED_IS_SLAVE      = (1LL << 9),
+    NM_UNMANAGED_IS_PORT       = (1LL << 9),
 
     NM_UNMANAGED_ALL = ((1LL << 10) - 1),
 } NMUnmanagedFlags;
@@ -724,16 +726,16 @@ nm_device_autoconnect_blocked_unset(NMDevice *device, NMDeviceAutoconnectBlocked
 
 void nm_device_recheck_auto_activate_schedule(NMDevice *device);
 
-NMDeviceSysIfaceState nm_device_sys_iface_state_get(NMDevice *device);
+NMDeviceManagedType nm_device_managed_type_get(NMDevice *device);
 
-gboolean nm_device_sys_iface_state_is_external(NMDevice *self);
-gboolean nm_device_sys_iface_state_is_external_or_assume(NMDevice *self);
+gboolean nm_device_managed_type_is_external(NMDevice *self);
+gboolean nm_device_managed_type_is_external_or_assume(NMDevice *self);
 
-void nm_device_sys_iface_state_set(NMDevice *device, NMDeviceSysIfaceState sys_iface_state);
+void nm_device_managed_type_set(NMDevice *device, NMDeviceManagedType managed_type);
 
 void nm_device_notify_sleeping(NMDevice *self);
 
-NMDeviceSysIfaceState nm_device_get_sys_iface_state_before_sleep(NMDevice *self);
+NMDeviceManagedType nm_device_get_managed_type_before_sleep(NMDevice *self);
 
 void nm_device_state_changed(NMDevice *device, NMDeviceState state, NMDeviceStateReason reason);
 
@@ -845,5 +847,11 @@ nm_device_get_hostname_from_dns_lookup(NMDevice *self, int addr_family, gboolean
 void nm_device_clear_dns_lookup_data(NMDevice *self, const char *reason);
 
 gboolean nm_device_get_allow_autoconnect_on_external(NMDevice *self);
+
+void nm_routing_rules_sync(NMConnection *applied_connection,
+                           NMTernary     set_mode,
+                           GPtrArray *(*get_extra_rules)(NMDevice *self),
+                           NMDevice *self,
+                           NMNetns  *netns);
 
 #endif /* __NETWORKMANAGER_DEVICE_H__ */

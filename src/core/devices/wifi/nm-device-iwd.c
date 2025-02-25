@@ -774,8 +774,8 @@ check_connection_compatible(NMDevice     *device,
             return FALSE;
         }
 
-        /* Check for MAC address blacklist */
-        mac_blacklist = nm_setting_wireless_get_mac_address_blacklist(s_wireless);
+        /* Check for MAC address denylist */
+        mac_blacklist = nm_setting_wireless_get_mac_address_denylist(s_wireless);
         for (i = 0; mac_blacklist[i]; i++) {
             nm_assert(nm_utils_hwaddr_valid(mac_blacklist[i], ETH_ALEN));
 
@@ -3483,7 +3483,7 @@ nm_device_iwd_parse_netconfig(NMDeviceIwd *self, int addr_family, GVariantIter *
                 /* Use SOURCE_DHCP as shorthand for the various autoconfiguration protocols */
                 source = NM_IP_CONFIG_SOURCE_DHCP;
             else
-                _LOGW(LOGD_WIFI, "iwd_parse_netconfig: Uknown Method value \"%s\"", str_value);
+                _LOGW(LOGD_WIFI, "iwd_parse_netconfig: Unknown Method value \"%s\"", str_value);
         }
 
         if (nm_streq(key, "Addresses")) {
@@ -3527,7 +3527,7 @@ nm_device_iwd_parse_netconfig(NMDeviceIwd *self, int addr_family, GVariantIter *
             else if (nm_streq(str_value, "resolve"))
                 mdns = NM_SETTING_CONNECTION_MDNS_RESOLVE;
             else
-                _LOGW(LOGD_WIFI, "iwd_parse_netconfig: Uknown MDNS value \"%s\"", str_value);
+                _LOGW(LOGD_WIFI, "iwd_parse_netconfig: Unknown MDNS value \"%s\"", str_value);
         }
     }
 

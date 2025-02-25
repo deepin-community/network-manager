@@ -1,26 +1,17 @@
 <?xml version='1.0'?> <!--*-nxml-*-->
 <?xml-stylesheet type="text/xsl" href="http://docbook.sourceforge.net/release/xsl/current/xhtml/docbook.xsl"?>
-<!DOCTYPE refentry PUBLIC "-//OASIS//DTD DocBook XML V4.2//EN"
-"http://www.oasis-open.org/docbook/xml/4.2/docbookx.dtd" [
+<!DOCTYPE refentry PUBLIC "-//OASIS//DTD DocBook XML V4.5//EN"
+"http://www.oasis-open.org/docbook/xml/4.5/docbookx.dtd" [
 <!ENTITY % entities SYSTEM "common.ent" >
 %entities;
 ]>
 
 <!--
+  SPDX-License-Identifier: GFDL-1.1-no-invariants-or-later
+
   NetworkManager.conf(5) manual page
 
-  Copyright 2010 - 2016 Red Hat, Inc.
-
-  Permission is granted to copy, distribute and/or modify this document
-  under the terms of the GNU Free Documentation License, Version 1.1
-  or any later version published by the Free Software Foundation;
-  with no Invariant Sections, no Front-Cover Texts, and no Back-Cover
-  Texts. You may obtain a copy of the GNU Free Documentation License
-  from the Free Software Foundation by visiting their Web site or by
-  writing to:
-
-  Free Software Foundation, Inc.,
-  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301, USA.
+  Copyright 2010 - 2023 Red Hat, Inc.
 -->
 
 <refentry id="NetworkManager.conf">
@@ -177,17 +168,16 @@ plugins-=remove-me
       <varlistentry>
         <term><varname>dhcp</varname></term>
         <listitem><para>This key sets up what DHCP client
-        NetworkManager will use. Allowed values are
-        <literal>dhclient</literal>, <literal>dhcpcd</literal>, and
-        <literal>internal</literal>. The <literal>dhclient</literal>
-        and <literal>dhcpcd</literal> options require the indicated
-        clients to be installed. The <literal>internal</literal>
-        option uses a built-in DHCP client which is not currently as
-        featureful as the external clients.</para>
-        <para>If this key is missing, it defaults to <literal>&NM_CONFIG_DEFAULT_MAIN_DHCP;</literal>.
-        If the chosen plugin is not available, clients are looked for
-        in this order: <literal>dhclient</literal>, <literal>dhcpcd</literal>,
-        <literal>internal</literal>.</para></listitem>
+        NetworkManager will use. Allowed values depend on build configuration and
+        typically include <literal>internal</literal> and <literal>dhcpcd</literal>.
+        Support for unmaintained <literal>dhclient</literal> client has been deprecated
+        and disabled by default.</para>
+        <para>The <literal>internal</literal> client is built-in, while other options
+        may require an external DHCP client to be installed.</para>
+        <para>If this key is missing, <literal>&NM_CONFIG_DEFAULT_MAIN_DHCP;</literal>
+        is used with a fallback to other suppored clients in this order:
+        <literal>internal</literal>, <literal>dhcpcd</literal>,
+        <literal>dhclient</literal>.</para></listitem>
       </varlistentry>
       <varlistentry>
         <term><varname>no-auto-default</varname></term>
@@ -228,7 +218,7 @@ no-auto-default=*
             if specified (See <xref linkend="ignore-carrier"/>).
             Otherwise, it is a list of matches to specify for which device
             carrier should be ignored. See <xref linkend="device-spec"/> for the
-            syntax how to specify a device. Note that master types like
+            syntax how to specify a device. Note that controller types like
             bond, bridge, and team ignore carrier by default. You can however
             revert that default using the "except:" specifier (or better,
             use the per-device setting instead of the deprecated setting).
@@ -470,20 +460,6 @@ no-auto-default=*
       </varlistentry>
 
       <varlistentry>
-        <term><varname>slaves-order</varname></term>
-        <listitem>
-          <para>
-            This key specifies in which order slave connections are
-            auto-activated on boot or when the master activates
-            them. Allowed values are <literal>name</literal> (order
-            connection by interface name, the default), or
-            <literal>index</literal> (order slaves by their kernel
-            index).
-          </para>
-        </listitem>
-      </varlistentry>
-
-      <varlistentry>
         <term><varname>firewall-backend</varname></term>
         <listitem>
           <para>
@@ -515,7 +491,7 @@ no-auto-default=*
             files without preserving their contents.
           </para>
           <para>
-            The path can also be overriden by pointing to a specific
+            The path can also be overridden by pointing to a specific
             existing and writable directory.  On the other hand setting
             this to an empty string or any other value disables the
             profile conversion mechanism.
@@ -657,7 +633,9 @@ level=TRACE
 domains=ALL
 </programlisting>
     and restart the daemon with <command>systemctl restart NetworkManager</command>. Then
-    reproduce the problem. You can find the logs in syslog (for example <command>journalctl</command>).
+    reproduce the problem. You can find the logs in syslog (for example
+    <command>journalctl</command>, or <command>journalctl -u NetworkManager</command>
+    to show only logs from NetworkManager).
     </para>
 
     <para>
@@ -845,6 +823,11 @@ domains=ALL
       to use the default from <literal>NetworkManager.conf</literal>.
     </para>
     <para>
+      Note that while nmcli supports various aliases and convenience features for configuring
+      properties, the settings in this section do not. For example, enum values usually only
+      can be configured via their numeric magic number.
+    </para>
+    <para>
       Example:
 <programlisting>
 [connection]
@@ -856,7 +839,7 @@ ipv6.ip6-privacy=0
     <para>
       Not all properties can be overwritten, only the following
       properties are supported to have their default values configured
-      (see <link linkend='nm-settings'><citerefentry><refentrytitle>nm-settings</refentrytitle><manvolnum>5</manvolnum></citerefentry></link> for details).
+      (see <link linkend='nm-settings-nmcli'><citerefentry><refentrytitle>nm-settings-nmcli</refentrytitle><manvolnum>5</manvolnum></citerefentry></link> for details).
     </para>
     <para>
       <!-- The following comment is used by check-config-options.sh, don't remove it. -->
@@ -874,7 +857,16 @@ ipv6.ip6-privacy=0
           </para></listitem>
         </varlistentry>
         <varlistentry>
+          <term><varname>connection.autoconnect-ports</varname></term>
+        </varlistentry>
+        <varlistentry>
           <term><varname>connection.autoconnect-slaves</varname></term>
+          <listitem><para>This is deprecated, please use "connection.autoconnect-ports" instead.
+          </para></listitem>
+        </varlistentry>
+        <varlistentry>
+          <term><varname>connection.down-on-poweroff</varname></term>
+          <listitem><para>Whether the connection will be brought down before the system is powered off.</para></listitem>
         </varlistentry>
         <varlistentry>
           <term><varname>connection.mud-url</varname></term>
@@ -889,7 +881,13 @@ ipv6.ip6-privacy=0
         </varlistentry>
         <varlistentry>
           <term><varname>connection.mdns</varname></term>
-          <listitem><para>If unspecified, the ultimate default values depends on the DNS plugin. With systemd-resolved the default currently is "no" (0) and for all other plugins also "no" (0).</para></listitem>
+          <listitem><para>
+            Currently only the systemd-resolve DNS plugin supports this setting.
+            If the setting is unspecified both in the profile and in the global
+            default here, then the default is determined by systemd-resolved.
+            See <literal>MulticastDNS=</literal> in
+            <citerefentry><refentrytitle>resolved.conf</refentrytitle><manvolnum>5</manvolnum></citerefentry>.
+          </para></listitem>
         </varlistentry>
         <varlistentry>
           <term><varname>connection.mptcp-flags</varname></term>
@@ -946,12 +944,19 @@ ipv6.ip6-privacy=0
           <term><varname>ipv4.dhcp-client-id</varname></term>
         </varlistentry>
         <varlistentry>
+          <term><varname>ipv4.dhcp-dscp</varname></term>
+        </varlistentry>
+        <varlistentry>
           <term><varname>ipv4.dhcp-iaid</varname></term>
           <listitem><para>If left unspecified, it defaults to "ifname".</para></listitem>
         </varlistentry>
         <varlistentry>
           <term><varname>ipv4.dhcp-hostname-flags</varname></term>
           <listitem><para>If left unspecified, the value 3 (fqdn-encoded,fqdn-serv-update) is used.</para></listitem>
+        </varlistentry>
+        <varlistentry>
+          <term><varname>ipv4.dhcp-send-release</varname></term>
+          <listitem><para>Whether the DHCP client will send RELEASE message when bringing the connection down.</para></listitem>
         </varlistentry>
         <varlistentry>
           <term><varname>ipv4.dhcp-timeout</varname></term>
@@ -1007,6 +1012,10 @@ ipv6.ip6-privacy=0
           <listitem><para>If left unspecified, the value 1 (fqdn-serv-update) is used.</para></listitem>
         </varlistentry>
         <varlistentry>
+          <term><varname>ipv6.dhcp-send-release</varname></term>
+          <listitem><para>Whether the DHCP client will send RELEASE message when bringing the connection down.</para></listitem>
+        </varlistentry>
+        <varlistentry>
           <term><varname>ipv6.dhcp-timeout</varname></term>
           <listitem><para>If left unspecified, the default value for
            the interface type is used.</para></listitem>
@@ -1020,6 +1029,18 @@ ipv6.ip6-privacy=0
           <term><varname>ipv6.ip6-privacy</varname></term>
           <listitem><para>If <literal>ipv6.ip6-privacy</literal> is unset, use the content of
             "/proc/sys/net/ipv6/conf/default/use_tempaddr" as last fallback.
+          </para></listitem>
+        </varlistentry>
+        <varlistentry>
+          <term><varname>ipv6.temp-valid-lifetime</varname></term>
+          <listitem><para>If <literal>ipv6.temp-valid-lifetime</literal> is unset, use the
+            content of "/proc/sys/net/ipv6/conf/default/temp_valid_lft" as last fallback.
+          </para></listitem>
+        </varlistentry>
+        <varlistentry>
+          <term><varname>ipv6.temp-preferred-lifetime</varname></term>
+          <listitem><para>If <literal>ipv6.temp-preferred-lifetime</literal> is unset, use
+            the content of "/proc/sys/net/ipv6/conf/default/temp_prefered_lft" as last fallback.
           </para></listitem>
         </varlistentry>
         <varlistentry>
@@ -1038,6 +1059,9 @@ ipv6.ip6-privacy=0
         <varlistentry>
           <term><varname>loopback.mtu</varname></term>
           <listitem><para>If configured explicitly to 0, the MTU is not reconfigured during device activation unless it is required due to IPv6 constraints. If left unspecified, a DHCP/IPv6 SLAAC provided value is used or the MTU is left unspecified on activation.</para></listitem>
+        </varlistentry>
+        <varlistentry>
+          <term><varname>macsec.offload</varname></term>
         </varlistentry>
         <varlistentry>
           <term><varname>sriov.autoprobe-drivers</varname></term>
@@ -1105,7 +1129,7 @@ ipv6.ip6-privacy=0
 <programlisting>
 [connection]
 ipv6.ip6-privacy=0
-connection.autoconnect-slaves=1
+connection.autoconnect-ports=1
 vpn.timeout=120
 
 [connection-wifi-wlan0]
@@ -1353,7 +1377,7 @@ managed=1
             <para>
               Like the per-connection settings <literal>ethernet.generate-mac-address-mask</literal>
               and <literal>wifi.generate-mac-address-mask</literal>, this allows to configure the
-              generated MAC addresses during scanning. See <citerefentry><refentrytitle>nm-settings</refentrytitle><manvolnum>5</manvolnum></citerefentry>
+              generated MAC addresses during scanning. See <citerefentry><refentrytitle>nm-settings-nmcli</refentrytitle><manvolnum>5</manvolnum></citerefentry>
               for details.
             </para>
           </listitem>
@@ -1459,6 +1483,12 @@ managed=1
           connectivity is checked when a network connection exists. If
           set to 0 connectivity checking is disabled.  If missing, the
           default is 300 seconds.</para></listitem>
+        </varlistentry>
+        <varlistentry>
+          <term><varname>timeout</varname></term>
+          <listitem><para>Specified in seconds; controls how long
+          to wait for a response before connectivity is marked as
+          limited.  If missing, the default is 20 seconds.</para></listitem>
         </varlistentry>
         <varlistentry>
           <term><varname>response</varname></term>
@@ -1656,7 +1686,7 @@ enable=nm-version-min:1.3,nm-version-min:1.2.6,nm-version-min:1.0.16
             private keys in plain text, so it will be made readable only to
             root, and the plugin will ignore files that are readable or
             writable by any user or group other than root. See "Secret flag types"
-            in <link linkend='nm-settings'><citerefentry><refentrytitle>nm-settings</refentrytitle><manvolnum>5</manvolnum></citerefentry></link>
+            in <link linkend='nm-settings-nmcli'><citerefentry><refentrytitle>nm-settings-nmcli</refentrytitle><manvolnum>5</manvolnum></citerefentry></link>
             for how to avoid storing passwords in plain text.
           </para>
           <para>
@@ -1881,7 +1911,7 @@ interface-name:vboxnet*,except:interface-name:vboxnet2
       <link linkend='nmcli'><citerefentry><refentrytitle>nmcli</refentrytitle><manvolnum>1</manvolnum></citerefentry></link>,
       <link linkend='nmcli-examples'><citerefentry><refentrytitle>nmcli-examples</refentrytitle><manvolnum>7</manvolnum></citerefentry></link>,
       <link linkend='nm-online'><citerefentry><refentrytitle>nm-online</refentrytitle><manvolnum>1</manvolnum></citerefentry></link>,
-      <link linkend='nm-settings'><citerefentry><refentrytitle>nm-settings</refentrytitle><manvolnum>5</manvolnum></citerefentry></link>,
+      <link linkend='nm-settings-nmcli'><citerefentry><refentrytitle>nm-settings-nmcli</refentrytitle><manvolnum>5</manvolnum></citerefentry></link>,
       <citerefentry><refentrytitle>nm-applet</refentrytitle><manvolnum>1</manvolnum></citerefentry>,
       <citerefentry><refentrytitle>nm-connection-editor</refentrytitle><manvolnum>1</manvolnum></citerefentry>
     </para>

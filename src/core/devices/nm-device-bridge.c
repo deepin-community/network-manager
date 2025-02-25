@@ -13,6 +13,7 @@
 #include "NetworkManagerUtils.h"
 #include "nm-device-private.h"
 #include "libnm-platform/nm-platform.h"
+#include "libnm-platform/nm-platform-utils.h"
 #include "nm-device-factory.h"
 #include "libnm-core-aux-intern/nm-libnm-core-utils.h"
 #include "libnm-core-intern/nm-core-internal.h"
@@ -299,13 +300,11 @@ typedef struct {
 } Option;
 
 #define OPTION(_name, _sysname, ...) \
-    {                                \
-        .name    = ""_name           \
-                   "",               \
-        .sysname = ""_sysname        \
-                   "",               \
-        __VA_ARGS__                  \
-    }
+    {.name    = ""_name              \
+                "",                  \
+     .sysname = ""_sysname           \
+                "",                  \
+     __VA_ARGS__}
 
 #define OPTION_TYPE_INT(min, max, def) .nm_min = (min), .nm_max = (max), .nm_default = (def)
 
@@ -313,7 +312,7 @@ typedef struct {
 
 #define OPTION_TYPE_TOFROM(to, fro) .to_sysfs = (to), .from_sysfs = (fro)
 
-static const Option master_options[] = {
+static const Option controller_options[] = {
     OPTION(NM_SETTING_BRIDGE_STP, /* this must stay as the first item */
            "stp_state",
            OPTION_TYPE_BOOL(NM_BRIDGE_STP_DEF), ),
@@ -421,36 +420,18 @@ static const Option master_options[] = {
         0,
     }};
 
-static const Option slave_options[] = {
-    OPTION(NM_SETTING_BRIDGE_PORT_PRIORITY,
-           "priority",
-           OPTION_TYPE_INT(NM_BRIDGE_PORT_PRIORITY_MIN,
-                           NM_BRIDGE_PORT_PRIORITY_MAX,
-                           NM_BRIDGE_PORT_PRIORITY_DEF),
-           .default_if_zero = TRUE, ),
-    OPTION(NM_SETTING_BRIDGE_PORT_PATH_COST,
-           "path_cost",
-           OPTION_TYPE_INT(NM_BRIDGE_PORT_PATH_COST_MIN,
-                           NM_BRIDGE_PORT_PATH_COST_MAX,
-                           NM_BRIDGE_PORT_PATH_COST_DEF),
-           .default_if_zero = TRUE, ),
-    OPTION(NM_SETTING_BRIDGE_PORT_HAIRPIN_MODE, "hairpin_mode", OPTION_TYPE_BOOL(FALSE), ),
-    {0}};
-
-static const NMPlatformBridgeVlan **
-setting_vlans_to_platform(GPtrArray *array)
+static NMPlatformBridgeVlan *
+setting_vlans_to_platform(GPtrArray *array, guint *out_len)
 {
-    NMPlatformBridgeVlan **arr;
-    NMPlatformBridgeVlan  *p_data;
-    guint                  i;
+    NMPlatformBridgeVlan *arr;
+    guint                 i;
 
-    if (!array || !array->len)
+    if (!array || !array->len) {
+        *out_len = 0;
         return NULL;
+    }
 
-    G_STATIC_ASSERT_EXPR(_nm_alignof(NMPlatformBridgeVlan *) >= _nm_alignof(NMPlatformBridgeVlan));
-    arr    = g_malloc((sizeof(NMPlatformBridgeVlan *) * (array->len + 1))
-                   + (sizeof(NMPlatformBridgeVlan) * (array->len)));
-    p_data = (NMPlatformBridgeVlan *) &arr[array->len + 1];
+    arr = g_new(NMPlatformBridgeVlan, array->len);
 
     for (i = 0; i < array->len; i++) {
         NMBridgeVlan *vlan = array->pdata[i];
@@ -458,105 +439,41 @@ setting_vlans_to_platform(GPtrArray *array)
 
         nm_bridge_vlan_get_vid_range(vlan, &vid_start, &vid_end);
 
-        p_data[i] = (NMPlatformBridgeVlan){
+        arr[i] = (NMPlatformBridgeVlan){
             .vid_start = vid_start,
             .vid_end   = vid_end,
             .pvid      = nm_bridge_vlan_is_pvid(vlan),
             .untagged  = nm_bridge_vlan_is_untagged(vlan),
         };
-        arr[i] = &p_data[i];
     }
-    arr[i] = NULL;
-    return (const NMPlatformBridgeVlan **) arr;
+
+    *out_len = array->len;
+    return arr;
 }
 
 static void
 commit_port_options(NMDevice *device, NMSettingBridgePort *setting)
 {
-    const Option              *option;
-    NMSetting                 *s;
-    gs_unref_object NMSetting *s_clear = NULL;
-    int                        ifindex = nm_device_get_ifindex(device);
+    guint32 path_cost, priority;
 
-    if (setting)
-        s = NM_SETTING(setting);
-    else
-        s = s_clear = nm_setting_bridge_port_new();
+    path_cost = nm_setting_bridge_port_get_path_cost(setting);
+    if (path_cost == 0)
+        path_cost = NM_BRIDGE_PORT_PATH_COST_DEF;
 
-    for (option = slave_options; option->name; option++) {
-        nm_auto_unset_gvalue GValue val = G_VALUE_INIT;
-        GParamSpec                 *pspec;
-        const char                 *value;
-        char                        value_buf[100];
+    priority = nm_setting_bridge_port_get_priority(setting);
+    if (priority == 0)
+        priority = NM_BRIDGE_PORT_PRIORITY_DEF;
 
-        pspec = g_object_class_find_property(G_OBJECT_GET_CLASS(s), option->name);
-        nm_assert(pspec);
-
-        g_value_init(&val, G_PARAM_SPEC_VALUE_TYPE(pspec));
-        g_object_get_property((GObject *) s, option->name, &val);
-
-        if (option->to_sysfs) {
-            value = option->to_sysfs(&val);
-            goto out;
-        }
-
-        switch (pspec->value_type) {
-        case G_TYPE_BOOLEAN:
-            value = g_value_get_boolean(&val) ? "1" : "0";
-            break;
-        case G_TYPE_UINT64:
-        case G_TYPE_UINT:
-        {
-            guint64 uval;
-
-            if (pspec->value_type == G_TYPE_UINT64)
-                uval = g_value_get_uint64(&val);
-            else
-                uval = (guint) g_value_get_uint(&val);
-
-            /* zero means "unspecified" for some NM properties but isn't in the
-             * allowed kernel range, so reset the property to the default value.
-             */
-            if (option->default_if_zero && uval == 0) {
-                if (pspec->value_type == G_TYPE_UINT64)
-                    uval = NM_G_PARAM_SPEC_GET_DEFAULT_UINT64(pspec);
-                else
-                    uval = NM_G_PARAM_SPEC_GET_DEFAULT_UINT(pspec);
-            }
-
-            /* Linux kernel bridge interfaces use 'centiseconds' for time-based values.
-             * In reality it's not centiseconds, but depends on HZ and USER_HZ, which
-             * is almost always works out to be a multiplier of 100, so we can assume
-             * centiseconds.  See clock_t_to_jiffies().
-             */
-            if (option->user_hz_compensate)
-                uval *= 100;
-
-            if (pspec->value_type == G_TYPE_UINT64)
-                nm_sprintf_buf(value_buf, "%" G_GUINT64_FORMAT, uval);
-            else
-                nm_sprintf_buf(value_buf, "%u", (guint) uval);
-
-            value = value_buf;
-        } break;
-        case G_TYPE_STRING:
-            value = g_value_get_string(&val);
-            break;
-        default:
-            nm_assert_not_reached();
-            value = NULL;
-            break;
-        }
-
-out:
-        if (!value)
-            return;
-
-        nm_platform_sysctl_slave_set_option(nm_device_get_platform(device),
-                                            ifindex,
-                                            option->sysname,
-                                            value);
-    }
+    nm_platform_link_change(nm_device_get_platform(device),
+                            nm_device_get_ifindex(device),
+                            NULL,
+                            NULL,
+                            &((NMPlatformLinkBridgePort){
+                                .path_cost = path_cost,
+                                .priority  = priority,
+                                .hairpin   = nm_setting_bridge_port_get_hairpin_mode(setting),
+                            }),
+                            0);
 }
 
 static void
@@ -569,12 +486,12 @@ update_connection(NMDevice *device, NMConnection *connection)
     gs_free char    *stp = NULL;
     int              stp_value;
 
-    option = master_options;
+    option = controller_options;
     nm_assert(nm_streq(option->sysname, "stp_state"));
 
-    stp = nm_platform_sysctl_master_get_option(nm_device_get_platform(device),
-                                               ifindex,
-                                               option->sysname);
+    stp = nm_platform_sysctl_controller_get_option(nm_device_get_platform(device),
+                                                   ifindex,
+                                                   option->sysname);
     stp_value =
         _nm_utils_ascii_str_to_int64(stp, 10, option->nm_min, option->nm_max, option->nm_default);
     g_object_set(s_bridge, option->name, stp_value, NULL);
@@ -585,9 +502,9 @@ update_connection(NMDevice *device, NMConnection *connection)
         gs_free char               *str   = NULL;
         GParamSpec                 *pspec;
 
-        str   = nm_platform_sysctl_master_get_option(nm_device_get_platform(device),
-                                                   ifindex,
-                                                   option->sysname);
+        str   = nm_platform_sysctl_controller_get_option(nm_device_get_platform(device),
+                                                       ifindex,
+                                                       option->sysname);
         pspec = g_object_class_find_property(G_OBJECT_GET_CLASS(s_bridge), option->name);
 
         if (!stp_value && option->only_with_stp)
@@ -657,72 +574,80 @@ out:
 }
 
 static gboolean
-master_update_slave_connection(NMDevice     *device,
-                               NMDevice     *slave,
-                               NMConnection *connection,
-                               GError      **error)
+controller_update_port_connection(NMDevice     *device,
+                                  NMDevice     *port,
+                                  NMConnection *connection,
+                                  GError      **error)
 {
-    NMDeviceBridge      *self = NM_DEVICE_BRIDGE(device);
-    NMSettingConnection *s_con;
-    NMSettingBridgePort *s_port;
-    int                  ifindex_slave      = nm_device_get_ifindex(slave);
-    NMConnection        *applied_connection = nm_device_get_applied_connection(device);
+    NMSettingConnection  *s_con;
+    NMSettingBridgePort  *s_port;
+    int                   ifindex_port       = nm_device_get_ifindex(port);
+    NMConnection         *applied_connection = nm_device_get_applied_connection(device);
+    const NMPlatformLink *pllink;
 
-    const Option *option;
-
-    g_return_val_if_fail(ifindex_slave > 0, FALSE);
+    g_return_val_if_fail(ifindex_port > 0, FALSE);
 
     s_con  = nm_connection_get_setting_connection(connection);
     s_port = _nm_connection_ensure_setting(connection, NM_TYPE_SETTING_BRIDGE_PORT);
+    pllink = nm_platform_link_get(nm_device_get_platform(port), ifindex_port);
 
-    for (option = slave_options; option->name; option++) {
-        gs_free char *str = nm_platform_sysctl_slave_get_option(nm_device_get_platform(device),
-                                                                ifindex_slave,
-                                                                option->sysname);
-        uint          value;
-
-        if (str) {
-            /* See comments in set_sysfs_uint() about centiseconds. */
-            if (option->user_hz_compensate) {
-                value = _nm_utils_ascii_str_to_int64(str,
-                                                     10,
-                                                     option->nm_min * 100,
-                                                     option->nm_max * 100,
-                                                     option->nm_default * 100);
-                value /= 100;
-            } else {
-                value = _nm_utils_ascii_str_to_int64(str,
-                                                     10,
-                                                     option->nm_min,
-                                                     option->nm_max,
-                                                     option->nm_default);
-            }
-            g_object_set(s_port, option->name, value, NULL);
-        } else
-            _LOGW(LOGD_BRIDGE, "failed to read bridge port setting '%s'", option->sysname);
+    if (pllink && pllink->port_kind == NM_PORT_KIND_BRIDGE) {
+        g_object_set(s_port,
+                     NM_SETTING_BRIDGE_PORT_PATH_COST,
+                     pllink->port_data.bridge.path_cost,
+                     NULL);
+        g_object_set(s_port,
+                     NM_SETTING_BRIDGE_PORT_PRIORITY,
+                     pllink->port_data.bridge.priority,
+                     NULL);
+        g_object_set(s_port,
+                     NM_SETTING_BRIDGE_PORT_HAIRPIN_MODE,
+                     pllink->port_data.bridge.hairpin,
+                     NULL);
     }
 
     g_object_set(s_con,
-                 NM_SETTING_CONNECTION_MASTER,
+                 NM_SETTING_CONNECTION_CONTROLLER,
                  nm_connection_get_uuid(applied_connection),
-                 NM_SETTING_CONNECTION_SLAVE_TYPE,
+                 NM_SETTING_CONNECTION_PORT_TYPE,
                  NM_SETTING_BRIDGE_SETTING_NAME,
                  NULL);
     return TRUE;
 }
 
 static gboolean
-bridge_set_vlan_options(NMDevice *device, NMSettingBridge *s_bridge)
+is_bridge_pvid_changed(NMDevice *device, NMSettingBridge *s_bridge)
 {
-    NMDeviceBridge                      *self = NM_DEVICE_BRIDGE(device);
-    gconstpointer                        hwaddr;
-    size_t                               length;
-    gboolean                             enabled;
-    guint16                              pvid;
-    NMPlatform                          *plat;
-    int                                  ifindex;
-    gs_unref_ptrarray GPtrArray         *vlans      = NULL;
-    gs_free const NMPlatformBridgeVlan **plat_vlans = NULL;
+    int                        ifindex = nm_device_get_ifindex(device);
+    const NMPlatformLnkBridge *nmp_link_br;
+    NMPlatform                *platform = nm_device_get_platform(device);
+    bool    desired_vlan_filtering      = nm_setting_bridge_get_vlan_filtering(s_bridge);
+    guint16 desired_pvid                = nm_setting_bridge_get_vlan_default_pvid(s_bridge);
+
+    nm_platform_link_refresh(platform, ifindex);
+    nmp_link_br = nm_platform_link_get_lnk_bridge(platform, ifindex, NULL);
+
+    if (nmp_link_br) {
+        return desired_vlan_filtering != nmp_link_br->vlan_filtering
+               || desired_pvid != nmp_link_br->default_pvid;
+    } else {
+        return TRUE;
+    }
+}
+
+static gboolean
+bridge_set_vlan_options(NMDevice *device, NMSettingBridge *s_bridge, gboolean is_reapply)
+{
+    NMDeviceBridge               *self = NM_DEVICE_BRIDGE(device);
+    gconstpointer                 hwaddr;
+    size_t                        length;
+    gboolean                      enabled;
+    guint16                       pvid;
+    NMPlatform                   *plat;
+    int                           ifindex;
+    gs_unref_ptrarray GPtrArray  *vlans      = NULL;
+    gs_free NMPlatformBridgeVlan *plat_vlans = NULL;
+    guint                         num_vlans;
 
     if (self->vlan_configured)
         return TRUE;
@@ -739,7 +664,7 @@ bridge_set_vlan_options(NMDevice *device, NMSettingBridge *s_bridge)
                                                 .vlan_filtering_val    = FALSE,
                                                 .vlan_default_pvid_has = TRUE,
                                                 .vlan_default_pvid_val = 1}));
-        nm_platform_link_set_bridge_vlans(plat, ifindex, FALSE, NULL);
+        nm_platform_link_set_bridge_vlans(plat, ifindex, FALSE, NULL, 0);
         return TRUE;
     }
 
@@ -753,38 +678,45 @@ bridge_set_vlan_options(NMDevice *device, NMSettingBridge *s_bridge)
 
     self->vlan_configured = TRUE;
 
-    /* Filtering must be disabled to change the default PVID.
-     * Clear the default PVID so that we later can force the re-creation of
-     * default PVID VLANs by writing the option again. */
+    if (!is_reapply || is_bridge_pvid_changed(device, s_bridge)) {
+        /* Filtering must be disabled to change the default PVID.
+         * Clear the default PVID so that we later can force the re-creation of
+         * default PVID VLANs by writing the option again. */
 
-    nm_platform_link_set_bridge_info(
-        plat,
-        ifindex,
-        &((NMPlatformLinkSetBridgeInfoData){.vlan_filtering_has    = TRUE,
-                                            .vlan_filtering_val    = FALSE,
-                                            .vlan_default_pvid_has = TRUE,
-                                            .vlan_default_pvid_val = 0}));
+        if (is_reapply) {
+            _LOGD(LOGD_BRIDGE, "default_pvid is changed, resetting bridge VLAN filtering");
+        }
 
-    /* Clear all existing VLANs */
-    if (!nm_platform_link_set_bridge_vlans(plat, ifindex, FALSE, NULL))
-        return FALSE;
-
-    /* Now set the default PVID. After this point the kernel creates
-     * a PVID VLAN on each port, including the bridge itself. */
-    pvid = nm_setting_bridge_get_vlan_default_pvid(s_bridge);
-    if (pvid) {
         nm_platform_link_set_bridge_info(
             plat,
             ifindex,
-            &((NMPlatformLinkSetBridgeInfoData){.vlan_default_pvid_has = TRUE,
-                                                .vlan_default_pvid_val = pvid}));
+            &((NMPlatformLinkSetBridgeInfoData){.vlan_filtering_has    = TRUE,
+                                                .vlan_filtering_val    = FALSE,
+                                                .vlan_default_pvid_has = TRUE,
+                                                .vlan_default_pvid_val = 0}));
+
+        /* Clear all existing VLANs */
+        if (!nm_platform_link_set_bridge_vlans(plat, ifindex, FALSE, NULL, 0))
+            return FALSE;
+
+        /* Now set the default PVID. After this point the kernel creates
+         * a PVID VLAN on each port, including the bridge itself. */
+        pvid = nm_setting_bridge_get_vlan_default_pvid(s_bridge);
+        if (pvid) {
+            nm_platform_link_set_bridge_info(
+                plat,
+                ifindex,
+                &((NMPlatformLinkSetBridgeInfoData){.vlan_default_pvid_has = TRUE,
+                                                    .vlan_default_pvid_val = pvid}));
+        }
     }
 
     /* Create VLANs only after setting the default PVID, so that
      * any PVID VLAN overrides the bridge's default PVID. */
     g_object_get(s_bridge, NM_SETTING_BRIDGE_VLANS, &vlans, NULL);
-    plat_vlans = setting_vlans_to_platform(vlans);
-    if (plat_vlans && !nm_platform_link_set_bridge_vlans(plat, ifindex, FALSE, plat_vlans))
+    plat_vlans = setting_vlans_to_platform(vlans, &num_vlans);
+    if (plat_vlans
+        && !nm_platform_link_set_bridge_vlans(plat, ifindex, FALSE, plat_vlans, num_vlans))
         return FALSE;
 
     nm_platform_link_set_bridge_info(plat,
@@ -795,6 +727,121 @@ bridge_set_vlan_options(NMDevice *device, NMSettingBridge *s_bridge)
                                      }));
 
     return TRUE;
+}
+
+static NMPlatformBridgeVlan *
+merge_bridge_vlan_default_pvid(NMPlatformBridgeVlan *vlans, guint *num_vlans, guint default_pvid)
+{
+    NMPlatformBridgeVlan *vlan;
+    gboolean              has_pvid = FALSE;
+    guint                 i;
+
+    for (i = 0; i < *num_vlans; i++) {
+        if (vlans[i].pvid) {
+            has_pvid = TRUE;
+            break;
+        }
+    }
+
+    /* search if the list of VLANs already contains the default PVID */
+    vlan = NULL;
+    for (i = 0; i < *num_vlans; i++) {
+        if (default_pvid >= vlans[i].vid_start && default_pvid <= vlans[i].vid_end) {
+            vlan = &vlans[i];
+            break;
+        }
+    }
+
+    if (!vlan) {
+        /* VLAN id not found, append the default PVID at the end.
+         * Set the PVID flag only if the port didn't have one. */
+        vlans = g_realloc_n(vlans, *num_vlans + 1, sizeof(NMPlatformBridgeVlan));
+        (*num_vlans)++;
+        vlans[*num_vlans - 1] = (NMPlatformBridgeVlan){
+            .vid_start = default_pvid,
+            .vid_end   = default_pvid,
+            .untagged  = TRUE,
+            .pvid      = !has_pvid,
+        };
+    }
+
+    return vlans;
+}
+
+void
+nm_device_reapply_bridge_port_vlans(NMDevice *device)
+{
+    NMDevice                     *self = device; /* for logging */
+    NMSettingBridgePort          *s_bridge_port;
+    NMDevice                     *controller;
+    NMSettingBridge              *s_bridge;
+    gs_unref_ptrarray GPtrArray  *tmp_vlans         = NULL;
+    gs_free NMPlatformBridgeVlan *setting_vlans     = NULL;
+    gs_free NMPlatformBridgeVlan *plat_vlans        = NULL;
+    guint                         num_setting_vlans = 0;
+    guint                         num_plat_vlans    = 0;
+    NMPlatform                   *plat;
+    int                           ifindex;
+    gboolean                      do_reapply;
+
+    s_bridge_port = nm_device_get_applied_setting(device, NM_TYPE_SETTING_BRIDGE_PORT);
+    if (!s_bridge_port)
+        return;
+
+    controller = nm_device_get_controller(device);
+    if (!controller)
+        return;
+
+    s_bridge = nm_device_get_applied_setting(controller, NM_TYPE_SETTING_BRIDGE);
+    if (!s_bridge)
+        return;
+
+    if (nm_setting_bridge_get_vlan_filtering(s_bridge)) {
+        g_object_get(s_bridge_port, NM_SETTING_BRIDGE_PORT_VLANS, &tmp_vlans, NULL);
+        setting_vlans = setting_vlans_to_platform(tmp_vlans, &num_setting_vlans);
+
+        /* During a regular activation, we first set the default_pvid on the bridge
+        * (which creates the PVID VLAN on the port) and then add the VLANs on the port.
+        * This ensures that the PVID VLAN is inherited from the bridge, but it's
+        * overridden if the port specifies one.
+        * During a reapply on the port, we are not going to touch the bridge and
+        * so we need to merge manually the PVID from the bridge with the port VLANs. */
+        setting_vlans =
+            merge_bridge_vlan_default_pvid(setting_vlans,
+                                           &num_setting_vlans,
+                                           nm_setting_bridge_get_vlan_default_pvid(s_bridge));
+    }
+
+    plat    = nm_device_get_platform(device);
+    ifindex = nm_device_get_ifindex(device);
+
+    if (!nm_platform_link_get_bridge_vlans(plat, ifindex, &plat_vlans, &num_plat_vlans)) {
+        _LOGD(LOGD_DEVICE, "reapply-bridge-port-vlans: can't get current VLANs from platform");
+        do_reapply = TRUE;
+    } else {
+        nmp_utils_bridge_vlan_normalize(setting_vlans, &num_setting_vlans);
+        nmp_utils_bridge_vlan_normalize(plat_vlans, &num_plat_vlans);
+        if (!nmp_utils_bridge_normalized_vlans_equal(setting_vlans,
+                                                     num_setting_vlans,
+                                                     plat_vlans,
+                                                     num_plat_vlans)) {
+            _LOGD(LOGD_DEVICE, "reapply-bridge-port-vlans: VLANs in platform need reapply");
+            do_reapply = TRUE;
+        } else {
+            _LOGD(LOGD_DEVICE, "reapply-bridge-port-vlans: VLANs in platform didn't change");
+            do_reapply = FALSE;
+        }
+    }
+
+    if (do_reapply) {
+        nm_platform_link_set_bridge_vlans(plat, ifindex, TRUE, NULL, 0);
+        if (num_setting_vlans > 0)
+            nm_platform_link_set_bridge_vlans(plat,
+                                              ifindex,
+                                              TRUE,
+                                              setting_vlans,
+                                              num_setting_vlans);
+    }
 }
 
 static void
@@ -836,7 +883,7 @@ _platform_lnk_bridge_init_from_setting(NMSettingBridge *s_bridge, NMPlatformLnkB
 }
 
 static gboolean
-link_config(NMDevice *device, NMConnection *connection)
+link_config(NMDevice *device, NMConnection *connection, gboolean is_reapply)
 {
     int                 ifindex = nm_device_get_ifindex(device);
     NMSettingBridge    *s_bridge;
@@ -850,7 +897,7 @@ link_config(NMDevice *device, NMConnection *connection)
     if (nm_platform_link_bridge_change(nm_device_get_platform(device), ifindex, &props) < 0)
         return FALSE;
 
-    return bridge_set_vlan_options(device, s_bridge);
+    return bridge_set_vlan_options(device, s_bridge, is_reapply);
 }
 
 static NMActStageReturn
@@ -861,7 +908,7 @@ act_stage1_prepare(NMDevice *device, NMDeviceStateReason *out_failure_reason)
     connection = nm_device_get_applied_connection(device);
     g_return_val_if_fail(connection, NM_ACT_STAGE_RETURN_FAILURE);
 
-    if (!link_config(device, connection)) {
+    if (!link_config(device, connection, FALSE)) {
         NM_SET_OUT(out_failure_reason, NM_DEVICE_STATE_REASON_CONFIG_FAILED);
         return NM_ACT_STAGE_RETURN_FAILURE;
     }
@@ -986,42 +1033,44 @@ attach_port(NMDevice                  *device,
             gpointer                   user_data)
 {
     NMDeviceBridge      *self = NM_DEVICE_BRIDGE(device);
-    NMConnection        *master_connection;
+    NMConnection        *controller_connection;
     NMSettingBridge     *s_bridge;
     NMSettingBridgePort *s_port;
 
     if (configure) {
-        if (!nm_platform_link_enslave(nm_device_get_platform(device),
-                                      nm_device_get_ip_ifindex(device),
-                                      nm_device_get_ip_ifindex(port)))
+        if (!nm_platform_link_attach_port(nm_device_get_platform(device),
+                                          nm_device_get_ip_ifindex(device),
+                                          nm_device_get_ip_ifindex(port)))
             return FALSE;
 
-        master_connection = nm_device_get_applied_connection(device);
-        nm_assert(master_connection);
-        s_bridge = nm_connection_get_setting_bridge(master_connection);
+        controller_connection = nm_device_get_applied_connection(device);
+        nm_assert(controller_connection);
+        s_bridge = nm_connection_get_setting_bridge(controller_connection);
         nm_assert(s_bridge);
         s_port = nm_connection_get_setting_bridge_port(connection);
 
-        if (!nm_device_sys_iface_state_is_external(device))
-            bridge_set_vlan_options(device, s_bridge);
+        if (!nm_device_managed_type_is_external(device))
+            bridge_set_vlan_options(device, s_bridge, FALSE);
 
         if (nm_setting_bridge_get_vlan_filtering(s_bridge)) {
-            gs_free const NMPlatformBridgeVlan **plat_vlans = NULL;
-            gs_unref_ptrarray GPtrArray         *vlans      = NULL;
+            gs_free NMPlatformBridgeVlan *plat_vlans = NULL;
+            gs_unref_ptrarray GPtrArray  *vlans      = NULL;
+            guint                         num_vlans;
 
             if (s_port)
                 g_object_get(s_port, NM_SETTING_BRIDGE_PORT_VLANS, &vlans, NULL);
 
-            plat_vlans = setting_vlans_to_platform(vlans);
+            plat_vlans = setting_vlans_to_platform(vlans, &num_vlans);
 
-            /* Since the link was just enslaved, there are no existing VLANs
+            /* Since the link was just enportd, there are no existing VLANs
              * (except for the default one) and so there's no need to flush. */
 
             if (plat_vlans
                 && !nm_platform_link_set_bridge_vlans(nm_device_get_platform(port),
                                                       nm_device_get_ifindex(port),
                                                       TRUE,
-                                                      plat_vlans))
+                                                      plat_vlans,
+                                                      num_vlans))
                 return FALSE;
         }
 
@@ -1045,7 +1094,7 @@ detach_port(NMDevice                  *device,
 {
     NMDeviceBridge *self = NM_DEVICE_BRIDGE(device);
     gboolean        success;
-    int             ifindex_slave;
+    int             ifindex_port;
     int             ifindex;
 
     if (configure) {
@@ -1054,17 +1103,17 @@ detach_port(NMDevice                  *device,
             configure = FALSE;
     }
 
-    ifindex_slave = nm_device_get_ip_ifindex(port);
+    ifindex_port = nm_device_get_ip_ifindex(port);
 
-    if (ifindex_slave <= 0) {
+    if (ifindex_port <= 0) {
         _LOGD(LOGD_TEAM, "bridge port %s is already detached", nm_device_get_ip_iface(port));
         return TRUE;
     }
 
     if (configure) {
-        success = nm_platform_link_release(nm_device_get_platform(device),
-                                           nm_device_get_ip_ifindex(device),
-                                           ifindex_slave);
+        success = nm_platform_link_release_port(nm_device_get_platform(device),
+                                                nm_device_get_ip_ifindex(device),
+                                                ifindex_port);
 
         if (success) {
             _LOGI(LOGD_BRIDGE, "detached bridge port %s", nm_device_get_ip_iface(port));
@@ -1130,7 +1179,7 @@ create_and_realize(NMDevice              *device,
     mtu = nm_setting_wired_get_mtu(s_wired);
 
     /* If mtu != 0, we set the MTU of the new bridge at creation time. However, kernel will still
-     * automatically adjust the MTU of the bridge based on the minimum of the slave's MTU.
+     * automatically adjust the MTU of the bridge based on the minimum of the port's MTU.
      * We don't want this automatism as the user asked for a fixed MTU.
      *
      * To workaround this behavior of kernel, we will later toggle the MTU twice. See
@@ -1218,8 +1267,7 @@ reapply_connection(NMDevice *device, NMConnection *con_old, NMConnection *con_ne
     /* Make sure bridge_set_vlan_options() called by link_config()
      * sets vlan_filtering and default_pvid anew. */
     self->vlan_configured = FALSE;
-
-    link_config(device, con_new);
+    link_config(device, con_new, TRUE);
 }
 
 /*****************************************************************************/
@@ -1227,16 +1275,28 @@ reapply_connection(NMDevice *device, NMConnection *con_old, NMConnection *con_ne
 static void
 nm_device_bridge_init(NMDeviceBridge *self)
 {
-    nm_assert(nm_device_is_master(NM_DEVICE(self)));
+    nm_assert(nm_device_is_controller(NM_DEVICE(self)));
 }
 
 static const NMDBusInterfaceInfoExtended interface_info_device_bridge = {
     .parent = NM_DEFINE_GDBUS_INTERFACE_INFO_INIT(
         NM_DBUS_INTERFACE_DEVICE_BRIDGE,
         .properties = NM_DEFINE_GDBUS_PROPERTY_INFOS(
-            NM_DEFINE_DBUS_PROPERTY_INFO_EXTENDED_READABLE("HwAddress", "s", NM_DEVICE_HW_ADDRESS),
-            NM_DEFINE_DBUS_PROPERTY_INFO_EXTENDED_READABLE("Carrier", "b", NM_DEVICE_CARRIER),
-            NM_DEFINE_DBUS_PROPERTY_INFO_EXTENDED_READABLE("Slaves", "ao", NM_DEVICE_SLAVES), ), ),
+            NM_DEFINE_DBUS_PROPERTY_INFO_EXTENDED_READABLE(
+                "HwAddress",
+                "s",
+                NM_DEVICE_HW_ADDRESS,
+                .annotations = NM_GDBUS_ANNOTATION_INFO_LIST_DEPRECATED(), ),
+            NM_DEFINE_DBUS_PROPERTY_INFO_EXTENDED_READABLE(
+                "Carrier",
+                "b",
+                NM_DEVICE_CARRIER,
+                .annotations = NM_GDBUS_ANNOTATION_INFO_LIST_DEPRECATED(), ),
+            NM_DEFINE_DBUS_PROPERTY_INFO_EXTENDED_READABLE(
+                "Slaves",
+                "ao",
+                NM_DEVICE_SLAVES,
+                .annotations = NM_GDBUS_ANNOTATION_INFO_LIST_DEPRECATED(), ), ), ),
 };
 
 static void
@@ -1250,15 +1310,15 @@ nm_device_bridge_class_init(NMDeviceBridgeClass *klass)
     device_class->connection_type_supported = NM_SETTING_BRIDGE_SETTING_NAME;
     device_class->link_types                = NM_DEVICE_DEFINE_LINK_TYPES(NM_LINK_TYPE_BRIDGE);
 
-    device_class->is_master                   = TRUE;
+    device_class->is_controller               = TRUE;
     device_class->mtu_force_set               = TRUE;
     device_class->get_generic_capabilities    = get_generic_capabilities;
     device_class->check_connection_compatible = check_connection_compatible;
     device_class->check_connection_available  = check_connection_available;
     device_class->complete_connection         = complete_connection;
 
-    device_class->update_connection              = update_connection;
-    device_class->master_update_slave_connection = master_update_slave_connection;
+    device_class->update_connection                 = update_connection;
+    device_class->controller_update_port_connection = controller_update_port_connection;
 
     device_class->create_and_realize                     = create_and_realize;
     device_class->act_stage1_prepare_set_hwaddr_ethernet = TRUE;

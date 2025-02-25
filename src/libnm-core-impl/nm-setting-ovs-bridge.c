@@ -153,16 +153,16 @@ verify(NMSetting *setting, NMConnection *connection, GError **error)
             return FALSE;
         }
 
-        if (nm_setting_connection_get_master(s_con)) {
+        if (nm_setting_connection_get_controller(s_con)) {
             g_set_error(error,
                         NM_CONNECTION_ERROR,
                         NM_CONNECTION_ERROR_INVALID_PROPERTY,
-                        _("A connection with a '%s' setting must not have a master."),
+                        _("A connection with a '%s' setting must not have a controller."),
                         NM_SETTING_OVS_BRIDGE_SETTING_NAME);
             g_prefix_error(error,
                            "%s.%s: ",
                            NM_SETTING_CONNECTION_SETTING_NAME,
-                           NM_SETTING_CONNECTION_MASTER);
+                           NM_SETTING_CONNECTION_CONTROLLER);
             return FALSE;
         }
     }
@@ -242,7 +242,8 @@ nm_setting_ovs_bridge_class_init(NMSettingOvsBridgeClass *klass)
                                               PROP_FAIL_MODE,
                                               NM_SETTING_PARAM_INFERRABLE,
                                               NMSettingOvsBridge,
-                                              fail_mode);
+                                              fail_mode,
+                                              .direct_string_allow_empty = TRUE);
 
     /**
      * NMSettingOvsBridge:mcast-snooping-enable:
@@ -305,7 +306,8 @@ nm_setting_ovs_bridge_class_init(NMSettingOvsBridgeClass *klass)
                                               PROP_DATAPATH_TYPE,
                                               NM_SETTING_PARAM_INFERRABLE,
                                               NMSettingOvsBridge,
-                                              datapath_type);
+                                              datapath_type,
+                                              .direct_string_allow_empty = TRUE);
 
     g_object_class_install_properties(object_class, _PROPERTY_ENUMS_LAST, obj_properties);
 

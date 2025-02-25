@@ -327,7 +327,7 @@ _scan_request_ssids_track(NMDeviceWifiPrivate *priv, const GPtrArray *ssids)
         priv->scan_request_ssids_hash = g_hash_table_new(nm_pg_bytes_hash, nm_pg_bytes_equal);
 
     /* Do a little dance. New elements shall keep their order as in @ssids, but all
-     * new elements should be sorted in the list preexisting elements of the list.
+     * new elements should be sorted before preexisting elements of the list.
      * First move the old elements away, and splice them back afterwards. */
     c_list_init(&old_lst_head);
     c_list_splice(&old_lst_head, &priv->scan_request_ssids_lst_head);
@@ -348,6 +348,8 @@ _scan_request_ssids_track(NMDeviceWifiPrivate *priv, const GPtrArray *ssids)
             g_hash_table_add(priv->scan_request_ssids_hash, d);
         } else
             d->timestamp_msec = now_msec;
+
+        c_list_unlink_stale(&d->lst);
         c_list_link_tail(&priv->scan_request_ssids_lst_head, &d->lst);
     }
 
@@ -1013,8 +1015,8 @@ check_connection_compatible(NMDevice     *device,
             return FALSE;
         }
 
-        /* Check for MAC address blacklist */
-        mac_blacklist = nm_setting_wireless_get_mac_address_blacklist(s_wireless);
+        /* Check for MAC address denylist */
+        mac_blacklist = nm_setting_wireless_get_mac_address_denylist(s_wireless);
         for (i = 0; mac_blacklist[i]; i++) {
             if (!nm_utils_hwaddr_valid(mac_blacklist[i], ETH_ALEN)) {
                 g_warn_if_reached();
@@ -3191,27 +3193,28 @@ ensure_hotspot_frequency(NMDeviceWifi *self, NMSettingWireless *s_wifi, NMWifiAP
         GBytes       *ssid;
         gsize         ssid_len;
         const guint8 *ssid_data;
-        const guint8  random_seed[16] = {0x9a,
-                                         0xdc,
-                                         0x86,
-                                         0x9a,
-                                         0xa8,
-                                         0xa2,
-                                         0x07,
-                                         0x97,
-                                         0xbe,
-                                         0x6d,
-                                         0xe6,
-                                         0x99,
-                                         0x9f,
-                                         0xa8,
-                                         0x09,
-                                         0x2b};
 
         /* Calculate a stable "random" number based on the SSID. */
         ssid      = nm_setting_wireless_get_ssid(s_wifi);
         ssid_data = g_bytes_get_data(ssid, &ssid_len);
-        rnd       = c_siphash_hash(random_seed, ssid_data, ssid_len);
+        rnd       = c_siphash_hash(NM_HASH_SEED_16(0x9a,
+                                             0xdc,
+                                             0x86,
+                                             0x9a,
+                                             0xa8,
+                                             0xa2,
+                                             0x07,
+                                             0x97,
+                                             0xbe,
+                                             0x6d,
+                                             0xe6,
+                                             0x99,
+                                             0x9f,
+                                             0xa8,
+                                             0x09,
+                                             0x2b),
+                             ssid_data,
+                             ssid_len);
     }
 
     if (nm_streq0(band, "a")) {
@@ -3292,8 +3295,8 @@ act_stage2_config(NMDevice *device, NMDeviceStateReason *out_failure_reason)
     GError                             *error = NULL;
     guint                               timeout;
     NMActRequest                       *request;
-    NMActiveConnection                 *master_ac;
-    NMDevice                           *master;
+    NMActiveConnection                 *controller_ac;
+    NMDevice                           *controller;
 
     nm_clear_g_source(&priv->sup_timeout_id);
     nm_clear_g_source(&priv->link_timeout_id);
@@ -3373,10 +3376,10 @@ act_stage2_config(NMDevice *device, NMDeviceStateReason *out_failure_reason)
 
     /* Tell the supplicant in which bridge the interface is */
     if ((request = nm_device_get_act_request(device))
-        && (master_ac = nm_active_connection_get_master(NM_ACTIVE_CONNECTION(request)))
-        && (master = nm_active_connection_get_device(master_ac))
-        && nm_device_get_device_type(master) == NM_DEVICE_TYPE_BRIDGE) {
-        nm_supplicant_interface_set_bridge(priv->sup_iface, nm_device_get_iface(master));
+        && (controller_ac = nm_active_connection_get_controller(NM_ACTIVE_CONNECTION(request)))
+        && (controller = nm_active_connection_get_device(controller_ac))
+        && nm_device_get_device_type(controller) == NM_DEVICE_TYPE_BRIDGE) {
+        nm_supplicant_interface_set_bridge(priv->sup_iface, nm_device_get_iface(controller));
     } else
         nm_supplicant_interface_set_bridge(priv->sup_iface, NULL);
 

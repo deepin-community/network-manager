@@ -54,9 +54,17 @@ gboolean nmp_utils_ethtool_get_ring(int ifindex, NMEthtoolRingState *ring);
 
 gboolean nmp_utils_ethtool_set_ring(int ifindex, const NMEthtoolRingState *ring);
 
+gboolean nmp_utils_ethtool_get_channels(int ifindex, NMEthtoolChannelsState *channels);
+
+gboolean nmp_utils_ethtool_set_channels(int ifindex, const NMEthtoolChannelsState *channels);
+
 gboolean nmp_utils_ethtool_get_pause(int ifindex, NMEthtoolPauseState *pause);
 
 gboolean nmp_utils_ethtool_set_pause(int ifindex, const NMEthtoolPauseState *pause);
+
+gboolean nmp_utils_ethtool_get_eee(int ifindex, NMEthtoolEEEState *eee);
+
+gboolean nmp_utils_ethtool_set_eee(int ifindex, const NMEthtoolEEEState *eee);
 
 /*****************************************************************************/
 
@@ -90,5 +98,12 @@ guint32 nmp_utils_lifetime_get(guint32  timestamp,
 
 int nmp_utils_modprobe(GError **error, gboolean suppress_error_logging, const char *arg1, ...)
     G_GNUC_NULL_TERMINATED;
+
+void nmp_utils_bridge_vlan_normalize(NMPlatformBridgeVlan *vlans, guint *num_vlans);
+
+gboolean nmp_utils_bridge_normalized_vlans_equal(const NMPlatformBridgeVlan *vlans_a,
+                                                 guint                       num_vlans_a,
+                                                 const NMPlatformBridgeVlan *vlans_b,
+                                                 guint                       num_vlans_b);
 
 #endif /* __NM_PLATFORM_UTILS_H__ */

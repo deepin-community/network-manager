@@ -306,14 +306,20 @@ typedef enum {
     NM_UTILS_STABLE_TYPE_RANDOM    = 3,
 } NMUtilsStableType;
 
-#define NM_UTILS_STABLE_TYPE_NONE ((NMUtilsStableType) -1)
+#define NM_UTILS_STABLE_TYPE_NONE ((NMUtilsStableType) - 1)
 
 NMUtilsStableType nm_utils_stable_id_parse(const char *stable_id,
                                            const char *deviceid,
                                            const char *hwaddr,
                                            const char *bootid,
                                            const char *uuid,
+                                           GBytes     *ssid,
                                            char      **out_generated);
+
+NMUtilsStableType nm_utils_stable_id_parse_network_ssid(GBytes     *ssid,
+                                                        const char *uuid,
+                                                        gboolean    complete,
+                                                        char      **out_stable_id);
 
 char *nm_utils_stable_id_random(void);
 char *nm_utils_stable_id_generated_complete(const char *msg);
@@ -455,6 +461,7 @@ const char *nm_utils_parse_dns_domain(const char *domain, gboolean *is_routing);
 void nm_wifi_utils_parse_ies(const guint8 *bytes,
                              gsize         len,
                              guint32      *out_max_rate,
+                             guint32      *out_bandwidth,
                              gboolean     *out_metered,
                              gboolean     *out_owe_transition_mode);
 

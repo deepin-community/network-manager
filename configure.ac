@@ -7,7 +7,7 @@ dnl  - add corresponding NM_VERSION_x_y_z macros in
 dnl    "shared/nm-version-macros.h.in"
 dnl  - update number in meson.build
 m4_define([nm_major_version], [1])
-m4_define([nm_minor_version], [44])
+m4_define([nm_minor_version], [50])
 m4_define([nm_micro_version], [2])
 m4_define([nm_version],
           [nm_major_version.nm_minor_version.nm_micro_version])
@@ -16,12 +16,26 @@ AC_INIT([NetworkManager], [nm_version],
         [http://bugzilla.gnome.org/enter_bug.cgi?product=NetworkManager],
         [NetworkManager])
 
+deprecation_message() {
+    echo "Building with Autotools is deprecated; meson is the recommended way to build NetworkManager."
+    echo "To learn more, see the CONTRIBUTING.md file."
+    echo "To ignore this, pass '--disable-autotools-deprecation' when configuring."
+    exit 1
+}
+
+AC_ARG_ENABLE([autotools-deprecation],
+    AS_HELP_STRING([--disable-autotools-deprecation],
+                   [Building with autotools is deprecated, passing this argument overrides this error.]),
+    [ test "$enableval" != "no" && deprecation_message ],
+    [ deprecation_message ]
+)
+
 AC_CONFIG_HEADERS([config.h])
 AC_CONFIG_MACRO_DIR([m4])
 AC_CONFIG_AUX_DIR([build-aux])
 AC_REQUIRE_AUX_FILE([tap-driver.sh])
 
-AM_INIT_AUTOMAKE(1.12 foreign tar-ustar no-dist-gzip dist-xz -Wno-portability)  dnl NB: Do not [quote] this parameter.
+AM_INIT_AUTOMAKE(1.12 foreign tar-pax no-dist-gzip dist-xz -Wno-portability)  dnl NB: Do not [quote] this parameter.
 AM_MAINTAINER_MODE([enable])
 AM_SILENT_RULES([yes])
 
@@ -273,13 +287,11 @@ AC_SEARCH_LIBS([dlopen], [dl dld],
 	[test "$ac_cv_search_dlopen" = "none required" || AC_SUBST([DL_LIBS], "$ac_cv_search_dlopen"]),
 	[])
 
-PKG_CHECK_MODULES(GLIB, [gio-unix-2.0 >= 2.37.6 gmodule-2.0],
-                  [AC_SUBST(LOG_DRIVER, '$(top_srcdir)/build-aux/tap-driver.sh')
-                   AC_SUBST(AM_TESTS_FD_REDIRECT, '--tap')],
-                  [PKG_CHECK_MODULES(GLIB, gio-unix-2.0 >= 2.40 gmodule-2.0)
-                   AC_SUBST(LOG_DRIVER, '$(top_srcdir)/build-aux/test-driver')])
+PKG_CHECK_MODULES(GLIB, [gio-unix-2.0 >= 2.42 gmodule-2.0])
 
-GLIB_CFLAGS="$GLIB_CFLAGS -DGLIB_VERSION_MIN_REQUIRED=GLIB_VERSION_2_40 -DGLIB_VERSION_MAX_ALLOWED=GLIB_VERSION_2_40"
+AC_SUBST(LOG_DRIVER, '$(top_srcdir)/build-aux/test-driver')
+
+GLIB_CFLAGS="$GLIB_CFLAGS -DGLIB_VERSION_MIN_REQUIRED=GLIB_VERSION_2_42 -DGLIB_VERSION_MAX_ALLOWED=GLIB_VERSION_2_42"
 
 AC_SUBST(GLIB_CFLAGS)
 AC_SUBST(GLIB_LIBS)
@@ -333,9 +345,6 @@ AM_CONDITIONAL(HAVE_SYSTEMD, [test "$with_systemdsystemunitdir" != no])
 if test "$with_systemdsystemunitdir" != no; then
 	AC_SUBST([systemdsystemunitdir], [$with_systemdsystemunitdir])
 fi
-
-PKG_CHECK_MODULES(SYSTEMD_200, [systemd >= 200], [have_systemd_200=yes], [have_systemd_200=no])
-AM_CONDITIONAL(HAVE_SYSTEMD_200, test "${have_systemd_200}" = "yes")
 
 # Hostname persist mode
 AC_ARG_WITH(hostname-persist,
@@ -515,7 +524,7 @@ fi
 session_tracking="$(printf '%s' "${session_tracking}" | sed 's/^, //')"
 
 AC_ARG_WITH(suspend-resume,
-            AS_HELP_STRING([--with-suspend-resume=upower|systemd|elogind|consolekit],
+            AS_HELP_STRING([--with-suspend-resume=systemd|elogind|consolekit],
                            [Build NetworkManager with specific suspend/resume support]))
 if test "z$with_suspend_resume" = "z"; then
 	PKG_CHECK_EXISTS([libsystemd >= 209], [have_systemd_inhibit=yes],
@@ -530,21 +539,13 @@ if test "z$with_suspend_resume" = "z"; then
 			# Use elogind if it's new enough
 			with_suspend_resume="elogind"
 		else
-			if test "$use_consolekit" = "yes"; then
-				# Use consolekit suspend if session tracking is consolekit
-				with_suspend_resume="consolekit"
-			else
-				# Fall back to upower
-				with_suspend_resume="upower"
-			fi
+			# Fallback to consolekit
+			with_suspend_resume="consolekit"
 		fi
 	fi
 fi
 
 case $with_suspend_resume in
-	upower)
-		AC_DEFINE([SUSPEND_RESUME_UPOWER], 1, [Define to 1 to use UPower suspend api])
-		;;
 	systemd)
 		PKG_CHECK_MODULES(SYSTEMD_INHIBIT, [libsystemd >= 209],,
 		                  [PKG_CHECK_MODULES(SYSTEMD_INHIBIT, [libsystemd-login >= 183])])
@@ -559,7 +560,7 @@ case $with_suspend_resume in
 		AC_DEFINE([SUSPEND_RESUME_CONSOLEKIT], 1, [Define to 1 to use ConsoleKit2 suspend api])
 		;;
 	*)
-		AC_MSG_ERROR(--with-suspend-resume must be one of [upower, systemd, elogind, consolekit])
+		AC_MSG_ERROR(--with-suspend-resume must be one of [systemd, elogind, consolekit])
 		;;
 esac
 
@@ -914,18 +915,18 @@ fi
 
 # DHCP client support
 AC_ARG_WITH([dhclient],
-            AS_HELP_STRING([--with-dhclient=yes|no|path], [Enable dhclient support]))
-if test "$with_dhclient" != "no"; then
-	with_dhclient_="$with_dhclient"
+            AS_HELP_STRING([--with-dhclient=yes|no|path], [Enable dhclient support (deprecated)]),
+            with_dhclient="$withval",
+            with_dhclient="no")
+if test "$with_dhclient" = yes; then
 	AC_PATH_PROGS(with_dhclient, dhclient, no, /sbin:/usr/sbin:/usr/local/sbin)
 	if test "$with_dhclient" = "no"; then
-		if test "$with_dhclient_" = yes; then
-			AC_MSG_WARN([dhclient not found, assume path /usr/sbin/dhclient])
-			with_dhclient=/usr/sbin/dhclient
-		fi
+		AC_MSG_WARN([dhclient not found, assume path /usr/sbin/dhclient])
+		with_dhclient=/usr/sbin/dhclient
 	fi
 fi
 if test "$with_dhclient" != "no"; then
+	AC_MSG_WARN([dhclient is unmaintained and support for it is deprecated])
 	AC_DEFINE(WITH_DHCLIENT, 1, [Define if you have dhclient])
 	AC_DEFINE_UNQUOTED(DHCLIENT_PATH, "$with_dhclient", [Define path to dhclient])
 else
@@ -1162,7 +1163,11 @@ fi
 
 NM_COMPILER_WARNINGS(AM_CFLAGS, ${more_warnings_default})
 
-NM_COMPILER_WARNING_FLAG(LIBSYSTEMD_NM_CFLAGS, "-Wno-gnu-variable-sized-type-not-at-end")
+for w in \
+    -Wno-nonnull-compare \
+    ; do
+    NM_COMPILER_WARNING_FLAG(LIBSYSTEMD_NM_CFLAGS, "$w")
+done
 AC_SUBST(LIBSYSTEMD_NM_CFLAGS)
 
 CC_CHECK_FLAGS_APPEND([with_cflags], [CFLAGS], [\
@@ -1472,7 +1477,7 @@ echo
 
 echo "DHCP clients (default $config_dhcp_default):"
 echo "  dhcpcanon: $with_dhcpcanon"
-echo "  dhclient: $with_dhclient"
+echo "  dhclient: $with_dhclient (deprecated)"
 echo "  dhcpcd: $with_dhcpcd"
 echo
 

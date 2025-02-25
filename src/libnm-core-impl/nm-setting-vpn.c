@@ -80,20 +80,17 @@ typedef struct {
  * VPN Settings
  */
 struct _NMSettingVpn {
-    NMSetting parent;
-    /* In the past, this struct was public API. Preserve ABI! */
+    NMSetting           parent;
+    NMSettingVpnPrivate _priv;
 };
 
 struct _NMSettingVpnClass {
     NMSettingClass parent;
-    /* In the past, this struct was public API. Preserve ABI! */
-    gpointer padding[4];
 };
 
 G_DEFINE_TYPE(NMSettingVpn, nm_setting_vpn, NM_TYPE_SETTING)
 
-#define NM_SETTING_VPN_GET_PRIVATE(o) \
-    (G_TYPE_INSTANCE_GET_PRIVATE((o), NM_TYPE_SETTING_VPN, NMSettingVpnPrivate))
+#define NM_SETTING_VPN_GET_PRIVATE(o) _NM_GET_PRIVATE(o, NMSettingVpn, NM_IS_SETTING_VPN, NMSetting)
 
 /*****************************************************************************/
 
@@ -580,13 +577,47 @@ verify(NMSetting *setting, NMConnection *connection, GError **error)
     return TRUE;
 }
 
+static gboolean
+_parse_secret_hint_tag(const char           *secret_name,
+                       const char          **out_secret_name,
+                       NMSettingSecretFlags *out_implied_flags)
+{
+    NMSettingSecretFlags implied_flags = NM_SETTING_SECRET_FLAG_NONE;
+    gboolean             ret           = FALSE;
+
+    nm_assert(secret_name);
+
+    if (g_str_has_prefix(secret_name, NM_SECRET_TAG_DYNAMIC_CHALLENGE)) {
+        secret_name += NM_STRLEN(NM_SECRET_TAG_DYNAMIC_CHALLENGE);
+        implied_flags |= NM_SETTING_SECRET_FLAG_NOT_SAVED;
+        ret = TRUE;
+    } else if (g_str_has_prefix(secret_name, NM_SECRET_TAG_DYNAMIC_CHALLENGE_ECHO)) {
+        secret_name += NM_STRLEN(NM_SECRET_TAG_DYNAMIC_CHALLENGE_ECHO);
+        implied_flags |= NM_SETTING_SECRET_FLAG_NOT_SAVED;
+        ret = TRUE;
+    }
+
+    NM_SET_OUT(out_secret_name, secret_name);
+    NM_SET_OUT(out_implied_flags, implied_flags);
+    return ret;
+}
+
 static NMSettingUpdateSecretResult
 update_secret_string(NMSetting *setting, const char *key, const char *value, GError **error)
 {
     NMSettingVpnPrivate *priv = NM_SETTING_VPN_GET_PRIVATE(setting);
+    NMSettingSecretFlags hint_implied_flags, flags;
 
     g_return_val_if_fail(key && key[0], NM_SETTING_UPDATE_SECRET_ERROR);
     g_return_val_if_fail(value, NM_SETTING_UPDATE_SECRET_ERROR);
+
+    /* If the name is prefixed with a hint tag, process it before saving:
+     * remove the prefix and apply the flags that it implies */
+    _parse_secret_hint_tag(key, &key, &hint_implied_flags);
+    if (hint_implied_flags) {
+        nm_setting_get_secret_flags(setting, key, &flags, NULL);
+        nm_setting_set_secret_flags(setting, key, flags | hint_implied_flags, NULL);
+    }
 
     if (nm_streq0(nm_g_hash_table_lookup(priv->secrets, key), value))
         return NM_SETTING_UPDATE_SECRET_SUCCESS_UNCHANGED;
@@ -602,6 +633,7 @@ update_secret_dict(NMSetting *setting, GVariant *secrets, GError **error)
     GVariantIter                iter;
     const char                 *name, *value;
     NMSettingUpdateSecretResult result = NM_SETTING_UPDATE_SECRET_SUCCESS_UNCHANGED;
+    NMSettingSecretFlags        hint_implied_flags, flags;
 
     g_return_val_if_fail(secrets != NULL, NM_SETTING_UPDATE_SECRET_ERROR);
 
@@ -621,6 +653,14 @@ update_secret_dict(NMSetting *setting, GVariant *secrets, GError **error)
     /* Now add the items to the settings' secrets list */
     g_variant_iter_init(&iter, secrets);
     while (g_variant_iter_next(&iter, "{&s&s}", &name, &value)) {
+        /* If the name is prefixed with a hint tag, process it before saving:
+         * remove the prefix and apply the flags that it implies */
+        _parse_secret_hint_tag(name, &name, &hint_implied_flags);
+        if (hint_implied_flags) {
+            nm_setting_get_secret_flags(setting, name, &flags, NULL);
+            nm_setting_set_secret_flags(setting, name, flags | hint_implied_flags, NULL);
+        }
+
         if (nm_streq0(nm_g_hash_table_lookup(priv->secrets, name), value))
             continue;
 
@@ -730,12 +770,17 @@ get_secret_flags(NMSetting            *setting,
                  GError              **error)
 {
     NMSettingVpnPrivate *priv           = NM_SETTING_VPN_GET_PRIVATE(setting);
+    NMSettingSecretFlags implied_flags  = NM_SETTING_SECRET_FLAG_NONE;
     gs_free char        *flags_key_free = NULL;
     const char          *flags_key;
     const char          *flags_val;
     gint64               i64;
 
     nm_assert(secret_name);
+
+    /* Secrets received via D-Bus from VPN plugins might be prefixed by a hint tag. If
+     * that's the case, process it first: remove the tag and get the flags that it implies */
+    _parse_secret_hint_tag(secret_name, &secret_name, &implied_flags);
 
     if (!secret_name[0]) {
         g_set_error(error,
@@ -749,7 +794,7 @@ get_secret_flags(NMSetting            *setting,
 
     if (!priv->data
         || !g_hash_table_lookup_extended(priv->data, flags_key, NULL, (gpointer *) &flags_val)) {
-        NM_SET_OUT(out_flags, NM_SETTING_SECRET_FLAG_NONE);
+        NM_SET_OUT(out_flags, implied_flags);
 
         /* having no secret flag for the secret is fine, as long as there
          * is the secret itself... */
@@ -775,7 +820,7 @@ get_secret_flags(NMSetting            *setting,
         return TRUE;
     }
 
-    NM_SET_OUT(out_flags, (NMSettingSecretFlags) i64);
+    NM_SET_OUT(out_flags, (NMSettingSecretFlags) i64 | implied_flags);
     return TRUE;
 }
 
@@ -786,7 +831,8 @@ set_secret_flags(NMSetting           *setting,
                  GError             **error)
 {
     nm_assert(secret_name);
-
+    nm_assert(!_parse_secret_hint_tag(secret_name, NULL, NULL)); /* Accept hint tags only via D-Bus,
+                                                                    saved by update_one_secret */
     if (!secret_name[0]) {
         g_set_error(error,
                     NM_CONNECTION_ERROR,
@@ -1067,8 +1113,6 @@ nm_setting_vpn_class_init(NMSettingVpnClass *klass)
     NMSettingClass *setting_class       = NM_SETTING_CLASS(klass);
     GArray         *properties_override = _nm_sett_info_property_override_create_array();
 
-    g_type_class_add_private(klass, sizeof(NMSettingVpnPrivate));
-
     object_class->get_property = get_property;
     object_class->set_property = set_property;
     object_class->finalize     = finalize;
@@ -1095,7 +1139,8 @@ nm_setting_vpn_class_init(NMSettingVpnClass *klass)
                                               PROP_SERVICE_TYPE,
                                               NM_SETTING_PARAM_NONE,
                                               NMSettingVpnPrivate,
-                                              service_type);
+                                              service_type,
+                                              .direct_string_allow_empty = TRUE);
 
     /**
      * NMSettingVpn:user-name:
@@ -1113,7 +1158,8 @@ nm_setting_vpn_class_init(NMSettingVpnClass *klass)
                                               PROP_USER_NAME,
                                               NM_SETTING_PARAM_NONE,
                                               NMSettingVpnPrivate,
-                                              user_name);
+                                              user_name,
+                                              .direct_string_allow_empty = TRUE);
 
     /**
      * NMSettingVpn:persistent:
@@ -1211,5 +1257,5 @@ nm_setting_vpn_class_init(NMSettingVpnClass *klass)
                              NM_META_SETTING_TYPE_VPN,
                              NULL,
                              properties_override,
-                             NM_SETT_INFO_PRIVATE_OFFSET_FROM_CLASS);
+                             G_STRUCT_OFFSET(NMSettingVpn, _priv));
 }

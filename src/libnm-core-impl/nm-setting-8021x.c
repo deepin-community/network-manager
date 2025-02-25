@@ -131,7 +131,8 @@ NM_GOBJECT_PROPERTIES_DEFINE(NMSetting8021x,
                              PROP_PIN_FLAGS,
                              PROP_SYSTEM_CA_CERTS,
                              PROP_OPTIONAL,
-                             PROP_AUTH_TIMEOUT, );
+                             PROP_AUTH_TIMEOUT,
+                             PROP_OPENSSL_CIPHERS, );
 
 typedef struct {
     GSList *eap; /* GSList of strings */
@@ -168,6 +169,7 @@ typedef struct {
     char   *private_key_password;
     GBytes *phase2_private_key;
     char   *phase2_private_key_password;
+    char   *openssl_ciphers;
     guint   ca_cert_password_flags;
     guint   client_cert_password_flags;
     guint   phase2_ca_cert_password_flags;
@@ -189,20 +191,18 @@ typedef struct {
  * IEEE 802.1x Authentication Settings
  */
 struct _NMSetting8021x {
-    NMSetting parent;
-    /* In the past, this struct was public API. Preserve ABI! */
+    NMSetting             parent;
+    NMSetting8021xPrivate _priv;
 };
 
 struct _NMSetting8021xClass {
     NMSettingClass parent;
-    /* In the past, this struct was public API. Preserve ABI! */
-    gpointer padding[4];
 };
 
 G_DEFINE_TYPE(NMSetting8021x, nm_setting_802_1x, NM_TYPE_SETTING)
 
 #define NM_SETTING_802_1X_GET_PRIVATE(o) \
-    (G_TYPE_INSTANCE_GET_PRIVATE((o), NM_TYPE_SETTING_802_1X, NMSetting8021xPrivate))
+    _NM_GET_PRIVATE(o, NMSetting8021x, NM_IS_SETTING_802_1X, NMSetting)
 
 /*****************************************************************************/
 
@@ -2500,6 +2500,24 @@ nm_setting_802_1x_get_optional(NMSetting8021x *setting)
     return NM_SETTING_802_1X_GET_PRIVATE(setting)->optional;
 }
 
+/**
+ * nm_setting_802_1x_get_openssl_ciphers:
+ * @setting: the #NMSetting8021x
+ *
+ * Returns the openssl_ciphers configuration for wpa_supplicant.
+ *
+ * Returns: cipher string for tls setup in wpa_supplicant.
+ *
+ * Since: 1.48
+ **/
+const char *
+nm_setting_802_1x_get_openssl_ciphers(NMSetting8021x *setting)
+{
+    g_return_val_if_fail(NM_IS_SETTING_802_1X(setting), NULL);
+
+    return NM_SETTING_802_1X_GET_PRIVATE(setting)->openssl_ciphers;
+}
+
 /*****************************************************************************/
 
 static void
@@ -3199,9 +3217,7 @@ nm_setting_802_1x_class_init(NMSetting8021xClass *klass)
 {
     GObjectClass   *object_class        = G_OBJECT_CLASS(klass);
     NMSettingClass *setting_class       = NM_SETTING_CLASS(klass);
-    GArray         *properties_override = _nm_sett_info_property_override_create_array();
-
-    g_type_class_add_private(klass, sizeof(NMSetting8021xPrivate));
+    GArray         *properties_override = _nm_sett_info_property_override_create_array_sized(55);
 
     object_class->get_property = get_property;
     object_class->set_property = set_property;
@@ -3227,11 +3243,11 @@ nm_setting_802_1x_class_init(NMSetting8021xClass *klass)
      * example: IEEE_8021X_EAP_METHODS=PEAP
      * ---end---
      */
-    obj_properties[PROP_EAP] = g_param_spec_boxed(NM_SETTING_802_1X_EAP,
-                                                  "",
-                                                  "",
-                                                  G_TYPE_STRV,
-                                                  G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS);
+    _nm_setting_property_define_gprop_strv_oldstyle(properties_override,
+                                                    obj_properties,
+                                                    NM_SETTING_802_1X_EAP,
+                                                    PROP_EAP,
+                                                    NM_SETTING_PARAM_NONE);
 
     /**
      * NMSetting8021x:identity:
@@ -3252,7 +3268,8 @@ nm_setting_802_1x_class_init(NMSetting8021xClass *klass)
                                               PROP_IDENTITY,
                                               NM_SETTING_PARAM_NONE,
                                               NMSetting8021xPrivate,
-                                              identity);
+                                              identity,
+                                              .direct_string_allow_empty = TRUE);
 
     /**
      * NMSetting8021x:anonymous-identity:
@@ -3273,7 +3290,8 @@ nm_setting_802_1x_class_init(NMSetting8021xClass *klass)
                                               PROP_ANONYMOUS_IDENTITY,
                                               NM_SETTING_PARAM_NONE,
                                               NMSetting8021xPrivate,
-                                              anonymous_identity);
+                                              anonymous_identity,
+                                              .direct_string_allow_empty = TRUE);
 
     /**
      * NMSetting8021x:pac-file:
@@ -3293,7 +3311,8 @@ nm_setting_802_1x_class_init(NMSetting8021xClass *klass)
                                               PROP_PAC_FILE,
                                               NM_SETTING_PARAM_NONE,
                                               NMSetting8021xPrivate,
-                                              pac_file);
+                                              pac_file,
+                                              .direct_string_allow_empty = TRUE);
 
     /**
      * NMSetting8021x:ca-cert:
@@ -3316,6 +3335,19 @@ nm_setting_802_1x_class_init(NMSetting8021xClass *klass)
      * Setting this property directly is discouraged; use the
      * nm_setting_802_1x_set_ca_cert() function instead.
      **/
+    /* ---nmcli---
+     * property: ca-cert
+     * description:
+     *   Contains the path to the CA certificate if used by the EAP method
+     *   specified in the 802-1x.eap property.
+     *
+     *   This property can be unset even if the EAP method supports CA certificates,
+     *   but this allows man-in-the-middle attacks and is NOT recommended.
+     *
+     *   Note that enabling 802-1x.system-ca-certs will override this
+     *   setting to use the built-in path, if the built-in path is not a directory.
+     * ---end---
+     */
     /* ---ifcfg-rh---
      * property: ca-cert
      * variable: IEEE_8021X_CA_CERT(+)
@@ -3346,7 +3378,8 @@ nm_setting_802_1x_class_init(NMSetting8021xClass *klass)
                                               PROP_CA_CERT_PASSWORD,
                                               NM_SETTING_PARAM_SECRET,
                                               NMSetting8021xPrivate,
-                                              ca_cert_password);
+                                              ca_cert_password,
+                                              .direct_string_allow_empty = TRUE);
 
     /**
      * NMSetting8021x:ca-cert-password-flags:
@@ -3384,7 +3417,8 @@ nm_setting_802_1x_class_init(NMSetting8021xClass *klass)
                                               PROP_CA_PATH,
                                               NM_SETTING_PARAM_NONE,
                                               NMSetting8021xPrivate,
-                                              ca_path);
+                                              ca_path,
+                                              .direct_string_allow_empty = TRUE);
 
     /**
      * NMSetting8021x:subject-match:
@@ -3410,7 +3444,8 @@ nm_setting_802_1x_class_init(NMSetting8021xClass *klass)
                                               NM_SETTING_PARAM_NONE,
                                               NMSetting8021xPrivate,
                                               subject_match,
-                                              .is_deprecated = TRUE, );
+                                              .is_deprecated             = TRUE,
+                                              .direct_string_allow_empty = TRUE);
 
     /**
      * NMSetting8021x:altsubject-matches:
@@ -3426,12 +3461,11 @@ nm_setting_802_1x_class_init(NMSetting8021xClass *klass)
      * example: IEEE_8021X_ALTSUBJECT_MATCHES="s1.domain.cc"
      * ---end---
      */
-    obj_properties[PROP_ALTSUBJECT_MATCHES] =
-        g_param_spec_boxed(NM_SETTING_802_1X_ALTSUBJECT_MATCHES,
-                           "",
-                           "",
-                           G_TYPE_STRV,
-                           G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS);
+    _nm_setting_property_define_gprop_strv_oldstyle(properties_override,
+                                                    obj_properties,
+                                                    NM_SETTING_802_1X_ALTSUBJECT_MATCHES,
+                                                    PROP_ALTSUBJECT_MATCHES,
+                                                    NM_SETTING_PARAM_NONE);
 
     /**
      * NMSetting8021x:domain-suffix-match:
@@ -3458,7 +3492,8 @@ nm_setting_802_1x_class_init(NMSetting8021xClass *klass)
                                               PROP_DOMAIN_SUFFIX_MATCH,
                                               NM_SETTING_PARAM_NONE,
                                               NMSetting8021xPrivate,
-                                              domain_suffix_match);
+                                              domain_suffix_match,
+                                              .direct_string_allow_empty = TRUE);
 
     /**
      * NMSetting8021x:domain-match:
@@ -3484,7 +3519,8 @@ nm_setting_802_1x_class_init(NMSetting8021xClass *klass)
                                               PROP_DOMAIN_MATCH,
                                               NM_SETTING_PARAM_NONE,
                                               NMSetting8021xPrivate,
-                                              domain_match);
+                                              domain_match,
+                                              .direct_string_allow_empty = TRUE);
 
     /**
      * NMSetting8021x:client-cert:
@@ -3502,6 +3538,13 @@ nm_setting_802_1x_class_init(NMSetting8021xClass *klass)
      * Setting this property directly is discouraged; use the
      * nm_setting_802_1x_set_client_cert() function instead.
      **/
+    /* ---nmcli---
+     * property: client-cert
+     * description:
+     *   Contains the path to the client certificate if used by the EAP method
+     *   specified in the 802-1x.eap property.
+     * ---end---
+     */
     /* ---ifcfg-rh---
      * property: client-cert
      * variable: IEEE_8021X_CLIENT_CERT(+)
@@ -3532,7 +3575,8 @@ nm_setting_802_1x_class_init(NMSetting8021xClass *klass)
                                               PROP_CLIENT_CERT_PASSWORD,
                                               NM_SETTING_PARAM_SECRET,
                                               NMSetting8021xPrivate,
-                                              client_cert_password);
+                                              client_cert_password,
+                                              .direct_string_allow_empty = TRUE);
 
     /**
      * NMSetting8021x:client-cert-password-flags:
@@ -3571,7 +3615,8 @@ nm_setting_802_1x_class_init(NMSetting8021xClass *klass)
                                               PROP_PHASE1_PEAPVER,
                                               NM_SETTING_PARAM_NONE,
                                               NMSetting8021xPrivate,
-                                              phase1_peapver);
+                                              phase1_peapver,
+                                              .direct_string_allow_empty = TRUE);
 
     /**
      * NMSetting8021x:phase1-peaplabel:
@@ -3595,7 +3640,8 @@ nm_setting_802_1x_class_init(NMSetting8021xClass *klass)
                                               PROP_PHASE1_PEAPLABEL,
                                               NM_SETTING_PARAM_NONE,
                                               NMSetting8021xPrivate,
-                                              phase1_peaplabel);
+                                              phase1_peaplabel,
+                                              .direct_string_allow_empty = TRUE);
 
     /**
      * NMSetting8021x:phase1-fast-provisioning:
@@ -3621,7 +3667,8 @@ nm_setting_802_1x_class_init(NMSetting8021xClass *klass)
                                               PROP_PHASE1_FAST_PROVISIONING,
                                               NM_SETTING_PARAM_NONE,
                                               NMSetting8021xPrivate,
-                                              phase1_fast_provisioning);
+                                              phase1_fast_provisioning,
+                                              .direct_string_allow_empty = TRUE);
 
     /**
      * NMSetting8021x:phase1-auth-flags:
@@ -3685,7 +3732,8 @@ nm_setting_802_1x_class_init(NMSetting8021xClass *klass)
                                               PROP_PHASE2_AUTH,
                                               NM_SETTING_PARAM_NONE,
                                               NMSetting8021xPrivate,
-                                              phase2_auth);
+                                              phase2_auth,
+                                              .direct_string_allow_empty = TRUE);
 
     /**
      * NMSetting8021x:phase2-autheap:
@@ -3712,7 +3760,8 @@ nm_setting_802_1x_class_init(NMSetting8021xClass *klass)
                                               PROP_PHASE2_AUTHEAP,
                                               NM_SETTING_PARAM_NONE,
                                               NMSetting8021xPrivate,
-                                              phase2_autheap);
+                                              phase2_autheap,
+                                              .direct_string_allow_empty = TRUE);
 
     /**
      * NMSetting8021x:phase2-ca-cert:
@@ -3736,6 +3785,20 @@ nm_setting_802_1x_class_init(NMSetting8021xClass *klass)
      * Setting this property directly is discouraged; use the
      * nm_setting_802_1x_set_phase2_ca_cert() function instead.
      **/
+    /* ---nmcli---
+     * property: phase2-ca-cert
+     * description:
+     *   Contains the path to the "phase 2" CA certificate if used by the EAP
+     *   method specified in the 802-1x.phase2-auth or 802-1x.phase2-autheap
+     *   properties.
+     *
+     *   This property can be unset even if the EAP method supports CA certificates,
+     *   but this allows man-in-the-middle attacks and is NOT recommended.
+     *
+     *   Note that enabling 802-1x.system-ca-certs will override this
+     *   setting to use the built-in path, if the built-in path is not a directory.
+     * ---end---
+     */
     _nm_setting_property_define_direct_bytes(properties_override,
                                              obj_properties,
                                              NM_SETTING_802_1X_PHASE2_CA_CERT,
@@ -3759,7 +3822,8 @@ nm_setting_802_1x_class_init(NMSetting8021xClass *klass)
                                               PROP_PHASE2_CA_CERT_PASSWORD,
                                               NM_SETTING_PARAM_SECRET,
                                               NMSetting8021xPrivate,
-                                              phase2_ca_cert_password);
+                                              phase2_ca_cert_password,
+                                              .direct_string_allow_empty = TRUE);
 
     /**
      * NMSetting8021x:phase2-ca-cert-password-flags:
@@ -3797,7 +3861,8 @@ nm_setting_802_1x_class_init(NMSetting8021xClass *klass)
                                               PROP_PHASE2_CA_PATH,
                                               NM_SETTING_PARAM_NONE,
                                               NMSetting8021xPrivate,
-                                              phase2_ca_path);
+                                              phase2_ca_path,
+                                              .direct_string_allow_empty = TRUE);
 
     /**
      * NMSetting8021x:phase2-subject-match:
@@ -3824,7 +3889,8 @@ nm_setting_802_1x_class_init(NMSetting8021xClass *klass)
                                               NM_SETTING_PARAM_NONE,
                                               NMSetting8021xPrivate,
                                               phase2_subject_match,
-                                              .is_deprecated = TRUE, );
+                                              .is_deprecated             = TRUE,
+                                              .direct_string_allow_empty = TRUE);
 
     /**
      * NMSetting8021x:phase2-altsubject-matches:
@@ -3839,12 +3905,11 @@ nm_setting_802_1x_class_init(NMSetting8021xClass *klass)
      * variable: IEEE_8021X_PHASE2_ALTSUBJECT_MATCHES(+)
      * ---end---
      */
-    obj_properties[PROP_PHASE2_ALTSUBJECT_MATCHES] =
-        g_param_spec_boxed(NM_SETTING_802_1X_PHASE2_ALTSUBJECT_MATCHES,
-                           "",
-                           "",
-                           G_TYPE_STRV,
-                           G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS);
+    _nm_setting_property_define_gprop_strv_oldstyle(properties_override,
+                                                    obj_properties,
+                                                    NM_SETTING_802_1X_PHASE2_ALTSUBJECT_MATCHES,
+                                                    PROP_PHASE2_ALTSUBJECT_MATCHES,
+                                                    NM_SETTING_PARAM_NONE);
 
     /**
      * NMSetting8021x:phase2-domain-suffix-match:
@@ -3872,7 +3937,8 @@ nm_setting_802_1x_class_init(NMSetting8021xClass *klass)
                                               PROP_PHASE2_DOMAIN_SUFFIX_MATCH,
                                               NM_SETTING_PARAM_NONE,
                                               NMSetting8021xPrivate,
-                                              phase2_domain_suffix_match);
+                                              phase2_domain_suffix_match,
+                                              .direct_string_allow_empty = TRUE);
 
     /**
      * NMSetting8021x:phase2-domain-match:
@@ -3899,7 +3965,8 @@ nm_setting_802_1x_class_init(NMSetting8021xClass *klass)
                                               PROP_PHASE2_DOMAIN_MATCH,
                                               NM_SETTING_PARAM_NONE,
                                               NMSetting8021xPrivate,
-                                              phase2_domain_match);
+                                              phase2_domain_match,
+                                              .direct_string_allow_empty = TRUE);
 
     /**
      * NMSetting8021x:phase2-client-cert:
@@ -3920,6 +3987,14 @@ nm_setting_802_1x_class_init(NMSetting8021xClass *klass)
      * Setting this property directly is discouraged; use the
      * nm_setting_802_1x_set_phase2_client_cert() function instead.
      **/
+    /* ---nmcli---
+     * property: phase2-client-cert
+     * description:
+     *   Contains the path to the "phase 2" client certificate if used by the EAP
+     *   method specified in the 802-1x.phase2-auth or 802-1x.phase2-autheap
+     *   properties.
+     * ---end---
+     */
     /* ---ifcfg-rh---
      * property: phase2-client-cert
      * variable: IEEE_8021X_INNER_CLIENT_CERT(+)
@@ -3950,7 +4025,8 @@ nm_setting_802_1x_class_init(NMSetting8021xClass *klass)
                                               PROP_PHASE2_CLIENT_CERT_PASSWORD,
                                               NM_SETTING_PARAM_SECRET,
                                               NMSetting8021xPrivate,
-                                              phase2_client_cert_password);
+                                              phase2_client_cert_password,
+                                              .direct_string_allow_empty = TRUE);
 
     /**
      * NMSetting8021x:phase2-client-cert-password-flags:
@@ -3987,7 +4063,8 @@ nm_setting_802_1x_class_init(NMSetting8021xClass *klass)
                                               PROP_PASSWORD,
                                               NM_SETTING_PARAM_SECRET,
                                               NMSetting8021xPrivate,
-                                              password);
+                                              password,
+                                              .direct_string_allow_empty = TRUE);
 
     /**
      * NMSetting8021x:password-flags:
@@ -4081,6 +4158,12 @@ nm_setting_802_1x_class_init(NMSetting8021xClass *klass)
      * private key password to prevent unauthorized access to unencrypted
      * private key data.
      **/
+    /* ---nmcli---
+     * property: private-key
+     * description:
+     *   The path to the private key when the 802-1.eap property is set to "tls".
+     * ---end---
+     */
     /* ---ifcfg-rh---
      * property: private-key
      * variable: IEEE_8021X_PRIVATE_KEY(+)
@@ -4106,6 +4189,14 @@ nm_setting_802_1x_class_init(NMSetting8021xClass *klass)
      * secrets to NetworkManager; it is generally set automatically when setting
      * the private key by the nm_setting_802_1x_set_private_key() function.
      **/
+    /* ---nmcli---
+     * property: private-key-password
+     * description:
+     *   The password used to decrypt the private key specified in the
+     *   802-1x.private-key property. This is normally used by secret agents,
+     *   not directly by users.
+     * ---end---
+     */
     /* ---ifcfg-rh---
      * property: private-key-password
      * variable: IEEE_8021X_PRIVATE_KEY_PASSWORD(+)
@@ -4119,7 +4210,8 @@ nm_setting_802_1x_class_init(NMSetting8021xClass *klass)
                                               PROP_PRIVATE_KEY_PASSWORD,
                                               NM_SETTING_PARAM_SECRET,
                                               NMSetting8021xPrivate,
-                                              private_key_password);
+                                              private_key_password,
+                                              .direct_string_allow_empty = TRUE);
 
     /**
      * NMSetting8021x:private-key-password-flags:
@@ -4167,6 +4259,13 @@ nm_setting_802_1x_class_init(NMSetting8021xClass *klass)
      * Setting this property directly is discouraged; use the
      * nm_setting_802_1x_set_phase2_private_key() function instead.
      **/
+    /* ---nmcli---
+     * property: phase2-private-key
+     * description:
+     *   The path to the "phase 2" inner private key when the 802-1x.phase2-auth
+     *   or 802-1x.phase2-autheap property is set to "tls".
+     * ---end---
+     */
     /* ---ifcfg-rh---
      * property: phase2-private-key
      * variable: IEEE_8021X_INNER_PRIVATE_KEY(+)
@@ -4192,6 +4291,14 @@ nm_setting_802_1x_class_init(NMSetting8021xClass *klass)
      * the private key by the nm_setting_802_1x_set_phase2_private_key()
      * function.
      **/
+    /* ---nmcli---
+     * property: phase2-private-key-password
+     * description:
+     *   The password used to decrypt the "phase 2" private key specified in the
+     *   802-1x.phase2-private-key property. This is normally used by secret agents,
+     *   not directly by users.
+     * ---end---
+     */
     /* ---ifcfg-rh---
      * property: phase2-private-key-password
      * variable: IEEE_8021X_INNER_PRIVATE_KEY_PASSWORD(+)
@@ -4205,7 +4312,8 @@ nm_setting_802_1x_class_init(NMSetting8021xClass *klass)
                                               PROP_PHASE2_PRIVATE_KEY_PASSWORD,
                                               NM_SETTING_PARAM_SECRET,
                                               NMSetting8021xPrivate,
-                                              phase2_private_key_password);
+                                              phase2_private_key_password,
+                                              .direct_string_allow_empty = TRUE);
 
     /**
      * NMSetting8021x:phase2-private-key-password-flags:
@@ -4245,7 +4353,8 @@ nm_setting_802_1x_class_init(NMSetting8021xClass *klass)
                                               PROP_PIN,
                                               NM_SETTING_PARAM_SECRET,
                                               NMSetting8021xPrivate,
-                                              pin);
+                                              pin,
+                                              .direct_string_allow_empty = TRUE);
 
     /**
      * NMSetting8021x:pin-flags:
@@ -4346,11 +4455,35 @@ nm_setting_802_1x_class_init(NMSetting8021xClass *klass)
                                                NMSetting8021xPrivate,
                                                optional);
 
+    /**
+     * NMSetting8021x:openssl-ciphers:
+     *
+     * Define openssl_ciphers for wpa_supplicant. Openssl sometimes moves ciphers
+     * among SECLEVELs, thus compiled-in default value in wpa_supplicant
+     * (as modified by some linux distributions) sometimes prevents
+     * to connect to old servers that do not support new protocols.
+     *
+     * Since: 1.48
+     **/
+    /* ---ifcfg-rh---
+     * property: openssl-ciphers
+     * variable: IEEE_8021X_OPENSSL_CIPHERS(+)
+     * description: Cipher string for tls setup of wpa_supplicant.
+     * ---end---
+     */
+    _nm_setting_property_define_direct_string(properties_override,
+                                              obj_properties,
+                                              NM_SETTING_802_1X_OPENSSL_CIPHERS,
+                                              PROP_OPENSSL_CIPHERS,
+                                              NM_SETTING_PARAM_NONE,
+                                              NMSetting8021xPrivate,
+                                              openssl_ciphers);
+
     g_object_class_install_properties(object_class, _PROPERTY_ENUMS_LAST, obj_properties);
 
     _nm_setting_class_commit(setting_class,
                              NM_META_SETTING_TYPE_802_1X,
                              NULL,
                              properties_override,
-                             NM_SETT_INFO_PRIVATE_OFFSET_FROM_CLASS);
+                             G_STRUCT_OFFSET(NMSetting8021x, _priv));
 }

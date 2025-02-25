@@ -157,6 +157,8 @@ struct _NML3ConfigData {
     bool has_routes_with_type_local_6_set : 1;
     bool has_routes_with_type_local_4_val : 1;
     bool has_routes_with_type_local_6_val : 1;
+    bool allow_routes_without_address_4 : 1;
+    bool allow_routes_without_address_6 : 1;
 
     bool ndisc_hop_limit_set : 1;
     bool ndisc_reachable_time_msec_set : 1;
@@ -324,7 +326,7 @@ _strv_ptrarray_merge(GPtrArray **p_dst, const GPtrArray *src)
         const char *s = src->pdata[i];
 
         if (dst_initial_len > 0
-            && nm_strv_find_first((const char *const *) ((*p_dst)->pdata), dst_initial_len, s) >= 0)
+            && nm_strv_contains((const char *const *) ((*p_dst)->pdata), dst_initial_len, s))
             continue;
 
         g_ptr_array_add(*p_dst, g_strdup(s));
@@ -676,26 +678,28 @@ nm_l3_config_data_new(NMDedupMultiIndex *multi_idx, int ifindex, NMIPConfigSourc
 
     self  = g_slice_new(NML3ConfigData);
     *self = (NML3ConfigData){
-        .ref_count                     = 1,
-        .ifindex                       = ifindex,
-        .multi_idx                     = nm_dedup_multi_index_ref(multi_idx),
-        .mdns                          = NM_SETTING_CONNECTION_MDNS_DEFAULT,
-        .llmnr                         = NM_SETTING_CONNECTION_LLMNR_DEFAULT,
-        .dns_over_tls                  = NM_SETTING_CONNECTION_DNS_OVER_TLS_DEFAULT,
-        .flags                         = NM_L3_CONFIG_DAT_FLAGS_NONE,
-        .metered                       = NM_TERNARY_DEFAULT,
-        .proxy_browser_only            = NM_TERNARY_DEFAULT,
-        .proxy_method                  = NM_PROXY_CONFIG_METHOD_UNKNOWN,
-        .route_table_sync_4            = NM_IP_ROUTE_TABLE_SYNC_MODE_NONE,
-        .route_table_sync_6            = NM_IP_ROUTE_TABLE_SYNC_MODE_NONE,
-        .never_default_6               = NM_OPTION_BOOL_DEFAULT,
-        .never_default_4               = NM_OPTION_BOOL_DEFAULT,
-        .source                        = source,
-        .ip6_privacy                   = NM_SETTING_IP6_CONFIG_PRIVACY_UNKNOWN,
-        .mptcp_flags                   = NM_MPTCP_FLAGS_NONE,
-        .ndisc_hop_limit_set           = FALSE,
-        .ndisc_reachable_time_msec_set = FALSE,
-        .ndisc_retrans_timer_msec_set  = FALSE,
+        .ref_count                      = 1,
+        .ifindex                        = ifindex,
+        .multi_idx                      = nm_dedup_multi_index_ref(multi_idx),
+        .mdns                           = NM_SETTING_CONNECTION_MDNS_DEFAULT,
+        .llmnr                          = NM_SETTING_CONNECTION_LLMNR_DEFAULT,
+        .dns_over_tls                   = NM_SETTING_CONNECTION_DNS_OVER_TLS_DEFAULT,
+        .flags                          = NM_L3_CONFIG_DAT_FLAGS_NONE,
+        .metered                        = NM_TERNARY_DEFAULT,
+        .proxy_browser_only             = NM_TERNARY_DEFAULT,
+        .proxy_method                   = NM_PROXY_CONFIG_METHOD_UNKNOWN,
+        .route_table_sync_4             = NM_IP_ROUTE_TABLE_SYNC_MODE_NONE,
+        .route_table_sync_6             = NM_IP_ROUTE_TABLE_SYNC_MODE_NONE,
+        .never_default_6                = NM_OPTION_BOOL_DEFAULT,
+        .never_default_4                = NM_OPTION_BOOL_DEFAULT,
+        .source                         = source,
+        .ip6_privacy                    = NM_SETTING_IP6_CONFIG_PRIVACY_UNKNOWN,
+        .mptcp_flags                    = NM_MPTCP_FLAGS_NONE,
+        .ndisc_hop_limit_set            = FALSE,
+        .ndisc_reachable_time_msec_set  = FALSE,
+        .ndisc_retrans_timer_msec_set   = FALSE,
+        .allow_routes_without_address_4 = TRUE,
+        .allow_routes_without_address_6 = TRUE,
     };
 
     _idx_type_init(&self->idx_addresses_4, NMP_OBJECT_TYPE_IP4_ADDRESS);
@@ -1642,7 +1646,7 @@ nm_l3_config_data_get_dns_priority(const NML3ConfigData *self, int addr_family, 
     case AF_UNSPEC:
         if (NM_FLAGS_ANY(self->flags, NM_L3_CONFIG_DAT_FLAGS_HAS_DNS_PRIORITY_4)) {
             if (NM_FLAGS_ANY(self->flags, NM_L3_CONFIG_DAT_FLAGS_HAS_DNS_PRIORITY_6)) {
-                NM_SET_OUT(out_prio, MIN(self->dns_priority_4, self->dns_priority_6));
+                NM_SET_OUT(out_prio, NM_MIN(self->dns_priority_4, self->dns_priority_6));
                 return TRUE;
             }
             NM_SET_OUT(out_prio, self->dns_priority_4);
@@ -1931,6 +1935,34 @@ nm_l3_config_data_set_mptcp_flags(NML3ConfigData *self, NMMptcpFlags mptcp_flags
     self->mptcp_flags = mptcp_flags;
     nm_assert(self->mptcp_flags == mptcp_flags);
     return TRUE;
+}
+
+gboolean
+nm_l3_config_data_get_allow_routes_without_address(const NML3ConfigData *self, int addr_family)
+{
+    const int IS_IPv4 = NM_IS_IPv4(addr_family);
+
+    nm_assert(_NM_IS_L3_CONFIG_DATA(self, TRUE));
+    if (IS_IPv4) {
+        return self->allow_routes_without_address_4;
+    } else {
+        return self->allow_routes_without_address_6;
+    }
+}
+
+void
+nm_l3_config_data_set_allow_routes_without_address(NML3ConfigData *self,
+                                                   int             addr_family,
+                                                   gboolean        value)
+{
+    const int IS_IPv4 = NM_IS_IPv4(addr_family);
+
+    nm_assert(_NM_IS_L3_CONFIG_DATA(self, FALSE));
+    if (IS_IPv4) {
+        self->allow_routes_without_address_4 = value;
+    } else {
+        self->allow_routes_without_address_6 = value;
+    }
 }
 
 NMProxyConfigMethod
@@ -2231,14 +2263,23 @@ static const NML3ConfigData *
 get_empty_l3cd(void)
 {
     static NML3ConfigData *empty_l3cd;
+    NML3ConfigData        *l3cd;
 
-    if (!empty_l3cd) {
-        empty_l3cd =
-            nm_l3_config_data_new(nm_dedup_multi_index_new(), 1, NM_IP_CONFIG_SOURCE_UNKNOWN);
-        empty_l3cd->ifindex = 0;
+again:
+    l3cd = g_atomic_pointer_get(&empty_l3cd);
+    if (G_UNLIKELY(!l3cd)) {
+        l3cd = nm_l3_config_data_new(nm_dedup_multi_index_new(), 1, NM_IP_CONFIG_SOURCE_UNKNOWN);
+        l3cd->ifindex = 0;
+
+        nm_l3_config_data_seal(l3cd);
+
+        if (!g_atomic_pointer_compare_and_exchange(&empty_l3cd, NULL, l3cd)) {
+            nm_l3_config_data_unref(l3cd);
+            goto again;
+        }
     }
 
-    return empty_l3cd;
+    return l3cd;
 }
 
 int
@@ -2713,6 +2754,7 @@ _init_from_connection_ip(NML3ConfigData *self, int addr_family, NMConnection *co
     guint              nnameservers;
     guint              nsearches;
     const char        *gateway_str;
+    const char        *method;
     NMIPAddr           gateway_bin;
     guint              i;
     int                idx;
@@ -2729,6 +2771,24 @@ _init_from_connection_ip(NML3ConfigData *self, int addr_family, NMConnection *co
         return;
 
     never_default = nm_setting_ip_config_get_never_default(s_ip);
+
+    method = nm_setting_ip_config_get_method(s_ip);
+    if (IS_IPv4) {
+        if (nm_streq(method, NM_SETTING_IP4_CONFIG_METHOD_AUTO)) {
+            self->allow_routes_without_address_4 = FALSE;
+        } else {
+            self->allow_routes_without_address_4 = TRUE;
+        }
+    } else {
+        method = nm_setting_ip_config_get_method(s_ip);
+        if (NM_IN_STRSET(method,
+                         NM_SETTING_IP6_CONFIG_METHOD_AUTO,
+                         NM_SETTING_IP6_CONFIG_METHOD_DHCP)) {
+            self->allow_routes_without_address_6 = FALSE;
+        } else {
+            self->allow_routes_without_address_6 = TRUE;
+        }
+    }
 
     nm_l3_config_data_set_never_default(self, addr_family, !!never_default);
 
@@ -3022,8 +3082,8 @@ nm_l3_config_data_new_from_platform(NMDedupMultiIndex        *multi_idx,
     nm_assert(NM_IS_PLATFORM(platform));
     nm_assert(ifindex > 0);
 
-    /* Slaves have no IP configuration */
-    if (nm_platform_link_get_master(platform, ifindex) > 0)
+    /* Ports have no IP configuration */
+    if (nm_platform_link_get_controller(platform, ifindex) > 0)
         return NULL;
 
     self = nm_l3_config_data_new(multi_idx, ifindex, NM_IP_CONFIG_SOURCE_KERNEL);
@@ -3410,9 +3470,14 @@ nm_l3_config_data_merge(NML3ConfigData       *self,
             g_steal_pointer(&self->dhcp_lease_x[1]);
 
         self->source          = src->source;
-        self->dhcp_lease_x[0] = nm_dhcp_lease_ref(self->dhcp_lease_x[0]);
-        self->dhcp_lease_x[1] = nm_dhcp_lease_ref(self->dhcp_lease_x[1]);
+        self->dhcp_lease_x[0] = nm_dhcp_lease_ref(src->dhcp_lease_x[0]);
+        self->dhcp_lease_x[1] = nm_dhcp_lease_ref(src->dhcp_lease_x[1]);
     }
+    if (!src->allow_routes_without_address_4)
+        self->allow_routes_without_address_4 = FALSE;
+
+    if (!src->allow_routes_without_address_6)
+        self->allow_routes_without_address_6 = FALSE;
 }
 
 NML3ConfigData *

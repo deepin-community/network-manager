@@ -48,7 +48,7 @@ create_and_realize(NMDevice              *device,
                    const NMPlatformLink **out_plink,
                    GError               **error)
 {
-    /* The port will be added to ovsdb when an interface is enslaved,
+    /* The port will be added to ovsdb when an interface is attached as port,
      * because there's no such thing like an empty port. */
 
     return TRUE;
@@ -160,7 +160,7 @@ attach_port(NMDevice                  *device,
         return TRUE;
 
     ac_port   = NM_ACTIVE_CONNECTION(nm_device_get_act_request(device));
-    ac_bridge = nm_active_connection_get_master(ac_port);
+    ac_bridge = nm_active_connection_get_controller(ac_port);
     if (!ac_bridge) {
         _LOGW(LOGD_DEVICE,
               "can't attach %s: bridge active-connection not found",
@@ -218,9 +218,9 @@ detach_port(NMDevice                  *device,
             gpointer                   user_data)
 {
     NMDeviceOvsPort *self             = NM_DEVICE_OVS_PORT(device);
-    bool             port_not_managed = !NM_IN_SET(nm_device_sys_iface_state_get(port),
-                                       NM_DEVICE_SYS_IFACE_STATE_MANAGED,
-                                       NM_DEVICE_SYS_IFACE_STATE_ASSUME);
+    bool             port_not_managed = !NM_IN_SET(nm_device_managed_type_get(port),
+                                       NM_DEVICE_MANAGED_TYPE_FULL,
+                                       NM_DEVICE_MANAGED_TYPE_ASSUME);
     NMTernary        ret              = TRUE;
 
     _LOGI(LOGD_DEVICE, "detaching ovs interface %s", nm_device_get_ip_iface(port));
@@ -266,7 +266,11 @@ static const NMDBusInterfaceInfoExtended interface_info_device_ovs_port = {
     .parent = NM_DEFINE_GDBUS_INTERFACE_INFO_INIT(
         NM_DBUS_INTERFACE_DEVICE_OVS_PORT,
         .properties = NM_DEFINE_GDBUS_PROPERTY_INFOS(
-            NM_DEFINE_DBUS_PROPERTY_INFO_EXTENDED_READABLE("Slaves", "ao", NM_DEVICE_SLAVES), ), ),
+            NM_DEFINE_DBUS_PROPERTY_INFO_EXTENDED_READABLE(
+                "Slaves",
+                "ao",
+                NM_DEVICE_SLAVES,
+                .annotations = NM_GDBUS_ANNOTATION_INFO_LIST_DEPRECATED(), ), ), ),
 };
 
 static void
@@ -281,7 +285,7 @@ nm_device_ovs_port_class_init(NMDeviceOvsPortClass *klass)
     device_class->connection_type_check_compatible = NM_SETTING_OVS_PORT_SETTING_NAME;
     device_class->link_types                       = NM_DEVICE_DEFINE_LINK_TYPES();
 
-    device_class->is_master                           = TRUE;
+    device_class->is_controller                       = TRUE;
     device_class->get_type_description                = get_type_description;
     device_class->create_and_realize                  = create_and_realize;
     device_class->get_generic_capabilities            = get_generic_capabilities;

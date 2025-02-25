@@ -56,6 +56,7 @@ typedef struct {
     char *host;
     char *port;
     char *response;
+    guint timeout;
 } ConConfig;
 
 struct _NMConnectivityCheckHandle {
@@ -79,9 +80,9 @@ struct _NMConnectivityCheckHandle {
         struct curl_slist *request_headers;
         struct curl_slist *hosts;
 
-        gsize response_good_cnt;
+        GSource *curl_timer;
 
-        guint curl_timer;
+        gsize response_good_cnt;
     } concheck;
 #endif
 
@@ -241,7 +242,7 @@ cb_data_complete(NMConnectivityCheckHandle *cb_data,
         curl_slist_free_all(cb_data->concheck.request_headers);
         curl_slist_free_all(cb_data->concheck.hosts);
     }
-    nm_clear_g_source(&cb_data->concheck.curl_timer);
+    nm_clear_g_source_inst(&cb_data->concheck.curl_timer);
     nm_clear_g_cancellable(&cb_data->concheck.resolve_cancellable);
 #endif
 
@@ -406,6 +407,7 @@ _con_curl_timeout_cb(gpointer user_data)
 {
     NMConnectivityCheckHandle *cb_data = user_data;
 
+    nm_clear_g_source_inst(&cb_data->concheck.curl_timer);
     _con_curl_check_connectivity(cb_data->concheck.curl_mhandle, CURL_SOCKET_TIMEOUT, 0);
     _complete_queued(cb_data->self);
     return G_SOURCE_CONTINUE;
@@ -416,9 +418,11 @@ multi_timer_cb(CURLM *multi, long timeout_msec, void *userdata)
 {
     NMConnectivityCheckHandle *cb_data = userdata;
 
-    nm_clear_g_source(&cb_data->concheck.curl_timer);
-    if (timeout_msec != -1)
-        cb_data->concheck.curl_timer = g_timeout_add(timeout_msec, _con_curl_timeout_cb, cb_data);
+    nm_clear_g_source_inst(&cb_data->concheck.curl_timer);
+    if (timeout_msec != -1) {
+        cb_data->concheck.curl_timer =
+            nm_g_timeout_add_source(timeout_msec, _con_curl_timeout_cb, cb_data);
+    }
     return 0;
 }
 
@@ -735,7 +739,9 @@ do_curl_request(NMConnectivityCheckHandle *cb_data, const char *hosts)
     cb_data->concheck.curl_mhandle    = mhandle;
     cb_data->concheck.curl_ehandle    = ehandle;
     cb_data->concheck.request_headers = curl_slist_append(NULL, "Connection: close");
-    cb_data->timeout_source           = nm_g_timeout_add_seconds_source(20, _timeout_cb, cb_data);
+    cb_data->timeout_source = nm_g_timeout_add_seconds_source(cb_data->concheck.con_config->timeout,
+                                                              _timeout_cb,
+                                                              cb_data);
 
     curl_multi_setopt(mhandle, CURLMOPT_SOCKETFUNCTION, multi_socket_cb);
     curl_multi_setopt(mhandle, CURLMOPT_SOCKETDATA, cb_data);
@@ -1223,6 +1229,7 @@ update_config(NMConnectivity *self, NMConfigData *config_data)
 {
     NMConnectivityPrivate *priv = NM_CONNECTIVITY_GET_PRIVATE(self);
     guint                  interval;
+    guint                  new_timeout;
     gboolean               enabled;
     gboolean               changed      = FALSE;
     const char            *cur_uri      = priv->con_config ? priv->con_config->uri : NULL;
@@ -1233,6 +1240,8 @@ update_config(NMConnectivity *self, NMConfigData *config_data)
     gboolean               new_host_port = FALSE;
     gs_free char          *new_host      = NULL;
     gs_free char          *new_port      = NULL;
+
+    new_timeout = nm_config_data_get_connectivity_timeout(config_data);
 
     new_uri = nm_config_data_get_connectivity_uri(config_data);
     if (!nm_streq0(new_uri, cur_uri)) {
@@ -1274,6 +1283,7 @@ update_config(NMConnectivity *self, NMConfigData *config_data)
         changed = TRUE;
 
     if (!priv->con_config || !nm_streq0(new_uri, priv->con_config->uri)
+        || new_timeout != priv->con_config->timeout
         || !nm_streq0(new_response, priv->con_config->response)) {
         if (!new_host_port) {
             new_host = priv->con_config ? g_strdup(priv->con_config->host) : NULL;
@@ -1287,12 +1297,13 @@ update_config(NMConnectivity *self, NMConfigData *config_data)
             .response  = g_strdup(new_response),
             .host      = g_steal_pointer(&new_host),
             .port      = g_steal_pointer(&new_port),
+            .timeout   = new_timeout,
         };
     }
     priv->uri_valid = new_uri_valid;
 
     interval = nm_config_data_get_connectivity_interval(config_data);
-    interval = MIN(interval, (7 * 24 * 3600));
+    interval = NM_MIN(interval, (7u * 24 * 3600));
     if (priv->interval != interval) {
         priv->interval = interval;
         changed        = TRUE;

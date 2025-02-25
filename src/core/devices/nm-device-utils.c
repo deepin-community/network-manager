@@ -127,7 +127,21 @@ NM_UTILS_LOOKUP_STR_DEFINE(
     NM_UTILS_LOOKUP_STR_ITEM(NM_DEVICE_STATE_REASON_IP_METHOD_UNSUPPORTED, "ip-method-unsupported"),
     NM_UTILS_LOOKUP_STR_ITEM(NM_DEVICE_STATE_REASON_SRIOV_CONFIGURATION_FAILED,
                              "sriov-configuration-failed"),
-    NM_UTILS_LOOKUP_STR_ITEM(NM_DEVICE_STATE_REASON_PEER_NOT_FOUND, "peer-not-found"), );
+    NM_UTILS_LOOKUP_STR_ITEM(NM_DEVICE_STATE_REASON_PEER_NOT_FOUND, "peer-not-found"),
+    NM_UTILS_LOOKUP_STR_ITEM(NM_DEVICE_STATE_REASON_DEVICE_HANDLER_FAILED, "device-handler-failed"),
+    NM_UTILS_LOOKUP_STR_ITEM(NM_DEVICE_STATE_REASON_UNMANAGED_BY_DEFAULT, "unmanaged-by-default"),
+    NM_UTILS_LOOKUP_STR_ITEM(NM_DEVICE_STATE_REASON_UNMANAGED_EXTERNAL_DOWN,
+                             "unmanaged-external-down"),
+    NM_UTILS_LOOKUP_STR_ITEM(NM_DEVICE_STATE_REASON_UNMANAGED_LINK_NOT_INIT,
+                             "unmanaged-link-not-init"),
+    NM_UTILS_LOOKUP_STR_ITEM(NM_DEVICE_STATE_REASON_UNMANAGED_QUITTING, "unmanaged-quitting"),
+    NM_UTILS_LOOKUP_STR_ITEM(NM_DEVICE_STATE_REASON_UNMANAGED_SLEEPING, "unmanaged-sleeping"),
+    NM_UTILS_LOOKUP_STR_ITEM(NM_DEVICE_STATE_REASON_UNMANAGED_USER_CONF, "unmanaged-user-conf"),
+    NM_UTILS_LOOKUP_STR_ITEM(NM_DEVICE_STATE_REASON_UNMANAGED_USER_EXPLICIT,
+                             "unmanaged-user-explicit"),
+    NM_UTILS_LOOKUP_STR_ITEM(NM_DEVICE_STATE_REASON_UNMANAGED_USER_SETTINGS,
+                             "unmanaged-user-settings"),
+    NM_UTILS_LOOKUP_STR_ITEM(NM_DEVICE_STATE_REASON_UNMANAGED_USER_UDEV, "unmanaged-user-udev"), );
 
 NM_UTILS_LOOKUP_STR_DEFINE(nm_device_mtu_source_to_string,
                            NMDeviceMtuSource,
@@ -138,14 +152,13 @@ NM_UTILS_LOOKUP_STR_DEFINE(nm_device_mtu_source_to_string,
                            NM_UTILS_LOOKUP_STR_ITEM(NM_DEVICE_MTU_SOURCE_CONNECTION,
                                                     "connection"), );
 
-NM_UTILS_LOOKUP_STR_DEFINE(nm_device_sys_iface_state_to_string,
-                           NMDeviceSysIfaceState,
+NM_UTILS_LOOKUP_STR_DEFINE(nm_device_managed_type_to_string,
+                           NMDeviceManagedType,
                            NM_UTILS_LOOKUP_DEFAULT_NM_ASSERT("unknown"),
-                           NM_UTILS_LOOKUP_STR_ITEM(NM_DEVICE_SYS_IFACE_STATE_EXTERNAL, "external"),
-                           NM_UTILS_LOOKUP_STR_ITEM(NM_DEVICE_SYS_IFACE_STATE_ASSUME, "assume"),
-                           NM_UTILS_LOOKUP_STR_ITEM(NM_DEVICE_SYS_IFACE_STATE_MANAGED, "managed"),
-                           NM_UTILS_LOOKUP_STR_ITEM(NM_DEVICE_SYS_IFACE_STATE_REMOVED,
-                                                    "removed"), );
+                           NM_UTILS_LOOKUP_STR_ITEM(NM_DEVICE_MANAGED_TYPE_EXTERNAL, "external"),
+                           NM_UTILS_LOOKUP_STR_ITEM(NM_DEVICE_MANAGED_TYPE_ASSUME, "assume"),
+                           NM_UTILS_LOOKUP_STR_ITEM(NM_DEVICE_MANAGED_TYPE_FULL, "full"),
+                           NM_UTILS_LOOKUP_STR_ITEM(NM_DEVICE_MANAGED_TYPE_REMOVED, "removed"), );
 
 NM_UTILS_LOOKUP_STR_DEFINE(nm_device_ip_state_to_string,
                            NMDeviceIPState,
@@ -231,14 +244,36 @@ resolve_addr_helper_cb(GObject *source, GAsyncResult *result, gpointer user_data
     resolve_addr_complete(info, g_steal_pointer(&output), g_steal_pointer(&error));
 }
 
+typedef enum {
+    RESOLVE_ADDR_SERVICE_NONE  = 0x0,
+    RESOLVE_ADDR_SERVICE_DNS   = 0x1,
+    RESOLVE_ADDR_SERVICE_FILES = 0x2,
+} ResolveAddrService;
+
 static void
-resolve_addr_spawn_helper(ResolveAddrInfo *info)
+resolve_addr_spawn_helper(ResolveAddrInfo *info, ResolveAddrService services)
 {
-    char addr_str[NM_INET_ADDRSTRLEN];
+    char     addr_str[NM_INET_ADDRSTRLEN];
+    char     str[256];
+    char    *s     = str;
+    gsize    len   = sizeof(str);
+    gboolean comma = FALSE;
+
+    nm_assert(services != RESOLVE_ADDR_SERVICE_NONE);
+    nm_assert((services & ~(RESOLVE_ADDR_SERVICE_DNS | RESOLVE_ADDR_SERVICE_FILES)) == 0);
+
+    if (services & RESOLVE_ADDR_SERVICE_DNS) {
+        nm_strbuf_append(&s, &len, "%sdns", comma ? "," : "");
+        comma = TRUE;
+    }
+    if (services & RESOLVE_ADDR_SERVICE_FILES) {
+        nm_strbuf_append(&s, &len, "%sfiles", comma ? "," : "");
+        comma = TRUE;
+    }
 
     nm_inet_ntop(info->addr_family, &info->address, addr_str);
-    _LOG2D(info, "start lookup via nm-daemon-helper");
-    nm_utils_spawn_helper(NM_MAKE_STRV("resolve-address", addr_str),
+    _LOG2D(info, "start lookup via nm-daemon-helper using services: %s", str);
+    nm_utils_spawn_helper(NM_MAKE_STRV("resolve-address", addr_str, str),
                           g_task_get_cancellable(info->task),
                           resolve_addr_helper_cb,
                           info);
@@ -268,27 +303,28 @@ resolve_addr_resolved_cb(NMDnsSystemdResolved                    *resolved,
         dbus_error = g_dbus_error_get_remote_error(error);
         if (NM_STR_HAS_PREFIX(dbus_error, "org.freedesktop.resolve1.")) {
             /* systemd-resolved is enabled but it couldn't resolve the
-             * address via DNS.  Don't fall back to spawning the helper,
-             * because the helper will possibly ask again to
+             * address via DNS. Spawn again the helper to check if we
+             * can find a result in /etc/hosts. Don't enable the 'dns'
+             * service otherwise the helper will possibly ask again to
              * systemd-resolved (via /etc/resolv.conf), potentially using
              * other protocols than DNS or returning synthetic results.
              *
-             * Consider the error as the final indication that the address
-             * can't be resolved.
-             *
              * See: https://www.freedesktop.org/wiki/Software/systemd/resolved/#commonerrors
              */
-            resolve_addr_complete(info, NULL, g_error_copy(error));
+            resolve_addr_spawn_helper(info, RESOLVE_ADDR_SERVICE_FILES);
             return;
         }
 
-        resolve_addr_spawn_helper(info);
+        /* systemd-resolved couldn't be contacted, use the helper */
+        resolve_addr_spawn_helper(info, RESOLVE_ADDR_SERVICE_DNS | RESOLVE_ADDR_SERVICE_FILES);
         return;
     }
 
     if (names_len == 0) {
         _LOG2D(info, "systemd-resolved returned no result");
-        resolve_addr_complete(info, g_strdup(""), NULL);
+        /* We passed the NO_SYNTHESIZE flag and so systemd-resolved
+         * didn't look into /etc/hosts. Spawn the helper for that. */
+        resolve_addr_spawn_helper(info, RESOLVE_ADDR_SERVICE_FILES);
         return;
     }
 
@@ -352,7 +388,7 @@ nm_device_resolve_address(int                 addr_family,
         return;
     }
 
-    resolve_addr_spawn_helper(info);
+    resolve_addr_spawn_helper(info, RESOLVE_ADDR_SERVICE_DNS | RESOLVE_ADDR_SERVICE_FILES);
 }
 
 char *

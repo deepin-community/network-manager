@@ -49,7 +49,7 @@ create_and_realize(NMDevice              *device,
                    const NMPlatformLink **out_plink,
                    GError               **error)
 {
-    /* The actual backing resources will be created on enslavement by the port
+    /* The actual backing resources will be created on attachment by the port
      * when it can identify the port and the bridge. */
 
     return TRUE;
@@ -152,7 +152,11 @@ static const NMDBusInterfaceInfoExtended interface_info_device_ovs_bridge = {
     .parent = NM_DEFINE_GDBUS_INTERFACE_INFO_INIT(
         NM_DBUS_INTERFACE_DEVICE_OVS_BRIDGE,
         .properties = NM_DEFINE_GDBUS_PROPERTY_INFOS(
-            NM_DEFINE_DBUS_PROPERTY_INFO_EXTENDED_READABLE("Slaves", "ao", NM_DEVICE_SLAVES), ), ),
+            NM_DEFINE_DBUS_PROPERTY_INFO_EXTENDED_READABLE(
+                "Slaves",
+                "ao",
+                NM_DEVICE_SLAVES,
+                .annotations = NM_GDBUS_ANNOTATION_INFO_LIST_DEPRECATED(), ), ), ),
 };
 
 static void
@@ -167,7 +171,7 @@ nm_device_ovs_bridge_class_init(NMDeviceOvsBridgeClass *klass)
     device_class->connection_type_check_compatible = NM_SETTING_OVS_BRIDGE_SETTING_NAME;
     device_class->link_types                       = NM_DEVICE_DEFINE_LINK_TYPES();
 
-    device_class->is_master                           = TRUE;
+    device_class->is_controller                       = TRUE;
     device_class->get_type_description                = get_type_description;
     device_class->create_and_realize                  = create_and_realize;
     device_class->unrealize                           = unrealize;

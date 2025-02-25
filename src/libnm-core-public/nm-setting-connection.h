@@ -47,8 +47,11 @@ G_BEGIN_DECLS
 #define NM_SETTING_CONNECTION_PERMISSIONS           "permissions"
 #define NM_SETTING_CONNECTION_ZONE                  "zone"
 #define NM_SETTING_CONNECTION_MASTER                "master"
+#define NM_SETTING_CONNECTION_CONTROLLER            "controller"
 #define NM_SETTING_CONNECTION_SLAVE_TYPE            "slave-type"
+#define NM_SETTING_CONNECTION_PORT_TYPE             "port-type"
 #define NM_SETTING_CONNECTION_AUTOCONNECT_SLAVES    "autoconnect-slaves"
+#define NM_SETTING_CONNECTION_AUTOCONNECT_PORTS     "autoconnect-ports"
 #define NM_SETTING_CONNECTION_SECONDARIES           "secondaries"
 #define NM_SETTING_CONNECTION_GATEWAY_PING_TIMEOUT  "gateway-ping-timeout"
 #define NM_SETTING_CONNECTION_METERED               "metered"
@@ -61,21 +64,25 @@ G_BEGIN_DECLS
 #define NM_SETTING_CONNECTION_WAIT_DEVICE_TIMEOUT   "wait-device-timeout"
 #define NM_SETTING_CONNECTION_MUD_URL               "mud-url"
 #define NM_SETTING_CONNECTION_WAIT_ACTIVATION_DELAY "wait-activation-delay"
+#define NM_SETTING_CONNECTION_DOWN_ON_POWEROFF      "down-on-poweroff"
 
 /* Types for property values */
 /**
  * NMSettingConnectionAutoconnectSlaves:
  * @NM_SETTING_CONNECTION_AUTOCONNECT_SLAVES_DEFAULT: default value
  * @NM_SETTING_CONNECTION_AUTOCONNECT_SLAVES_NO: slaves are not brought up when
- *   master is activated
+ *   controller is activated
  * @NM_SETTING_CONNECTION_AUTOCONNECT_SLAVES_YES: slaves are brought up when
- *   master is activated
+ *   controller is activated
  *
  * #NMSettingConnectionAutoconnectSlaves values indicate whether slave connections
- * should be activated when master is activated.
+ * should be activated when controller is activated.
  *
  * Since: 1.2
+ *
+ * Deprecated: 1.46
  */
+NM_DEPRECATED_IN_1_46
 typedef enum {
     NM_SETTING_CONNECTION_AUTOCONNECT_SLAVES_DEFAULT = -1,
     NM_SETTING_CONNECTION_AUTOCONNECT_SLAVES_NO      = 0,
@@ -152,6 +159,23 @@ typedef enum {
     NM_SETTING_CONNECTION_DNS_OVER_TLS_YES           = 2,
 } NMSettingConnectionDnsOverTls;
 
+/**
+ * NMSettingConnectionDownOnPoweroff:
+ * @NM_SETTING_CONNECTION_DOWN_ON_POWEROFF_DEFAULT: default value
+ * @NM_SETTING_CONNECTION_DOWN_ON_POWEROFF_NO: disable down-on-poweroff
+ * @NM_SETTING_CONNECTION_DOWN_ON_POWEROFF_YES: enable down-on-poweroff
+ *
+ * #NMSettingConnectionDownOnPoweroff indicates whether the connection will be
+ * brought down before the system is powered off.
+ *
+ * Since: 1.48
+ */
+typedef enum {
+    NM_SETTING_CONNECTION_DOWN_ON_POWEROFF_DEFAULT = -1,
+    NM_SETTING_CONNECTION_DOWN_ON_POWEROFF_NO      = 0,
+    NM_SETTING_CONNECTION_DOWN_ON_POWEROFF_YES     = 1,
+} NMSettingConnectionDownOnPoweroff;
+
 typedef struct _NMSettingConnectionClass NMSettingConnectionClass;
 
 GType nm_setting_connection_get_type(void);
@@ -193,12 +217,28 @@ gboolean    nm_setting_connection_remove_permission_by_value(NMSettingConnection
                                                              const char          *pitem,
                                                              const char          *detail);
 
+NM_DEPRECATED_IN_1_46
 const char *nm_setting_connection_get_master(NMSettingConnection *setting);
-gboolean    nm_setting_connection_is_slave_type(NMSettingConnection *setting, const char *type);
+
+NM_AVAILABLE_IN_1_46
+const char *nm_setting_connection_get_controller(NMSettingConnection *setting);
+
+NM_DEPRECATED_IN_1_46
+gboolean nm_setting_connection_is_slave_type(NMSettingConnection *setting, const char *type);
+
+NM_DEPRECATED_IN_1_46
 const char *nm_setting_connection_get_slave_type(NMSettingConnection *setting);
+
+NM_AVAILABLE_IN_1_46
+const char *nm_setting_connection_get_port_type(NMSettingConnection *setting);
+
 NM_AVAILABLE_IN_1_2
+NM_DEPRECATED_IN_1_46
 NMSettingConnectionAutoconnectSlaves
 nm_setting_connection_get_autoconnect_slaves(NMSettingConnection *setting);
+
+NM_AVAILABLE_IN_1_46
+NMTernary nm_setting_connection_get_autoconnect_ports(NMSettingConnection *setting);
 
 guint32     nm_setting_connection_get_num_secondaries(NMSettingConnection *setting);
 const char *nm_setting_connection_get_secondary(NMSettingConnection *setting, guint32 idx);
@@ -231,6 +271,10 @@ gint32 nm_setting_connection_get_wait_device_timeout(NMSettingConnection *settin
 
 NM_AVAILABLE_IN_1_40
 gint32 nm_setting_connection_get_wait_activation_delay(NMSettingConnection *setting);
+
+NM_AVAILABLE_IN_1_48
+NMSettingConnectionDownOnPoweroff
+nm_setting_connection_get_down_on_poweroff(NMSettingConnection *setting);
 
 NM_AVAILABLE_IN_1_26
 const char *nm_setting_connection_get_mud_url(NMSettingConnection *setting);

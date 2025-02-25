@@ -1,5 +1,7 @@
 # SPDX-License-Identifier: LGPL-2.1-or-later
 
+libnm_client_impl_inc = include_directories('.')
+
 libnm_client_impl_sources = files(
   'nm-access-point.c',
   'nm-active-connection.c',
@@ -15,6 +17,7 @@ libnm_client_impl_sources = files(
   'nm-device-dummy.c',
   'nm-device-ethernet.c',
   'nm-device-generic.c',
+  'nm-device-hsr.c',
   'nm-device-infiniband.c',
   'nm-device-ip-tunnel.c',
   'nm-device-loopback.c',
@@ -155,7 +158,6 @@ if enable_introspection
     namespace: 'NM',
     identifier_prefix: nm_id_prefix,
     symbol_prefix: nm_id_prefix.to_lower(),
-    header: 'NetworkManager.h',
     export_packages: libnm_name,
     extra_args: [
       '-DNETWORKMANAGER_COMPILATION',
@@ -163,38 +165,76 @@ if enable_introspection
     install: true,
   )
 
-  infos = [ 'dbus', 'nmcli', 'keyfile' ]
-  if enable_ifcfg_rh
-    infos += [ 'ifcfg-rh' ]
+  gi_typelib_path = run_command('printenv', 'GI_TYPELIB_PATH', check: false).stdout()
+  if gi_typelib_path != ''
+    gi_typelib_path = ':' + gi_typelib_path
   endif
-  foreach info: infos
-    t = custom_target(
-      'nm-propery-infos-' + info + '.xml',
-      input: libnm_core_settings_sources,
-      output: 'nm-propery-infos-' + info + '.xml',
+  gi_typelib_path = meson.current_build_dir() + gi_typelib_path
+
+  ld_library_path = run_command('printenv', 'LD_LIBRARY_PATH', check: false).stdout()
+  if ld_library_path != ''
+    ld_library_path = ':' + ld_library_path
+  endif
+  ld_library_path = meson.current_build_dir() + ld_library_path
+
+  gen_infos_cmd = files(source_root / 'tools' / 'generate-docs-nm-property-infos.py')
+  gen_gir_cmd = files(source_root / 'tools' / 'generate-docs-nm-settings-docs-gir.py')
+
+  names = [ 'dbus', 'nmcli', 'keyfile' ]
+  if enable_ifcfg_rh
+    names += [ 'ifcfg-rh' ]
+  endif
+  foreach name: names
+    t_infos = custom_target(
+      'nm-property-infos-' + name + '.xml',
+      input: [gen_infos_cmd, libnm_gir[0]] + libnm_core_settings_sources,
+      output: 'nm-property-infos-' + name + '.xml',
       command: [
-        python.path(),
-        join_paths(meson.source_root(), 'tools', 'generate-docs-nm-property-infos.py'),
-        info,
+        python_path,
+        gen_infos_cmd,
+        name,
         '@OUTPUT@',
-        '@INPUT@'
+        libnm_gir[0]
+      ] + libnm_core_settings_sources,
+    )
+
+    t_gir = custom_target(
+      'nm-settings-docs-gir-' + name + '.xml',
+      input: [gen_gir_cmd, libnm_gir[0]],
+      output: 'nm-settings-docs-gir-' + name + '.xml',
+      command: [
+        'env',
+        'GI_TYPELIB_PATH=' + gi_typelib_path,
+        'LD_LIBRARY_PATH=' + ld_library_path,
+        python_path,
+        gen_gir_cmd,
+        '--lib-path', meson.current_build_dir(),
+        '--gir', libnm_gir[0],
+        '--output', '@OUTPUT@',
+        '--target', name
       ],
+      depends: libnm_gir,
     )
 
     # meson 0.47 doesn't support non-static keys for dicts
     # nor extending dicts incrementally. Workaround.
-    if info == 'dbus'
-      nm_property_infos_xml_dbus = t
-    elif info == 'keyfile'
-      nm_property_infos_xml_keyfile = t
-    elif info == 'ifcfg-rh'
-      nm_property_infos_xml_ifcfg_rh = t
-    elif info == 'nmcli'
-      nm_property_infos_xml_nmcli = t
+    if name == 'dbus'
+      nm_property_infos_xml_dbus = t_infos
+      nm_settings_docs_xml_gir_dbus = t_gir
+    elif name == 'keyfile'
+      nm_property_infos_xml_keyfile = t_infos
+      nm_settings_docs_xml_gir_keyfile = t_gir
+    elif name == 'ifcfg-rh'
+      nm_property_infos_xml_ifcfg_rh = t_infos
+      nm_settings_docs_xml_gir_ifcfg_rh = t_gir
+    elif name == 'nmcli'
+      nm_property_infos_xml_nmcli = t_infos
+      nm_settings_docs_xml_gir_nmcli = t_gir
     else
       assert(false)
     endif
   endforeach
+
   if enable_ifcfg_rh
     nm_property_infos_xml = {
       'dbus':     nm_property_infos_xml_dbus,
@@ -202,40 +242,22 @@ if enable_introspection
       'nmcli':    nm_property_infos_xml_nmcli,
       'ifcfg-rh': nm_property_infos_xml_ifcfg_rh,
     }
+    nm_settings_docs_xml_gir = {
+      'dbus':     nm_settings_docs_xml_gir_dbus,
+      'keyfile':  nm_settings_docs_xml_gir_keyfile,
+      'nmcli':    nm_settings_docs_xml_gir_nmcli,
+      'ifcfg-rh': nm_settings_docs_xml_gir_ifcfg_rh,
+    }
   else
     nm_property_infos_xml = {
       'dbus':    nm_property_infos_xml_dbus,
       'keyfile': nm_property_infos_xml_keyfile,
       'nmcli':   nm_property_infos_xml_nmcli,
     }
+    nm_settings_docs_xml_gir = {
+      'dbus':     nm_settings_docs_xml_gir_dbus,
+      'keyfile':  nm_settings_docs_xml_gir_keyfile,
+      'nmcli':    nm_settings_docs_xml_gir_nmcli,
+    }
   endif
-
-  gi_typelib_path = run_command('printenv', 'GI_TYPELIB_PATH').stdout()
-  if gi_typelib_path != ''
-    gi_typelib_path = ':' + gi_typelib_path
-  endif
-  gi_typelib_path = meson.current_build_dir() + gi_typelib_path
-
-  ld_library_path = run_command('printenv', 'LD_LIBRARY_PATH').stdout()
-  if ld_library_path != ''
-    ld_library_path = ':' + ld_library_path
-  endif
-  ld_library_path = meson.current_build_dir() + ld_library_path
-
-  nm_settings_docs_xml_gir = custom_target(
-    'nm-settings-docs-gir.xml',
-    input: libnm_gir[0],
-    output: 'nm-settings-docs-gir.xml',
-    command: [
-      'env',
-      'GI_TYPELIB_PATH=' + gi_typelib_path,
-      'LD_LIBRARY_PATH=' + ld_library_path,
-      python.path(),
-      join_paths(meson.source_root(), 'tools', 'generate-docs-nm-settings-docs-gir.py'),
-      '--lib-path', meson.current_build_dir(),
-      '--gir', '@INPUT@',
-      '--output', '@OUTPUT@'
-    ],
-    depends: libnm_gir,
-  )
 endif

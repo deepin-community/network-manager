@@ -8,8 +8,8 @@
 
   <xsl:output
       method="xml"
-      doctype-public="-//OASIS//DTD DocBook XML V4.3//EN"
-      doctype-system="http://www.oasis-open.org/docbook/xml/4.3/docbookx.dtd"
+      doctype-public="-//OASIS//DTD DocBook XML V4.5//EN"
+      doctype-system="http://www.oasis-open.org/docbook/xml/4.5/docbookx.dtd"
       />
 
   <xsl:template match="nm-setting-docs">
@@ -174,6 +174,16 @@
         <xsl:if test="@type">
           <para>
             Format: <xsl:value-of select="@type"/>
+          </para>
+        </xsl:if>
+        <xsl:if test="@values">
+          <para>
+            Valid values: <xsl:value-of select="@values"/>
+          </para>
+        </xsl:if>
+        <xsl:if test="@special-values">
+          <para>
+            Special values: <xsl:value-of select="@special-values"/>
           </para>
         </xsl:if>
       </listitem>

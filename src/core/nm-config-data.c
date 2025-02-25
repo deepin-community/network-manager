@@ -62,6 +62,7 @@ NM_GOBJECT_PROPERTIES_DEFINE_BASE(PROP_CONFIG_MAIN_FILE,
                                   PROP_CONNECTIVITY_ENABLED,
                                   PROP_CONNECTIVITY_URI,
                                   PROP_CONNECTIVITY_INTERVAL,
+                                  PROP_CONNECTIVITY_TIMEOUT,
                                   PROP_CONNECTIVITY_RESPONSE,
                                   PROP_NO_AUTO_DEFAULT, );
 
@@ -86,6 +87,7 @@ typedef struct {
         char    *uri;
         char    *response;
         guint    interval;
+        guint    timeout;
     } connectivity;
 
     int autoconnect_retries_default;
@@ -304,6 +306,14 @@ nm_config_data_get_connectivity_interval(const NMConfigData *self)
     return NM_CONFIG_DATA_GET_PRIVATE(self)->connectivity.interval;
 }
 
+guint
+nm_config_data_get_connectivity_timeout(const NMConfigData *self)
+{
+    g_return_val_if_fail(self, 0);
+
+    return NM_CONFIG_DATA_GET_PRIVATE(self)->connectivity.timeout;
+}
+
 const char *
 nm_config_data_get_connectivity_response(const NMConfigData *self)
 {
@@ -373,8 +383,8 @@ nm_config_data_get_iwd_config_path(const NMConfigData *self)
 
 gboolean
 nm_config_data_get_ignore_carrier_for_port(const NMConfigData *self,
-                                           const char         *master,
-                                           const char         *slave_type)
+                                           const char         *controller,
+                                           const char         *port_type)
 {
     const char           *value;
     gboolean              has_match;
@@ -383,15 +393,15 @@ nm_config_data_get_ignore_carrier_for_port(const NMConfigData *self,
 
     g_return_val_if_fail(NM_IS_CONFIG_DATA(self), FALSE);
 
-    if (!master || !slave_type)
+    if (!controller || !port_type)
         goto out_default;
 
-    if (!nm_utils_ifname_valid_kernel(master, NULL))
+    if (!nm_utils_ifname_valid_kernel(controller, NULL))
         goto out_default;
 
     match_data = (NMMatchSpecDeviceData){
-        .interface_name = master,
-        .device_type    = slave_type,
+        .interface_name = controller,
+        .device_type    = port_type,
     };
 
     value = _config_data_get_device_config(self,
@@ -412,7 +422,7 @@ nm_config_data_get_ignore_carrier_for_port(const NMConfigData *self,
         return m;
 
 out_default:
-    /* if ignore-carrier is not explicitly or detected for the master, then we assume it's
+    /* if ignore-carrier is not explicitly or detected for the controller, then we assume it's
      * enabled. This is in line with nm_config_data_get_ignore_carrier_by_device(), where
      * ignore-carrier is enabled based on nm_device_ignore_carrier_by_default().
      */
@@ -849,7 +859,7 @@ nm_config_data_log(const NMConfigData  *self,
                     /* We require that the default values are grouped by their "group".
                      * That is, all default values for a certain "group" are close to
                      * each other in the list. Assert for that. */
-                    for (g2 = g + 1; g2 < groups_full->len; g2++) {
+                    for (g2 = g + 1; g2 < G_N_ELEMENTS(default_values); g2++) {
                         nm_assert(!nm_streq(default_values[g - 1].group, default_values[g2].group));
                     }
                 }
@@ -1219,7 +1229,7 @@ load_global_dns(GKeyFile *keyfile, gboolean internal)
     if (strv) {
         nm_strv_cleanup(strv, TRUE, TRUE, TRUE);
         for (i = 0, j = 0; strv[i]; i++) {
-            if (_nm_utils_dns_option_validate(strv[i], NULL, NULL, TRUE, NULL))
+            if (_nm_utils_dns_option_validate(strv[i], NULL, NULL, AF_UNSPEC, NULL))
                 strv[j++] = strv[i];
             else
                 g_free(strv[i]);
@@ -1453,7 +1463,7 @@ nm_global_dns_config_from_dbus(const GValue *value, GError **error)
             nm_strv_cleanup(strv, TRUE, TRUE, TRUE);
 
             for (i = 0, j = 0; strv && strv[i]; i++) {
-                if (_nm_utils_dns_option_validate(strv[i], NULL, NULL, TRUE, NULL))
+                if (_nm_utils_dns_option_validate(strv[i], NULL, NULL, AF_UNSPEC, NULL))
                     strv[j++] = strv[i];
                 else
                     g_free(strv[i]);
@@ -2006,6 +2016,8 @@ nm_config_data_diff(NMConfigData *old_data, NMConfigData *new_data)
             != nm_config_data_get_connectivity_enabled(new_data)
         || nm_config_data_get_connectivity_interval(old_data)
                != nm_config_data_get_connectivity_interval(new_data)
+        || nm_config_data_get_connectivity_timeout(old_data)
+               != nm_config_data_get_connectivity_timeout(new_data)
         || !nm_streq0(nm_config_data_get_connectivity_uri(old_data),
                       nm_config_data_get_connectivity_uri(new_data))
         || !nm_streq0(nm_config_data_get_connectivity_response(old_data),
@@ -2078,6 +2090,9 @@ get_property(GObject *object, guint prop_id, GValue *value, GParamSpec *pspec)
         break;
     case PROP_CONNECTIVITY_INTERVAL:
         g_value_set_uint(value, nm_config_data_get_connectivity_interval(self));
+        break;
+    case PROP_CONNECTIVITY_TIMEOUT:
+        g_value_set_uint(value, nm_config_data_get_connectivity_timeout(self));
         break;
     case PROP_CONNECTIVITY_RESPONSE:
         g_value_set_string(value, nm_config_data_get_connectivity_response(self));
@@ -2219,6 +2234,15 @@ constructed(GObject *object)
                                      0,
                                      G_MAXUINT,
                                      NM_CONFIG_DEFAULT_CONNECTIVITY_INTERVAL);
+    g_free(str);
+
+    /* On missing or invalid config value, fallback to 20. */
+    str = g_key_file_get_string(priv->keyfile,
+                                NM_CONFIG_KEYFILE_GROUP_CONNECTIVITY,
+                                NM_CONFIG_KEYFILE_KEY_CONNECTIVITY_TIMEOUT,
+                                NULL);
+    priv->connectivity.timeout =
+        _nm_utils_ascii_str_to_int64(str, 10, 0, G_MAXUINT, NM_CONFIG_DEFAULT_CONNECTIVITY_TIMEOUT);
     g_free(str);
 
     priv->dns_mode   = nm_strstrip(g_key_file_get_string(priv->keyfile,
@@ -2420,6 +2444,15 @@ nm_config_data_class_init(NMConfigDataClass *config_class)
                           0,
                           G_PARAM_READABLE | G_PARAM_STATIC_STRINGS);
 
+    obj_properties[PROP_CONNECTIVITY_TIMEOUT] =
+        g_param_spec_uint(NM_CONFIG_DATA_CONNECTIVITY_TIMEOUT,
+                          "",
+                          "",
+                          0,
+                          G_MAXUINT,
+                          0,
+                          G_PARAM_READABLE | G_PARAM_STATIC_STRINGS);
+
     obj_properties[PROP_CONNECTIVITY_RESPONSE] =
         g_param_spec_string(NM_CONFIG_DATA_CONNECTIVITY_RESPONSE,
                             "",
@@ -2435,4 +2468,51 @@ nm_config_data_class_init(NMConfigDataClass *config_class)
                            G_PARAM_WRITABLE | G_PARAM_CONSTRUCT_ONLY | G_PARAM_STATIC_STRINGS);
 
     g_object_class_install_properties(object_class, _PROPERTY_ENUMS_LAST, obj_properties);
+}
+
+static NMGlobalDnsDomain *
+nm_global_dns_domain_clone(NMGlobalDnsDomain *old_domain)
+{
+    if (old_domain) {
+        NMGlobalDnsDomain *new_domain = g_malloc0(sizeof(NMGlobalDnsDomain));
+        new_domain->name              = g_strdup(old_domain->name);
+        new_domain->servers           = (char **) nm_strv_dup(old_domain->servers, -1, TRUE);
+        new_domain->options           = (char **) nm_strv_dup(old_domain->options, -1, TRUE);
+        return new_domain;
+    } else {
+        return NULL;
+    }
+}
+
+NMGlobalDnsConfig *
+nm_global_dns_config_clone(NMGlobalDnsConfig *old_dns_config)
+{
+    NMGlobalDnsConfig *new_dns_config;
+    gpointer           key, value;
+    NMGlobalDnsDomain *old_domain;
+    GHashTableIter     iter;
+
+    new_dns_config           = g_malloc0(sizeof(NMGlobalDnsConfig));
+    new_dns_config->internal = TRUE;
+
+    if (old_dns_config) {
+        new_dns_config->internal = old_dns_config->internal;
+        new_dns_config->searches = nm_strv_dup(old_dns_config->searches, -1, TRUE);
+        new_dns_config->options  = nm_strv_dup(old_dns_config->options, -1, TRUE);
+        new_dns_config->domains  = g_hash_table_new_full(nm_str_hash,
+                                                        g_str_equal,
+                                                        g_free,
+                                                        (GDestroyNotify) global_dns_domain_free);
+        if (old_dns_config->domains) {
+            g_hash_table_iter_init(&iter, old_dns_config->domains);
+            while (g_hash_table_iter_next(&iter, &key, &value)) {
+                old_domain = value;
+                g_hash_table_insert(new_dns_config->domains,
+                                    g_strdup(key),
+                                    nm_global_dns_domain_clone(old_domain));
+            }
+        }
+        global_dns_config_seal_domains(new_dns_config);
+    }
+    return new_dns_config;
 }

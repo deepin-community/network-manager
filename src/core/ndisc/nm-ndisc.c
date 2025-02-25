@@ -114,7 +114,7 @@ nm_ndisc_data_to_l3cd(NMDedupMultiIndex        *multi_idx,
     nm_auto_unref_l3cd_init NML3ConfigData *l3cd = NULL;
     guint32                                 ifa_flags;
     guint                                   i;
-    const gint32                            now_sec = nm_utils_get_monotonic_timestamp_sec();
+    const gint64                            now_msec = nm_utils_get_monotonic_timestamp_msec();
 
     l3cd = nm_l3_config_data_new(multi_idx, ifindex, NM_IP_CONFIG_SOURCE_NDISC);
 
@@ -134,12 +134,10 @@ nm_ndisc_data_to_l3cd(NMDedupMultiIndex        *multi_idx,
             .ifindex   = ifindex,
             .address   = ndisc_addr->address,
             .plen      = 64,
-            .timestamp = now_sec,
-            .lifetime  = _nm_ndisc_lifetime_from_expiry(((gint64) now_sec) * 1000,
-                                                       ndisc_addr->expiry_msec,
-                                                       TRUE),
+            .timestamp = now_msec / 1000,
+            .lifetime  = _nm_ndisc_lifetime_from_expiry(now_msec, ndisc_addr->expiry_msec, TRUE),
             .preferred = _nm_ndisc_lifetime_from_expiry(
-                ((gint64) now_sec) * 1000,
+                now_msec,
                 NM_MIN(ndisc_addr->expiry_msec, ndisc_addr->expiry_preferred_msec),
                 TRUE),
             .addr_source = NM_IP_CONFIG_SOURCE_NDISC,
@@ -172,6 +170,9 @@ nm_ndisc_data_to_l3cd(NMDedupMultiIndex        *multi_idx,
     }
 
     if (rdata->gateways_n > 0) {
+        guint              metric_offset = 0;
+        NMIcmpv6RouterPref prev_pref     = NM_ICMPV6_ROUTER_PREF_INVALID;
+
         NMPlatformIP6Route r = {
             .rt_source     = NM_IP_CONFIG_SOURCE_NDISC,
             .ifindex       = ifindex,
@@ -182,6 +183,20 @@ nm_ndisc_data_to_l3cd(NMDedupMultiIndex        *multi_idx,
         };
 
         for (i = 0; i < rdata->gateways_n; i++) {
+            /* If we add multiple default routes with the same metric and
+             * different preferences, kernel merges them into a single ECMP
+             * route, with overall preference equal to the preference of the
+             * first route added. Therefore, the preference of individual routes
+             * is not respected.
+             * To avoid that, add routes with different metrics if they have
+             * different preferences, so that they are not merged together. Here
+             * the gateways are already ordered by increasing preference. */
+            if (i != 0 && rdata->gateways[i].preference != prev_pref) {
+                metric_offset++;
+            }
+
+            prev_pref = rdata->gateways[i].preference;
+            r.metric  = metric_offset;
             r.gateway = rdata->gateways[i].address;
             r.rt_pref = rdata->gateways[i].preference;
             nm_assert((NMIcmpv6RouterPref) r.rt_pref == rdata->gateways[i].preference);
@@ -705,6 +720,7 @@ nm_ndisc_add_route(NMNDisc *ndisc, const NMNDiscRoute *new_item, gint64 now_msec
          * comparison is aborted, and both routes are added.
          */
         if (IN6_ARE_ADDR_EQUAL(&item->network, &new_item->network) && item->plen == new_item->plen
+            && IN6_ARE_ADDR_EQUAL(&item->gateway, &new_item->gateway)
             && item->on_link == new_item->on_link) {
             if (new_item->expiry_msec <= now_msec) {
                 g_array_remove_index(rdata->routes, i);
@@ -1293,10 +1309,8 @@ nm_ndisc_dad_failed(NMNDisc *ndisc, GArray *addresses, gboolean emit_changed_sig
             NMNDiscAddress *item = &nm_g_array_index(rdata->addresses, NMNDiscAddress, j);
 
             if (IN6_ARE_ADDR_EQUAL(&item->address, addr)) {
-                char sbuf[NM_INET_ADDRSTRLEN];
-
-                _LOGI("DAD failed for discovered address %s", nm_inet6_ntop(addr, sbuf));
                 changed = TRUE;
+
                 if (!complete_address(ndisc, item)) {
                     g_array_remove_index(rdata->addresses, j);
                     continue;
@@ -1857,6 +1871,7 @@ _config_init(NMNDiscConfig *config, const NMNDiscConfig *src)
     g_return_if_fail(
         NM_IN_SET(config->node_type, NM_NDISC_NODE_TYPE_HOST, NM_NDISC_NODE_TYPE_ROUTER));
     g_return_if_fail(NM_IN_SET(config->ip6_privacy,
+                               NM_SETTING_IP6_CONFIG_PRIVACY_UNKNOWN,
                                NM_SETTING_IP6_CONFIG_PRIVACY_DISABLED,
                                NM_SETTING_IP6_CONFIG_PRIVACY_PREFER_PUBLIC_ADDR,
                                NM_SETTING_IP6_CONFIG_PRIVACY_PREFER_TEMP_ADDR));

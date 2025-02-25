@@ -332,6 +332,7 @@ char *nm_ip_routing_rule_to_string(const NMIPRoutingRule       *self,
 #define NM_SETTING_IP_CONFIG_DHCP_HOSTNAME       "dhcp-hostname"
 #define NM_SETTING_IP_CONFIG_DHCP_SEND_HOSTNAME  "dhcp-send-hostname"
 #define NM_SETTING_IP_CONFIG_DHCP_HOSTNAME_FLAGS "dhcp-hostname-flags"
+#define NM_SETTING_IP_CONFIG_DHCP_DSCP           "dhcp-dscp"
 #define NM_SETTING_IP_CONFIG_NEVER_DEFAULT       "never-default"
 #define NM_SETTING_IP_CONFIG_MAY_FAIL            "may-fail"
 #define NM_SETTING_IP_CONFIG_DAD_TIMEOUT         "dad-timeout"
@@ -341,6 +342,7 @@ char *nm_ip_routing_rule_to_string(const NMIPRoutingRule       *self,
 #define NM_SETTING_IP_CONFIG_DHCP_REJECT_SERVERS "dhcp-reject-servers"
 #define NM_SETTING_IP_CONFIG_AUTO_ROUTE_EXT_GW   "auto-route-ext-gw"
 #define NM_SETTING_IP_CONFIG_REPLACE_LOCAL_RULE  "replace-local-rule"
+#define NM_SETTING_IP_CONFIG_DHCP_SEND_RELEASE   "dhcp-send-release"
 
 /* these are not real GObject properties. */
 #define NM_SETTING_IP_CONFIG_ROUTING_RULES "routing-rules"
@@ -363,6 +365,9 @@ char *nm_ip_routing_rule_to_string(const NMIPRoutingRule       *self,
 #define NM_SETTING_DNS_OPTION_NO_RELOAD             "no-reload"
 #define NM_SETTING_DNS_OPTION_TRUST_AD              "trust-ad"
 #define NM_SETTING_DNS_OPTION_NO_AAAA               "no-aaaa"
+/* Internal options (not added to resolv.conf) */
+#define NM_SETTING_DNS_OPTION_INTERNAL_NO_ADD_EDNS0    "_no-add-edns0"
+#define NM_SETTING_DNS_OPTION_INTERNAL_NO_ADD_TRUST_AD "_no-add-trust-ad"
 
 typedef struct _NMSettingIPConfigClass NMSettingIPConfigClass;
 
@@ -475,6 +480,8 @@ gboolean nm_setting_ip_config_get_ignore_auto_dns(NMSettingIPConfig *setting);
 
 const char *nm_setting_ip_config_get_dhcp_hostname(NMSettingIPConfig *setting);
 gboolean    nm_setting_ip_config_get_dhcp_send_hostname(NMSettingIPConfig *setting);
+NM_AVAILABLE_IN_1_46
+const char *nm_setting_ip_config_get_dhcp_dscp(NMSettingIPConfig *setting);
 
 gboolean nm_setting_ip_config_get_never_default(NMSettingIPConfig *setting);
 gboolean nm_setting_ip_config_get_may_fail(NMSettingIPConfig *setting);
@@ -503,6 +510,8 @@ NM_AVAILABLE_IN_1_42
 NMTernary nm_setting_ip_config_get_auto_route_ext_gw(NMSettingIPConfig *setting);
 NM_AVAILABLE_IN_1_44
 NMTernary nm_setting_ip_config_get_replace_local_rule(NMSettingIPConfig *setting);
+NM_AVAILABLE_IN_1_48
+NMTernary nm_setting_ip_config_get_dhcp_send_release(NMSettingIPConfig *setting);
 
 G_END_DECLS
 

@@ -313,6 +313,7 @@ coerce_type(NMDeviceType type)
     case NM_DEVICE_TYPE_WIFI_P2P:
     case NM_DEVICE_TYPE_VRF:
     case NM_DEVICE_TYPE_LOOPBACK:
+    case NM_DEVICE_TYPE_HSR:
         return type;
     }
     return NM_DEVICE_TYPE_UNKNOWN;
@@ -1282,7 +1283,7 @@ nm_device_get_type_description(NMDevice *device)
  * Gets the devices currently set as port of @device.
  *
  * Returns: (element-type NMDevice): the #GPtrArray containing #NMDevices that
- * are slaves of @device. This is the internal copy used by the device and
+ * are ports of @device. This is the internal copy used by the device and
  * must not be modified.
  *
  * Since: 1.34
@@ -1396,8 +1397,8 @@ _nm_device_notify_update_prop_ports(NMClient               *client,
     nm_assert(notify_update_prop_flags == NML_DBUS_NOTIFY_UPDATE_PROP_FLAGS_NOTIFY);
 
     klass = NM_DEVICE_GET_CLASS(self);
-    if (klass->slaves_param_spec)
-        _nm_client_queue_notify_object(client, self, klass->slaves_param_spec);
+    if (klass->ports_param_spec)
+        _nm_client_queue_notify_object(client, self, klass->ports_param_spec);
 out:
     return NML_DBUS_NOTIFY_UPDATE_PROP_FLAGS_NONE;
 }
@@ -1814,6 +1815,8 @@ get_type_name(NMDevice *device)
         return _("VRF");
     case NM_DEVICE_TYPE_LOOPBACK:
         return _("Loopback");
+    case NM_DEVICE_TYPE_HSR:
+        return _("HSR");
     case NM_DEVICE_TYPE_GENERIC:
     case NM_DEVICE_TYPE_UNUSED1:
     case NM_DEVICE_TYPE_UNUSED2:

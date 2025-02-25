@@ -47,6 +47,7 @@ typedef enum {
 #define NM_CONFIG_DATA_CONNECTIVITY_ENABLED  "connectivity-enabled"
 #define NM_CONFIG_DATA_CONNECTIVITY_URI      "connectivity-uri"
 #define NM_CONFIG_DATA_CONNECTIVITY_INTERVAL "connectivity-interval"
+#define NM_CONFIG_DATA_CONNECTIVITY_TIMEOUT  "connectivity-timeout"
 #define NM_CONFIG_DATA_CONNECTIVITY_RESPONSE "connectivity-response"
 #define NM_CONFIG_DATA_NO_AUTO_DEFAULT       "no-auto-default"
 #define NM_CONFIG_DATA_DNS_MODE              "dns"
@@ -172,6 +173,7 @@ char      **nm_config_data_get_plugins(const NMConfigData *config_data, gboolean
 gboolean    nm_config_data_get_connectivity_enabled(const NMConfigData *config_data);
 const char *nm_config_data_get_connectivity_uri(const NMConfigData *config_data);
 guint       nm_config_data_get_connectivity_interval(const NMConfigData *config_data);
+guint       nm_config_data_get_connectivity_timeout(const NMConfigData *config_data);
 const char *nm_config_data_get_connectivity_response(const NMConfigData *config_data);
 
 int nm_config_data_get_autoconnect_retries_default(const NMConfigData *config_data);
@@ -186,8 +188,8 @@ const char *nm_config_data_get_rc_manager(const NMConfigData *self);
 gboolean    nm_config_data_get_systemd_resolved(const NMConfigData *self);
 
 gboolean nm_config_data_get_ignore_carrier_for_port(const NMConfigData *self,
-                                                    const char         *master,
-                                                    const char         *slave_type);
+                                                    const char         *controller,
+                                                    const char         *port_type);
 
 gboolean nm_config_data_get_ignore_carrier_by_device(const NMConfigData *self, NMDevice *device);
 gboolean nm_config_data_get_assume_ipv6ll_only(const NMConfigData *self, NMDevice *device);
@@ -280,7 +282,8 @@ int                nm_global_dns_config_cmp(const NMGlobalDnsConfig *a,
                                             const NMGlobalDnsConfig *b,
                                             gboolean                 check_internal);
 void nm_global_dns_config_update_checksum(const NMGlobalDnsConfig *dns_config, GChecksum *sum);
-void nm_global_dns_config_free(NMGlobalDnsConfig *dns_config);
+NMGlobalDnsConfig *nm_global_dns_config_clone(NMGlobalDnsConfig *dns_config);
+void               nm_global_dns_config_free(NMGlobalDnsConfig *dns_config);
 
 NMGlobalDnsConfig *nm_global_dns_config_from_dbus(const GValue *value, GError **error);
 void               nm_global_dns_config_to_dbus(const NMGlobalDnsConfig *dns_config, GValue *value);

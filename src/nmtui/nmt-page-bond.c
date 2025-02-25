@@ -343,7 +343,7 @@ nmt_page_bond_constructed(GObject *object)
     grid    = nmt_editor_section_get_body(section);
 
     widget = nmt_newt_separator_new();
-    nmt_editor_grid_append(grid, _("Slaves"), widget, NULL);
+    nmt_editor_grid_append(grid, _("Ports"), widget, NULL);
     nmt_editor_grid_set_row_flags(grid, widget, NMT_EDITOR_GRID_ROW_LABEL_ALIGN_LEFT);
 
     widget = nmt_port_list_new(conn, bond_connection_type_filter, bond);
@@ -395,7 +395,7 @@ nmt_page_bond_constructed(GObject *object)
     nmt_editor_grid_append(grid, _("ARP targets"), widget, NULL);
     priv->arp_ip_target = NMT_ADDRESS_LIST(widget);
 
-    widget = nmt_mac_entry_new(40, ETH_ALEN, NMT_MAC_ENTRY_TYPE_CLONED);
+    widget = nmt_mac_entry_new(40, ETH_ALEN, NMT_MAC_ENTRY_TYPE_CLONED_ETHERNET);
     g_object_bind_property(s_wired,
                            NM_SETTING_WIRED_CLONED_MAC_ADDRESS,
                            widget,

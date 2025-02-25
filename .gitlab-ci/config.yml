@@ -1,0 +1,61 @@
+# This file contains the configuration for the gitlab ci.
+#
+# To recreate the .gitlab-ci.yml file, run
+#   ci-fairy generate-template
+#
+# The ci-fairy tool is part of
+# https://gitlab.freedesktop.org/freedesktop/ci-templates
+#
+
+# Some distros are fairly similar, and we reuse similar scripts.
+# The base type maps the distro name to their base.
+base_types:
+  fedora: fedora
+  centos: fedora
+  debian: debian
+  ubuntu: debian
+  alpine: alpine
+
+# The list of all distributions we want to create job for.
+distributions:
+  # TIER 1: CI run for all MRs.
+  # The first tier:1 in the list is used to build the pages and check-{tree,patch}.
+  - name: fedora
+    tier: 1
+    versions:
+      - '41'
+
+  # TIER 2: distribution versions that will or might use the current NM version.
+  # Run when doing a release.
+  - name: alpine
+    tier: 2
+    versions:
+      - '3.21'
+
+  # TIER 3: distribution versions not in EOL but don't use the current NM version.
+  # Run when doing a release, but a failure won't be blocking for the release.
+  - name: fedora
+    tier: 3
+    versions:
+      - '40'
+  - name: ubuntu
+    tier: 3
+    versions:
+      - '24.10'
+      - '24.04'
+      - '22.04'
+      - '20.04'
+  - name: debian
+    tier: 3
+    versions:
+      - '12'
+  - name: alpine
+    tier: 3
+    versions:
+      - '3.20'
+      - '3.19'
+      - '3.18'
+  - name: centos
+    tier: 3
+    versions:
+      - 'stream9'

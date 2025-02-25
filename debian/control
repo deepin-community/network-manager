@@ -6,10 +6,10 @@ Uploaders: Michael Biebl <biebl@debian.org>
 Build-Depends: debhelper-compat (= 13),
                debhelper (>= 13.11.6),
                dh-sequence-gir,
-               automake (>= 1.12),
-               pkg-config,
+               meson (>= 0.51.0),
+               pkgconf,
                gettext (>= 0.19.8),
-               libglib2.0-dev (>= 2.40),
+               libglib2.0-dev (>= 2.42),
                ppp-dev,
                libselinux1-dev,
                libaudit-dev,
@@ -18,7 +18,7 @@ Build-Depends: debhelper-compat (= 13),
                systemd-dev,
                libsystemd-dev (>= 209),
                libudev-dev (>= 175),
-               libgirepository1.0-dev,
+               gir1.2-gio-2.0-dev,
                gir1.2-girepository-2.0,
                gobject-introspection,
                python3-gi,
@@ -33,6 +33,9 @@ Build-Depends: debhelper-compat (= 13),
                libteam-dev (>= 1.9),
                libjansson-dev (>= 2.7),
                libbluetooth-dev (>= 5),
+               libdbus-1-dev,
+               libpolkit-gobject-1-dev,
+               mobile-broadband-provider-info,
                valac,
                polkitd,
                libpolkit-gobject-1-dev,
@@ -40,11 +43,11 @@ Build-Depends: debhelper-compat (= 13),
                python3-dbus <!nocheck>,
                python3-pexpect <!nocheck>,
                iproute2 <!nocheck>,
-Standards-Version: 4.6.2
+Standards-Version: 4.7.0
 Rules-Requires-Root: no
 Vcs-Git: https://salsa.debian.org/utopia-team/network-manager.git
 Vcs-Browser: https://salsa.debian.org/utopia-team/network-manager
-Homepage: https://wiki.gnome.org/Projects/NetworkManager
+Homepage: https://networkmanager.dev/
 
 Package: network-manager
 Architecture: linux-any
@@ -53,15 +56,15 @@ Depends: ${shlibs:Depends},
          ${misc:Depends},
          libnm0 (= ${binary:Version}),
          default-dbus-system-bus | dbus-system-bus,
-         udev,
          adduser,
-         polkitd | policykit-1
 Recommends: ppp,
             dnsmasq-base,
             modemmanager,
             wireless-regdb,
             wpasupplicant,
             libpam-systemd,
+            polkitd,
+            udev,
 Suggests: libteam-utils,
           iptables,
 Breaks: ${misc:Breaks}
@@ -115,9 +118,10 @@ Section: libdevel
 Architecture: linux-any
 Multi-Arch: same
 Depends: ${misc:Depends},
+         ${gir:Depends},
          libnm0 (= ${binary:Version}),
-         gir1.2-nm-1.0 (= ${binary:Version}),
          libglib2.0-dev
+Provides: ${gir:Provides}
 Description: GObject-based client library for NetworkManager (development files)
  NetworkManager is a system network service that manages your network devices
  and connections, attempting to keep active network connectivity when

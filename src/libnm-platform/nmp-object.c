@@ -701,9 +701,9 @@ _nmp_object_fixup_link_udev_fields(NMPObject **obj_new, NMPObject *obj_orig, gbo
 }
 
 static void
-_nmp_object_fixup_link_master_connected(NMPObject     **obj_new,
-                                        NMPObject      *obj_orig,
-                                        const NMPCache *cache)
+_nmp_object_fixup_link_controller_connected(NMPObject     **obj_new,
+                                            NMPObject      *obj_orig,
+                                            const NMPCache *cache)
 {
     NMPObject *obj;
 
@@ -2002,7 +2002,8 @@ _vt_dedup_obj_clone(const NMDedupMultiObj *obj)
 
 #define DEDUP_MULTI_OBJ_CLASS_INIT()                                                       \
     {                                                                                      \
-        .obj_clone = _vt_dedup_obj_clone, .obj_destroy = _vt_dedup_obj_destroy,            \
+        .obj_clone   = _vt_dedup_obj_clone,                                                \
+        .obj_destroy = _vt_dedup_obj_destroy,                                              \
         .obj_full_hash_update =                                                            \
             (void (*)(const NMDedupMultiObj *obj, NMHashState *h)) nmp_object_hash_update, \
         .obj_full_equal = (gboolean(*)(const NMDedupMultiObj *obj_a,                       \
@@ -2034,58 +2035,58 @@ nmp_cache_use_udev_get(const NMPCache *cache)
 /*****************************************************************************/
 
 gboolean
-nmp_cache_link_connected_for_slave(int ifindex_master, const NMPObject *slave)
+nmp_cache_link_connected_for_port(int ifindex_controller, const NMPObject *port)
 {
-    nm_assert(NMP_OBJECT_GET_TYPE(slave) == NMP_OBJECT_TYPE_LINK);
+    nm_assert(NMP_OBJECT_GET_TYPE(port) == NMP_OBJECT_TYPE_LINK);
 
-    return ifindex_master > 0 && slave->link.master == ifindex_master && slave->link.connected
-           && nmp_object_is_visible(slave);
+    return ifindex_controller > 0 && port->link.controller == ifindex_controller
+           && port->link.connected && nmp_object_is_visible(port);
 }
 
 /**
  * nmp_cache_link_connected_needs_toggle:
  * @cache: the platform cache
- * @master: the link object, that is checked whether its connected property
+ * @controller: the link object, that is checked whether its connected property
  *   needs to be toggled.
- * @potential_slave: (nullable): an additional link object that is treated
+ * @potential_port: (nullable): an additional link object that is treated
  *   as if it was inside @cache. If given, it shaddows a link in the cache
  *   with the same ifindex.
- * @ignore_slave: (nullable): if set, the check will pretend that @ignore_slave
+ * @ignore_port: (nullable): if set, the check will pretend that @ignore_port
  *   is not in the cache.
  *
- * NMPlatformLink has two connected flags: (master->link.flags&IFF_LOWER_UP) (as reported
- * from netlink) and master->link.connected. For bond and bridge master, kernel reports
- * those links as IFF_LOWER_UP if they have no slaves attached. We want to present instead
- * a combined @connected flag that shows masters without slaves as down.
+ * NMPlatformLink has two connected flags: (controller->link.flags&IFF_LOWER_UP) (as reported
+ * from netlink) and controller->link.connected. For bond and bridge controller, kernel reports
+ * those links as IFF_LOWER_UP if they have no ports attached. We want to present instead
+ * a combined @connected flag that shows controllers without ports as down.
  *
- * Check if the connected flag of @master should be toggled according to the content
- * of @cache (including @potential_slave).
+ * Check if the connected flag of @controller should be toggled according to the content
+ * of @cache (including @potential_port).
  *
- * Returns: %TRUE, if @master->link.connected should be flipped/toggled.
+ * Returns: %TRUE, if @controller->link.connected should be flipped/toggled.
  **/
 gboolean
 nmp_cache_link_connected_needs_toggle(const NMPCache  *cache,
-                                      const NMPObject *master,
-                                      const NMPObject *potential_slave,
-                                      const NMPObject *ignore_slave)
+                                      const NMPObject *controller,
+                                      const NMPObject *potential_port,
+                                      const NMPObject *ignore_port)
 {
     gboolean is_lower_up = FALSE;
 
-    if (!master || NMP_OBJECT_GET_TYPE(master) != NMP_OBJECT_TYPE_LINK || master->link.ifindex <= 0
-        || !nmp_object_is_visible(master)
-        || !NM_IN_SET(master->link.type, NM_LINK_TYPE_BRIDGE, NM_LINK_TYPE_BOND))
+    if (!controller || NMP_OBJECT_GET_TYPE(controller) != NMP_OBJECT_TYPE_LINK
+        || controller->link.ifindex <= 0 || !nmp_object_is_visible(controller)
+        || !NM_IN_SET(controller->link.type, NM_LINK_TYPE_BRIDGE, NM_LINK_TYPE_BOND))
         return FALSE;
 
     /* if native IFF_LOWER_UP is down, link.connected must also be down
-     * regardless of the slaves. */
-    if (!NM_FLAGS_HAS(master->link.n_ifi_flags, IFF_LOWER_UP))
-        return !!master->link.connected;
+     * regardless of the ports. */
+    if (!NM_FLAGS_HAS(controller->link.n_ifi_flags, IFF_LOWER_UP))
+        return !!controller->link.connected;
 
-    if (potential_slave && NMP_OBJECT_GET_TYPE(potential_slave) != NMP_OBJECT_TYPE_LINK)
-        potential_slave = NULL;
+    if (potential_port && NMP_OBJECT_GET_TYPE(potential_port) != NMP_OBJECT_TYPE_LINK)
+        potential_port = NULL;
 
-    if (potential_slave
-        && nmp_cache_link_connected_for_slave(master->link.ifindex, potential_slave))
+    if (potential_port
+        && nmp_cache_link_connected_for_port(controller->link.ifindex, potential_port))
         is_lower_up = TRUE;
     else {
         NMPLookup             lookup;
@@ -2098,48 +2099,48 @@ nmp_cache_link_connected_needs_toggle(const NMPCache  *cache,
             &link) {
             const NMPObject *obj = NMP_OBJECT_UP_CAST((NMPlatformObject *) link);
 
-            if ((!potential_slave || potential_slave->link.ifindex != link->ifindex)
-                && ignore_slave != obj
-                && nmp_cache_link_connected_for_slave(master->link.ifindex, obj)) {
+            if ((!potential_port || potential_port->link.ifindex != link->ifindex)
+                && ignore_port != obj
+                && nmp_cache_link_connected_for_port(controller->link.ifindex, obj)) {
                 is_lower_up = TRUE;
                 break;
             }
         }
     }
-    return !!master->link.connected != is_lower_up;
+    return !!controller->link.connected != is_lower_up;
 }
 
 /**
  * nmp_cache_link_connected_needs_toggle_by_ifindex:
  * @cache:
- * @master_ifindex: the ifindex of a potential master that should be checked
+ * @controller_ifindex: the ifindex of a potential controller that should be checked
  *   whether it needs toggling.
- * @potential_slave: (nullable): passed to nmp_cache_link_connected_needs_toggle().
- *   It considers @potential_slave as being inside the cache, replacing an existing
+ * @potential_port: (nullable): passed to nmp_cache_link_connected_needs_toggle().
+ *   It considers @potential_port as being inside the cache, replacing an existing
  *   link with the same ifindex.
- * @ignore_slave: (nullable): passed to nmp_cache_link_connected_needs_toggle().
+ * @ignore_port: (nullable): passed to nmp_cache_link_connected_needs_toggle().
  *
  * The flag obj->link.connected depends on the state of other links in the
  * @cache. See also nmp_cache_link_connected_needs_toggle(). Given an ifindex
- * of a master, check if the cache contains such a master link that needs
+ * of a controller, check if the cache contains such a controller link that needs
  * toggling of the connected flag.
  *
- * Returns: NULL if there is no master link with ifindex @master_ifindex that should be toggled.
+ * Returns: NULL if there is no controller link with ifindex @controller_ifindex that should be toggled.
  *   Otherwise, return the link object from inside the cache with the given ifindex.
- *   The connected flag of that master should be toggled.
+ *   The connected flag of that controller should be toggled.
  */
 const NMPObject *
 nmp_cache_link_connected_needs_toggle_by_ifindex(const NMPCache  *cache,
-                                                 int              master_ifindex,
-                                                 const NMPObject *potential_slave,
-                                                 const NMPObject *ignore_slave)
+                                                 int              controller_ifindex,
+                                                 const NMPObject *potential_port,
+                                                 const NMPObject *ignore_port)
 {
-    const NMPObject *master;
+    const NMPObject *controller;
 
-    if (master_ifindex > 0) {
-        master = nmp_cache_lookup_link(cache, master_ifindex);
-        if (nmp_cache_link_connected_needs_toggle(cache, master, potential_slave, ignore_slave))
-            return master;
+    if (controller_ifindex > 0) {
+        controller = nmp_cache_lookup_link(cache, controller_ifindex);
+        if (nmp_cache_link_connected_needs_toggle(cache, controller, potential_port, ignore_port))
+            return controller;
     }
     return NULL;
 }
@@ -2803,7 +2804,7 @@ nmp_cache_remove_netlink(NMPCache         *cache,
         obj_new                              = nmp_object_clone(obj_old, FALSE);
         obj_new->_link.netlink.is_in_netlink = FALSE;
 
-        _nmp_object_fixup_link_master_connected(&obj_new, NULL, cache);
+        _nmp_object_fixup_link_controller_connected(&obj_new, NULL, cache);
         _nmp_object_fixup_link_udev_fields(&obj_new, NULL, cache->use_udev);
 
         _idxcache_update(cache, entry_old, obj_new, FALSE, &entry_new);
@@ -2877,7 +2878,7 @@ nmp_cache_update_netlink(NMPCache         *cache,
         }
 
         if (NMP_OBJECT_GET_TYPE(obj_hand_over) == NMP_OBJECT_TYPE_LINK) {
-            _nmp_object_fixup_link_master_connected(&obj_hand_over, NULL, cache);
+            _nmp_object_fixup_link_controller_connected(&obj_hand_over, NULL, cache);
             _nmp_object_fixup_link_udev_fields(&obj_hand_over, NULL, cache->use_udev);
         }
 
@@ -2913,7 +2914,7 @@ nmp_cache_update_netlink(NMPCache         *cache,
             is_alive = TRUE;
 
         if (is_alive) {
-            _nmp_object_fixup_link_master_connected(&obj_hand_over, NULL, cache);
+            _nmp_object_fixup_link_controller_connected(&obj_hand_over, NULL, cache);
 
             /* Merge the netlink parts with what we have from udev. */
             udev_device_unref(obj_hand_over->_link.udev.device);
@@ -2988,6 +2989,13 @@ nmp_cache_update_netlink_route(NMPCache         *cache,
          * Since we don't cache all routes (see "route_is_alive"), we cannot know
          * with certainty which route was replaced.
          *
+         * For example, the kernel might have 3 similar routes (same WEAK_ID), one
+         * of which is not tracked by us so we don't have it into the cache. If we
+         * receive a route replace message, we don't know to what of the 3 routes
+         * it affects (one of the 3 we don't even know that exists). Moreover, if
+         * we only have one route on cache, we don't know if the replace is for a
+         * different one that we don't track.
+         *
          * Even if we would cache *all* routes (which we cannot, if kernel adds new
          * routing features that modify the known nmp_object_id_equal()), it would
          * be hard to find the right route that was replaced. Well, probably we
@@ -3002,15 +3010,14 @@ nmp_cache_update_netlink_route(NMPCache         *cache,
          * [2] https://bugzilla.redhat.com/show_bug.cgi?id=1337860
          *
          * We need to resync.
+         *
+         * However, a resync is expensive. Think of a routing daemon that updates
+         * hundreds of routes per second, the performance penalty is huge. We can
+         * optimize it: if we don't have any matching route on cache (by WEAK_ID),
+         * we don't have anything to replace and we don't need a full resync, but
+         * only to add or discard the new route as usual.
          */
-        if (NMP_OBJECT_GET_TYPE(obj_hand_over) == NMP_OBJECT_TYPE_IP4_ROUTE
-            && !nmp_cache_lookup_all(cache, NMP_CACHE_ID_TYPE_ROUTES_BY_WEAK_ID, obj_hand_over)) {
-            /* For IPv4, we can do a small optimization. We skip the resync, if we have
-             * no conflicting routes (by weak-id).
-             *
-             * This optimization does not work for IPv6 (maybe should be fixed).
-             */
-        } else {
+        if (nmp_cache_lookup_all(cache, NMP_CACHE_ID_TYPE_ROUTES_BY_WEAK_ID, obj_hand_over)) {
             entry_replace   = NULL;
             resync_required = TRUE;
             goto out;
@@ -3186,10 +3193,10 @@ nmp_cache_update_link_udev(NMPCache           *cache,
 }
 
 NMPCacheOpsType
-nmp_cache_update_link_master_connected(NMPCache         *cache,
-                                       int               ifindex,
-                                       const NMPObject **out_obj_old,
-                                       const NMPObject **out_obj_new)
+nmp_cache_update_link_controller_connected(NMPCache         *cache,
+                                           int               ifindex,
+                                           const NMPObject **out_obj_old,
+                                           const NMPObject **out_obj_new)
 {
     const NMDedupMultiEntry  *entry_old;
     const NMDedupMultiEntry  *entry_new = NULL;
@@ -3484,6 +3491,18 @@ const NMPClass _nmp_classes[NMP_OBJECT_TYPE_MAX] = {
             .cmd_plobj_to_string   = (CmdPlobjToStringFunc) nm_platform_lnk_gre_to_string,
             .cmd_plobj_hash_update = (CmdPlobjHashUpdateFunc) nm_platform_lnk_gre_hash_update,
             .cmd_plobj_cmp         = (CmdPlobjCmpFunc) nm_platform_lnk_gre_cmp,
+        },
+    [NMP_OBJECT_TYPE_LNK_HSR - 1] =
+        {
+            .parent                = DEDUP_MULTI_OBJ_CLASS_INIT(),
+            .obj_type              = NMP_OBJECT_TYPE_LNK_HSR,
+            .sizeof_data           = sizeof(NMPObjectLnkHsr),
+            .sizeof_public         = sizeof(NMPlatformLnkHsr),
+            .obj_type_name         = "hsr",
+            .lnk_link_type         = NM_LINK_TYPE_HSR,
+            .cmd_plobj_to_string   = (CmdPlobjToStringFunc) nm_platform_lnk_hsr_to_string,
+            .cmd_plobj_hash_update = (CmdPlobjHashUpdateFunc) nm_platform_lnk_hsr_hash_update,
+            .cmd_plobj_cmp         = (CmdPlobjCmpFunc) nm_platform_lnk_hsr_cmp,
         },
     [NMP_OBJECT_TYPE_LNK_INFINIBAND - 1] =
         {

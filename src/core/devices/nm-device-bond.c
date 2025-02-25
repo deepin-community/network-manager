@@ -121,7 +121,7 @@ _set_bond_attr(NMDevice *device, const char *attr, const char *value)
         /* kernel does not allow setting ad_actor_system to "00:00:00:00:00:00". We would thus
          * log an EINVAL error. Avoid that... at least, if the value is already "00:00:00:00:00:00". */
         cur_val =
-            nm_platform_sysctl_master_get_option(nm_device_get_platform(device), ifindex, attr);
+            nm_platform_sysctl_controller_get_option(nm_device_get_platform(device), ifindex, attr);
         if (nm_streq0(cur_val, NM_BOND_AD_ACTOR_SYSTEM_DEFAULT))
             return TRUE;
 
@@ -129,8 +129,10 @@ _set_bond_attr(NMDevice *device, const char *attr, const char *value)
          * That will fail, and we will log a warning. There is nothing else to do. */
     }
 
-    ret =
-        nm_platform_sysctl_master_set_option(nm_device_get_platform(device), ifindex, attr, value);
+    ret = nm_platform_sysctl_controller_set_option(nm_device_get_platform(device),
+                                                   ifindex,
+                                                   attr,
+                                                   value);
     if (!ret)
         _LOGW(LOGD_PLATFORM, "failed to set bonding attribute '%s' to '%s'", attr, value);
     return ret;
@@ -187,8 +189,9 @@ update_connection(NMDevice *device, NMConnection *connection)
                          NM_SETTING_BOND_OPTION_BALANCE_SLB))
             continue;
 
-        value =
-            nm_platform_sysctl_master_get_option(nm_device_get_platform(device), ifindex, option);
+        value = nm_platform_sysctl_controller_get_option(nm_device_get_platform(device),
+                                                         ifindex,
+                                                         option);
 
         if (value && _nm_setting_bond_get_option_type(s_bond, option) == NM_BOND_OPTION_TYPE_BOTH) {
             p = strchr(value, ' ');
@@ -248,9 +251,9 @@ controller_update_port_connection(NMDevice     *self,
                      NULL);
 
     g_object_set(nm_connection_get_setting_connection(connection),
-                 NM_SETTING_CONNECTION_MASTER,
+                 NM_SETTING_CONNECTION_CONTROLLER,
                  nm_connection_get_uuid(applied_connection),
-                 NM_SETTING_CONNECTION_SLAVE_TYPE,
+                 NM_SETTING_CONNECTION_PORT_TYPE,
                  NM_SETTING_BOND_SETTING_NAME,
                  NULL);
     return TRUE;
@@ -292,7 +295,7 @@ set_arp_targets(NMDevice *device, const char *cur_arp_ip_target, const char *new
                 }
             }
 
-            if (nm_strv_find_first(new_strv, i, s) < 0)
+            if (!nm_strv_contains(new_strv, i, s))
                 new_strv[j++] = s;
         }
         new_strv[j] = NULL;
@@ -349,9 +352,10 @@ set_bond_arp_ip_targets(NMDevice *device, NMSettingBond *s_bond)
     gs_free char *cur_arp_ip_target = NULL;
 
     /* ARP targets: clear and initialize the list */
-    cur_arp_ip_target = nm_platform_sysctl_master_get_option(nm_device_get_platform(device),
-                                                             ifindex,
-                                                             NM_SETTING_BOND_OPTION_ARP_IP_TARGET);
+    cur_arp_ip_target =
+        nm_platform_sysctl_controller_get_option(nm_device_get_platform(device),
+                                                 ifindex,
+                                                 NM_SETTING_BOND_OPTION_ARP_IP_TARGET);
     set_arp_targets(
         device,
         cur_arp_ip_target,
@@ -604,12 +608,12 @@ act_stage1_prepare(NMDevice *device, NMDeviceStateReason *out_failure_reason)
     s_bond = nm_connection_get_setting_bond(connection);
     g_return_val_if_fail(s_bond, NM_ACT_STAGE_RETURN_FAILURE);
 
-    if (nm_device_sys_iface_state_is_external(device))
+    if (nm_device_managed_type_is_external(device))
         return NM_ACT_STAGE_RETURN_SUCCESS;
 
     _balance_slb_setup(self, connection);
 
-    if (nm_device_sys_iface_state_is_external_or_assume(device))
+    if (nm_device_managed_type_is_external_or_assume(device))
         return NM_ACT_STAGE_RETURN_SUCCESS;
 
     _platform_lnk_bond_init_from_setting(s_bond, &props);
@@ -659,7 +663,7 @@ commit_port_options(NMDevice *bond_device, NMDevice *port, NMSettingBondPort *s_
          * one of those modes, don't try to set the priority explicitly to zero. */
         prio_has = FALSE;
     } else if (nm_platform_kernel_support_get_full(
-                   NM_PLATFORM_KERNEL_SUPPORT_TYPE_IFLA_BOND_SLAVE_PRIO,
+                   NM_PLATFORM_KERNEL_SUPPORT_TYPE_IFLA_BOND_PORT_PRIO,
                    FALSE)
                == NM_OPTION_BOOL_TRUE) {
         /* We can only detect support if we have it. We cannot detect lack of support if
@@ -683,6 +687,7 @@ commit_port_options(NMDevice *bond_device, NMDevice *port, NMSettingBondPort *s_
                                 .prio     = prio_has ? prio : 0,
                                 .prio_has = prio_has,
                             }),
+                            NULL,
                             0);
 }
 
@@ -698,15 +703,15 @@ attach_port(NMDevice                  *device,
     NMDeviceBond      *self = NM_DEVICE_BOND(device);
     NMSettingBondPort *s_port;
 
-    nm_device_master_check_slave_physical_port(device, port, LOGD_BOND);
+    nm_device_controller_check_port_physical_port(device, port, LOGD_BOND);
 
     if (configure) {
         gboolean success;
 
         nm_device_take_down(port, TRUE);
-        success = nm_platform_link_enslave(nm_device_get_platform(device),
-                                           nm_device_get_ip_ifindex(device),
-                                           nm_device_get_ip_ifindex(port));
+        success = nm_platform_link_attach_port(nm_device_get_platform(device),
+                                               nm_device_get_ip_ifindex(device),
+                                               nm_device_get_ip_ifindex(port));
         nm_device_bring_up(port);
 
         if (!success) {
@@ -736,7 +741,7 @@ detach_port(NMDevice                  *device,
     NMDeviceBond *self = NM_DEVICE_BOND(device);
     gboolean      success;
     gs_free char *address = NULL;
-    int           ifindex_slave;
+    int           ifindex_port;
     int           ifindex;
 
     if (configure) {
@@ -745,9 +750,9 @@ detach_port(NMDevice                  *device,
             configure = FALSE;
     }
 
-    ifindex_slave = nm_device_get_ip_ifindex(port);
+    ifindex_port = nm_device_get_ip_ifindex(port);
 
-    if (ifindex_slave <= 0)
+    if (ifindex_port <= 0)
         _LOGD(LOGD_BOND, "bond port %s is already detached", nm_device_get_ip_iface(port));
 
     if (configure) {
@@ -757,10 +762,10 @@ detach_port(NMDevice                  *device,
 
         address = g_strdup(nm_device_get_hw_address(device));
 
-        if (ifindex_slave > 0) {
-            success = nm_platform_link_release(nm_device_get_platform(device),
-                                               nm_device_get_ip_ifindex(device),
-                                               ifindex_slave);
+        if (ifindex_port > 0) {
+            success = nm_platform_link_release_port(nm_device_get_platform(device),
+                                                    nm_device_get_ip_ifindex(device),
+                                                    ifindex_port);
 
             if (success) {
                 _LOGI(LOGD_BOND, "detached bond port %s", nm_device_get_ip_iface(port));
@@ -772,7 +777,7 @@ detach_port(NMDevice                  *device,
         if ((applied = nm_device_get_applied_connection(device))
             && ((s_wired = nm_connection_get_setting_wired(applied)))
             && ((cloned_mac = nm_setting_wired_get_cloned_mac_address(s_wired)))) {
-            /* When the last slave is released the bond MAC will be set to a random
+            /* When the last port is released the bond MAC will be set to a random
              * value by kernel; if we have set a cloned-mac-address, we need to
              * restore it to the previous value. */
             nm_platform_process_events(nm_device_get_platform(device));
@@ -780,16 +785,16 @@ detach_port(NMDevice                  *device,
                 nm_device_hw_addr_set(device, address, "restore", FALSE);
         }
 
-        /* Kernel bonding code "closes" the slave when releasing it, (which clears
+        /* Kernel bonding code "closes" the port when releasing it, (which clears
          * IFF_UP), so we must bring it back up here to ensure carrier changes and
-         * other state is noticed by the now-released slave.
+         * other state is noticed by the now-released port.
          */
-        if (ifindex_slave > 0) {
+        if (ifindex_port > 0) {
             if (!nm_device_bring_up(port))
                 _LOGW(LOGD_BOND, "detached bond port could not be brought up.");
         }
     } else {
-        if (ifindex_slave > 0) {
+        if (ifindex_port > 0) {
             _LOGI(LOGD_BOND, "bond port %s was detached", nm_device_get_ip_iface(port));
         }
     }
@@ -918,19 +923,116 @@ deactivate(NMDevice *device)
 
 /*****************************************************************************/
 
+gboolean
+nm_device_bond_is_slb(NMDevice *device)
+{
+    NMConnection  *connection;
+    NMSettingBond *s_bond;
+
+    connection = nm_device_get_applied_connection(device);
+    if (!connection)
+        return FALSE;
+
+    s_bond = nm_connection_get_setting_bond(connection);
+    if (!s_bond)
+        return FALSE;
+
+    if (!_nm_setting_bond_opt_value_as_intbool(s_bond, NM_SETTING_BOND_OPTION_BALANCE_SLB))
+        return FALSE;
+
+    return TRUE;
+}
+
+gboolean
+nm_device_bond_announce_ports_on_slb(NMDevice *controller, NMDevice *port)
+{
+    NMDeviceBond      *self               = NM_DEVICE_BOND(controller);
+    int                port_ifindex       = nm_device_get_ifindex(port);
+    int                controller_ifindex = nm_device_get_ifindex(controller);
+    NML3Cfg           *l3cfg              = nm_device_get_l3cfg(controller);
+    NMDevice          *bond_controller    = nm_device_get_controller(controller);
+    NML3Cfg           *bridge_l3cfg;
+    gs_free in_addr_t *addrs_array = NULL;
+    gsize              addrs_len;
+
+    addrs_array = nm_l3cfg_get_configured_ip4_addresses(l3cfg, &addrs_len);
+
+    if (addrs_len > 0) {
+        /* the bond has IPs configured, it is not attached to a
+         * bridge then. */
+        if (!nm_bond_manager_send_arp(controller_ifindex,
+                                      -1,
+                                      nm_device_get_platform(port),
+                                      addrs_array,
+                                      addrs_len)) {
+            _LOGT(LOGD_BOND,
+                  "failed to send gARP on port %s (ifindex %d)",
+                  nm_device_get_iface(port),
+                  port_ifindex);
+            return FALSE;
+        }
+    } else if (bond_controller
+               && nm_device_get_device_type(bond_controller) == NM_DEVICE_TYPE_BRIDGE) {
+        /* the bond is attached to a bridge, firts let's check if the bridge has IP
+         * configuration. */
+        bridge_l3cfg = nm_device_get_l3cfg(bond_controller);
+        addrs_array  = nm_l3cfg_get_configured_ip4_addresses(bridge_l3cfg, &addrs_len);
+        if (addrs_len > 0) {
+            /* the bridge has IPs configured, announcing them on the bond */
+            if (!nm_bond_manager_send_arp(controller_ifindex,
+                                          -1,
+                                          nm_device_get_platform(port),
+                                          addrs_array,
+                                          addrs_len)) {
+                _LOGT(LOGD_BOND,
+                      "failed to send gARP on port %s (ifindex %d) on behalf of bridge",
+                      nm_device_get_iface(port),
+                      port_ifindex);
+                return FALSE;
+            }
+        }
+
+        /* we are going to ARP probe the content of the FDB table */
+        if (!nm_bond_manager_send_arp(controller_ifindex,
+                                      nm_device_get_ifindex(bond_controller),
+                                      nm_device_get_platform(port),
+                                      NULL,
+                                      0)) {
+            _LOGT(LOGD_BOND, "failed to send ARP probing with content of FDB table");
+            return FALSE;
+        }
+    }
+
+    return TRUE;
+}
+
+/*****************************************************************************/
+
 static void
 nm_device_bond_init(NMDeviceBond *self)
 {
-    nm_assert(nm_device_is_master(NM_DEVICE(self)));
+    nm_assert(nm_device_is_controller(NM_DEVICE(self)));
 }
 
 static const NMDBusInterfaceInfoExtended interface_info_device_bond = {
     .parent = NM_DEFINE_GDBUS_INTERFACE_INFO_INIT(
         NM_DBUS_INTERFACE_DEVICE_BOND,
         .properties = NM_DEFINE_GDBUS_PROPERTY_INFOS(
-            NM_DEFINE_DBUS_PROPERTY_INFO_EXTENDED_READABLE("HwAddress", "s", NM_DEVICE_HW_ADDRESS),
-            NM_DEFINE_DBUS_PROPERTY_INFO_EXTENDED_READABLE("Carrier", "b", NM_DEVICE_CARRIER),
-            NM_DEFINE_DBUS_PROPERTY_INFO_EXTENDED_READABLE("Slaves", "ao", NM_DEVICE_SLAVES), ), ),
+            NM_DEFINE_DBUS_PROPERTY_INFO_EXTENDED_READABLE(
+                "HwAddress",
+                "s",
+                NM_DEVICE_HW_ADDRESS,
+                .annotations = NM_GDBUS_ANNOTATION_INFO_LIST_DEPRECATED(), ),
+            NM_DEFINE_DBUS_PROPERTY_INFO_EXTENDED_READABLE(
+                "Carrier",
+                "b",
+                NM_DEVICE_CARRIER,
+                .annotations = NM_GDBUS_ANNOTATION_INFO_LIST_DEPRECATED(), ),
+            NM_DEFINE_DBUS_PROPERTY_INFO_EXTENDED_READABLE(
+                "Slaves",
+                "ao",
+                NM_DEVICE_SLAVES,
+                .annotations = NM_GDBUS_ANNOTATION_INFO_LIST_DEPRECATED(), ), ), ),
 };
 
 static void
@@ -945,12 +1047,12 @@ nm_device_bond_class_init(NMDeviceBondClass *klass)
     device_class->connection_type_check_compatible = NM_SETTING_BOND_SETTING_NAME;
     device_class->link_types                       = NM_DEVICE_DEFINE_LINK_TYPES(NM_LINK_TYPE_BOND);
 
-    device_class->is_master                = TRUE;
+    device_class->is_controller            = TRUE;
     device_class->get_generic_capabilities = get_generic_capabilities;
     device_class->complete_connection      = complete_connection;
 
-    device_class->update_connection              = update_connection;
-    device_class->master_update_slave_connection = controller_update_port_connection;
+    device_class->update_connection                 = update_connection;
+    device_class->controller_update_port_connection = controller_update_port_connection;
 
     device_class->create_and_realize                             = create_and_realize;
     device_class->act_stage1_prepare                             = act_stage1_prepare;

@@ -31,6 +31,37 @@ _DEFAULT_ARG = object()
 ###############################################################################
 
 
+class AliasedProperty:
+    def __init__(self, old_name, new_name):
+        self.old_name = old_name
+        self.new_name = new_name
+
+
+ALIASED_PROPERTIES = {
+    NM.SETTING_CONNECTION_SETTING_NAME: [
+        AliasedProperty(
+            NM.SETTING_CONNECTION_MASTER,
+            "controller",  # NM.SETTING_CONNECTION_CONTROLLER
+        ),
+        AliasedProperty(
+            NM.SETTING_CONNECTION_SLAVE_TYPE,
+            "port-type",  # NM.SETTING_CONNECTION_PORT_TYPE
+        ),
+        AliasedProperty(NM.SETTING_CONNECTION_AUTOCONNECT_SLAVES, "autoconnect-ports"),
+    ],
+    NM.SETTING_WIRELESS_SETTING_NAME: [
+        AliasedProperty(
+            NM.SETTING_WIRELESS_MAC_ADDRESS_BLACKLIST, "mac-address-denylist"
+        )
+    ],
+    NM.SETTING_WIRED_SETTING_NAME: [
+        AliasedProperty(NM.SETTING_WIRED_MAC_ADDRESS_BLACKLIST, "mac-address-denylist")
+    ],
+}
+
+###############################################################################
+
+
 class Global:
     pass
 
@@ -50,7 +81,6 @@ class TestError(AssertionError):
 
 
 class Util:
-
     PY3 = sys.version_info[0] == 3
 
     @staticmethod
@@ -509,7 +539,6 @@ class BusErr:
 class NmUtil:
     @staticmethod
     def con_hash_to_connection(con_hash, do_verify=False, do_normalize=False):
-
         x_con = []
         for v_setting_name, v_setting in list(con_hash.items()):
             if isinstance(v_setting_name, (dbus.String, str)):
@@ -628,7 +657,6 @@ class NmUtil:
 
 
 class ExportedObj(dbus.service.Object):
-
     DBusInterface = collections.namedtuple("DBusInterface", ["dbus_iface", "props"])
 
     @staticmethod
@@ -820,12 +848,10 @@ PRP_DEVICE_INTERFACE_FLAGS = "InterfaceFlags"
 
 
 class Device(ExportedObj):
-
     path_counter_next = 1
     path_prefix = "/org/freedesktop/NetworkManager/Devices/"
 
     def __init__(self, iface, devtype, ident=None):
-
         if ident is None:
             ident = iface
 
@@ -1210,10 +1236,10 @@ PRP_WIFI_AP_MODE = "Mode"
 PRP_WIFI_AP_MAX_BITRATE = "MaxBitrate"
 PRP_WIFI_AP_STRENGTH = "Strength"
 PRP_WIFI_AP_LAST_SEEN = "LastSeen"
+PRP_WIFI_AP_BANDWIDTH = "Bandwidth"
 
 
 class WifiAp(ExportedObj):
-
     path_counter_next = 1
     path_prefix = "/org/freedesktop/NetworkManager/AccessPoint/"
 
@@ -1228,7 +1254,6 @@ class WifiAp(ExportedObj):
         strength=None,
         ident=None,
     ):
-
         ExportedObj.__init__(self, ExportedObj.create_path(WifiAp), ident)
 
         NM_AP_FLAGS = getattr(NM, "80211ApSecurityFlags")
@@ -1268,6 +1293,7 @@ class WifiAp(ExportedObj):
             PRP_WIFI_AP_MAX_BITRATE: dbus.UInt32(54000),
             PRP_WIFI_AP_STRENGTH: dbus.Byte(strength),
             PRP_WIFI_AP_LAST_SEEN: dbus.Int32(NM.utils_get_timestamp_msec() / 1000),
+            PRP_WIFI_AP_BANDWIDTH: dbus.UInt32(40),
         }
 
         self.dbus_interface_add(IFACE_WIFI_AP, props)
@@ -1402,12 +1428,10 @@ PRP_VPN_CONNECTION_BANNER = "Banner"
 
 
 class ActiveConnection(ExportedObj):
-
     path_counter_next = 1
     path_prefix = "/org/freedesktop/NetworkManager/ActiveConnection/"
 
     def __init__(self, device, con_inst, specific_object):
-
         ExportedObj.__init__(self, ExportedObj.create_path(ActiveConnection))
 
         self.device = device
@@ -2034,7 +2058,6 @@ PRP_CONNECTION_FILENAME = "Filename"
 
 class Connection(ExportedObj):
     def __init__(self, path_counter, con_hash, do_verify_strict=True):
-
         path = "/org/freedesktop/NetworkManager/Settings/Connection/%s" % (path_counter)
 
         ExportedObj.__init__(self, path)
@@ -2077,7 +2100,6 @@ class Connection(ExportedObj):
         return self.get_type() == NM.SETTING_VPN_SETTING_NAME
 
     def update_connection(self, con_hash, do_verify_strict):
-
         NmUtil.con_hash_verify(con_hash, do_verify_strict=do_verify_strict)
 
         old_uuid = self.get_uuid()
@@ -2127,6 +2149,13 @@ class Connection(ExportedObj):
         out_signature="a{sv}",
     )
     def Update2(self, con_hash, flags, args):
+        for setting_name in ALIASED_PROPERTIES.keys():
+            if setting_name in con_hash:
+                setting = con_hash[setting_name]
+                for pty in ALIASED_PROPERTIES[setting_name]:
+                    if pty.new_name in setting and pty.old_name in setting:
+                        del setting[pty.new_name]
+
         self.update_connection(con_hash, True)
         return []
 
@@ -2301,7 +2330,6 @@ PRP_IP4_CONFIG_WINSSERVERS = "WinsServers"
 
 
 class IP4Config(ExportedObj):
-
     path_counter_next = 1
     path_prefix = "/org/freedesktop/NetworkManager/IP4Config/"
 
@@ -2339,12 +2367,16 @@ class IP4Config(ExportedObj):
                 a = {
                     "dest": Util.random_ip(seed, net="192.168.0.0/16")[0],
                     "prefix": Util.random_int(seed, 17, 32),
-                    "next-hop": None
-                    if (Util.random_int(seed) % 3 == 0)
-                    else Util.random_ip(seed, net="192.168.0.0/16")[0],
-                    "metric": -1
-                    if (Util.random_int(seed) % 3 == 0)
-                    else Util.random_int(seed, 0, 0xFFFFFFFF),
+                    "next-hop": (
+                        None
+                        if (Util.random_int(seed) % 3 == 0)
+                        else Util.random_ip(seed, net="192.168.0.0/16")[0]
+                    ),
+                    "metric": (
+                        -1
+                        if (Util.random_int(seed) % 3 == 0)
+                        else Util.random_int(seed, 0, 0xFFFFFFFF)
+                    ),
                 }
                 routes.append(a)
 
@@ -2500,7 +2532,6 @@ PRP_IP6_CONFIG_DNSPRIORITY = "DnsPriority"
 
 
 class IP6Config(ExportedObj):
-
     path_counter_next = 1
     path_prefix = "/org/freedesktop/NetworkManager/IP6Config/"
 
@@ -2538,12 +2569,16 @@ class IP6Config(ExportedObj):
                 a = {
                     "dest": Util.random_ip(seed, net="2001:a::/64")[0],
                     "prefix": Util.random_int(seed, 65, 128),
-                    "next-hop": None
-                    if (Util.random_int(seed) % 3 == 0)
-                    else Util.random_ip(seed, net="2001:a::/64")[0],
-                    "metric": -1
-                    if (Util.random_int(seed) % 3 == 0)
-                    else Util.random_int(seed, 0, 0xFFFFFFFF),
+                    "next-hop": (
+                        None
+                        if (Util.random_int(seed) % 3 == 0)
+                        else Util.random_ip(seed, net="2001:a::/64")[0]
+                    ),
+                    "metric": (
+                        -1
+                        if (Util.random_int(seed) % 3 == 0)
+                        else Util.random_int(seed, 0, 0xFFFFFFFF)
+                    ),
                 }
                 routes.append(a)
 
@@ -2674,7 +2709,6 @@ PRP_DHCP4_CONFIG_OPTIONS = "Options"
 
 
 class Dhcp4Config(ExportedObj):
-
     path_counter_next = 1
     path_prefix = "/org/freedesktop/NetworkManager/DHCP4Config/"
 
@@ -2715,7 +2749,6 @@ PRP_DHCP6_CONFIG_OPTIONS = "Options"
 
 
 class Dhcp6Config(ExportedObj):
-
     path_counter_next = 1
     path_prefix = "/org/freedesktop/NetworkManager/DHCP6Config/"
 

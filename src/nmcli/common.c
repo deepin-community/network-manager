@@ -700,7 +700,7 @@ get_secrets_from_user(const NmcConfig *nmc_config,
                 if (msg)
                     nmc_print("%s\n", msg);
 
-                echo_on = secret->is_secret ? nmc_config->show_secrets : TRUE;
+                echo_on = secret->is_secret ? secret->force_echo || nmc_config->show_secrets : TRUE;
 
                 if (secret->no_prompt_entry_id)
                     pwd = nmc_readline_echo(nmc_config, echo_on, "%s: ", secret->pretty_name);
@@ -824,7 +824,7 @@ static char    *rl_string;
 /**
  * nmc_cleanup_readline:
  *
- * Cleanup readline when nmcli is terminated with a signal.
+ * Cleanup readline when nmcli is terminated.
  * It makes sure the terminal is not garbled.
  */
 void
@@ -1016,7 +1016,7 @@ nmc_readline_echo(const NmcConfig *nmc_config, gboolean echo_on, const char *pro
         saved_history = history_get_history_state();
         history_set_history_state(&passwd_history);
 #else
-        start  = where_history();
+        start = where_history();
 #endif
         /* stifling history is important as it tells readline to
          * not store anything, otherwise sensitive data could be

@@ -65,7 +65,7 @@ nmt_newt_dialog_g_log_handler(const char    *log_domain,
      */
 
     newtGetScreenSize(&screen_width, &screen_height);
-    text = newtTextboxReflowed(-1, -1, full_message, MAX(70, screen_width - 10), 0, 0, 0);
+    text = newtTextboxReflowed(-1, -1, full_message, NM_MAX(70, screen_width - 10), 0, 0, 0);
     g_free(full_message);
 
     ok = newtButton(-1, -1, "OK");
@@ -282,7 +282,7 @@ nmt_newt_message_dialog(const char *message, ...)
  * Displays the given message in a dialog box with two buttons with
  * the indicated labels, and waits for the user to click one.
  *
- * Returns: which button was clicked: 0 for @button1 or 1 for @button2
+ * Returns: which button was clicked: 1 for @button1, 2 for @button2 or 0 otherwise
  */
 int
 nmt_newt_choice_dialog(const char *button1, const char *button2, const char *message, ...)
@@ -416,9 +416,18 @@ nmt_newt_edit_string(const char *data)
 
     len = data ? strlen(data) : 0;
     while (len) {
-        do
-            nwrote = write(fd, data, len);
-        while (nwrote == -1 && errno == EINTR);
+        nwrote = write(fd, data, len);
+
+        if (nwrote == -1) {
+            if (errno == EINTR) {
+                continue;
+            }
+
+            nmt_newt_message_dialog(_("Could not write to temporary file: %s"),
+                                    nm_strerror_native(errno));
+            nm_close(fd);
+            goto done;
+        }
 
         len -= nwrote;
         data += nwrote;

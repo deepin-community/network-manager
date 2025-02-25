@@ -311,10 +311,9 @@ _nm_wireguard_peer_set_public_key_bin(NMWireGuardPeer *self,
 {
     g_return_if_fail(NM_IS_WIREGUARD_PEER(self, FALSE));
 
-    nm_clear_g_free(&self->public_key);
+    nm_assert(public_key);
 
-    if (!public_key)
-        return;
+    nm_clear_g_free(&self->public_key);
 
     self->public_key       = g_base64_encode(public_key, NM_WIREGUARD_PUBLIC_KEY_LEN);
     self->public_key_valid = TRUE;
@@ -1318,7 +1317,7 @@ _peers_set(NMSettingWireGuardPrivate *priv,
     };
 
     g_ptr_array_add(priv->peers_arr, pd_same_key);
-    if (!nm_g_hash_table_add(priv->peers_hash, pd_same_key))
+    if (!g_hash_table_add(priv->peers_hash, pd_same_key))
         nm_assert_not_reached();
 
     nm_assert(_peers_get(priv, pd_same_key->idx) == pd_same_key);
@@ -2362,8 +2361,8 @@ nm_setting_wireguard_class_init(NMSettingWireGuardClass *klass)
                                               NM_SETTING_PARAM_SECRET,
                                               NMSettingWireGuard,
                                               _priv.private_key,
-                                              .direct_hook.set_string_fcn =
-                                                  _set_string_fcn_public_key);
+                                              .direct_data.set_string = _set_string_fcn_public_key,
+                                              .direct_string_allow_empty = TRUE);
 
     /**
      * NMSettingWireGuard:private-key-flags:

@@ -1,33 +1,165 @@
-network-manager (1.44.2-7deepin5) unstable; urgency=medium
+network-manager (1.50.2-1) unstable; urgency=medium
 
-  * add supplicant dbus property SAEConfirmMismatch.
+  * New upstream version 1.50.2
 
- -- xinpeng.wang <wangxinpeng@uniontech.com>  Thu, 26 Dec 2024 14:08:17 +0800
+ -- Michael Biebl <biebl@debian.org>  Mon, 20 Jan 2025 19:14:11 +0100
 
-network-manager (1.44.2-7deepin4) unstable; urgency=medium
+network-manager (1.50.1-1) unstable; urgency=medium
 
-  * add flags of active connection interface
-  *
+  * New upstream version 1.50.1
+  * Update debian/watch.
+    Switch to new download location at gitlab.freedesktop.org.
+    Use tarballs without pre-generated documentation. We rebuild them
+    anyway. (Closes: #1091414)
+  * Rebase patches
+  * Drop now unused lintian override for source-is-missing.
+    As we no longer use a tarball with pre-generated documentation, this
+    (false) lintian warning no longer triggers.
 
- -- fuleyi <fuleyi@uniontech.com>  Tue, 02 Jul 2024 16:32:01 +0800
+ -- Michael Biebl <biebl@debian.org>  Wed, 25 Dec 2024 21:01:45 +0100
 
-network-manager (1.44.2-7deepin3) unstable; urgency=medium
+network-manager (1.50.0-1) unstable; urgency=medium
 
-  * Update patches
+  * New upstream version 1.50.0
+  * Bump 1.49.90 symbol versions to 1.50.0 for the final release
 
- -- xiangzelong <xiangzelong@deepin.org>  Thu, 04 Jul 2024 13:40:23 +0800
+ -- Michael Biebl <biebl@debian.org>  Wed, 02 Oct 2024 22:33:16 +0200
 
-network-manager (1.44.2-7deepin2) unstable; urgency=medium
+network-manager (1.49.91-1) unstable; urgency=medium
 
-  * fix: disable broken ut
+  * New upstream version 1.49.91 (1.50 rc2)
+  * Demote polkitd and udev to Recommends
 
- -- hudeng <hudeng@deepin.org>  Tue, 21 May 2024 11:19:44 +0800
+ -- Michael Biebl <biebl@debian.org>  Tue, 24 Sep 2024 18:20:33 +0200
 
-network-manager (1.44.2-7deepin1) unstable; urgency=medium
+network-manager (1.49.90-2) unstable; urgency=medium
 
-  * add deepin patches.
+  * Upload to unstable
 
- -- LiChengGang <lichenggang@uniontech.com>  Tue, 12 Mar 2024 14:24:25 +0800
+ -- Michael Biebl <biebl@debian.org>  Tue, 17 Sep 2024 18:03:55 +0200
+
+network-manager (1.49.90-1) experimental; urgency=medium
+
+  * New upstream version 1.49.90 (1.50 rc1)
+  * Rebase patches
+  * Update symbols file for libnm0
+  * Stop enabling support for dhclient.
+    This feature has been marked deprecated and is scheduled to be removed
+    in a future release.
+  * Update Homepage URL (Closes: #1080304)
+  * Update README.Debian (Closes: #864339)
+
+ -- Michael Biebl <biebl@debian.org>  Wed, 04 Sep 2024 19:56:26 +0200
+
+network-manager (1.48.10-1) unstable; urgency=medium
+
+  * New upstream version 1.48.10
+
+ -- Michael Biebl <biebl@debian.org>  Mon, 26 Aug 2024 16:35:44 +0200
+
+network-manager (1.48.8-1) unstable; urgency=medium
+
+  * New upstream version 1.48.8
+  * Rebase patches
+
+ -- Michael Biebl <biebl@debian.org>  Fri, 09 Aug 2024 20:53:23 +0200
+
+network-manager (1.48.6-1) unstable; urgency=medium
+
+  * New upstream version 1.48.6
+  * Rebase patches
+
+ -- Michael Biebl <biebl@debian.org>  Fri, 26 Jul 2024 15:21:36 +0200
+
+network-manager (1.48.4-1) unstable; urgency=medium
+
+  * New upstream version 1.48.4
+  * Enable standard Salsa CI
+
+ -- Michael Biebl <biebl@debian.org>  Fri, 05 Jul 2024 19:10:23 +0200
+
+network-manager (1.48.2-1) unstable; urgency=medium
+
+  * New upstream version 1.48.2
+  * Rebase patches
+
+ -- Michael Biebl <biebl@debian.org>  Mon, 24 Jun 2024 15:02:02 +0200
+
+network-manager (1.48.0-1) unstable; urgency=medium
+
+  * New upstream version 1.48.0
+  * Drop automake Build-Depends, no longer needed after the switch to Meson
+  * Bump 1.47.90 symbol versions to 1.48.0 for the final release
+
+ -- Michael Biebl <biebl@debian.org>  Fri, 31 May 2024 23:20:43 +0200
+
+network-manager (1.47.91-1) unstable; urgency=medium
+
+  * New upstream version 1.47.91 (1.48 rc2)
+  * Upload to unstable
+
+ -- Michael Biebl <biebl@debian.org>  Fri, 17 May 2024 12:58:33 +0200
+
+network-manager (1.47.90-2) experimental; urgency=medium
+
+  * Switch to Meson as build system
+  * Add libdbus-1-dev to Build-Depends.
+    Required for getting datadir, interfaces_dir and
+    system_bus_services_dir.
+  * Add libpolkit-gobject-1-dev to Build-Depends.
+    Required for getting policydir.
+  * Add mobile-broadband-provider-info to Build-Depends.
+    Required for getting database path.
+
+ -- Michael Biebl <biebl@debian.org>  Sun, 12 May 2024 22:22:41 +0200
+
+network-manager (1.47.90-1) experimental; urgency=medium
+
+  * New upstream version 1.47.90 (1.48 rc1)
+  * Rebase patches
+  * Update symbols file for libnm0
+
+ -- Michael Biebl <biebl@debian.org>  Sun, 05 May 2024 00:18:50 +0200
+
+network-manager (1.46.0-2) unstable; urgency=medium
+
+  * Drop alternative Depends on obsolete policykit-1 package.
+    It is no longer needed for backports as stable has a version of polkitd
+    now. (Closes: #1069636)
+  * Bump Standards-Version to 4.7.0
+  * Add explicit Build-Depends on gir1.2-gio-2.0-dev
+  * Drop Build-Depends on libgirepository1.0-dev.
+    No longer necessary with the gir1.2-gio-2.0-dev build dependency and a
+    recent enough gobject-introspection.
+  * Add ${gir:Depends}, ${gir:Provides} to libnm-dev
+
+ -- Michael Biebl <biebl@debian.org>  Thu, 25 Apr 2024 19:26:12 +0200
+
+network-manager (1.46.0-1) unstable; urgency=medium
+
+  * New upstream version 1.46.0
+  * Rebase patches
+  * Update symbols file for libnm0
+
+ -- Michael Biebl <biebl@debian.org>  Thu, 22 Feb 2024 17:35:02 +0100
+
+network-manager (1.45.91-1) experimental; urgency=medium
+
+  * New upstream version 1.45.91 (1.46 rc2)
+  * Rebase patches
+  * Update symbols file for libnm0
+  * Switch Build-Depends on obsolete pkg-config to pkgconf
+
+ -- Michael Biebl <biebl@debian.org>  Tue, 13 Feb 2024 22:39:30 +0100
+
+network-manager (1.45.90-1) experimental; urgency=medium
+
+  * New upstream version 1.45.90 (1.46 rc1)
+  * Bump Build-Depends on libglib2.0-dev to (>= 2.42)
+  * Rebase patches
+  * Update symbols file for libnm0
+
+ -- Michael Biebl <biebl@debian.org>  Thu, 25 Jan 2024 10:32:43 +0100
 
 network-manager (1.44.2-7) unstable; urgency=medium
 

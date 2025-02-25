@@ -579,6 +579,10 @@ write_8021x_setting(NMConnection *connection,
                "IEEE_8021X_PIN_FLAGS",
                nm_setting_802_1x_get_pin_flags(s_8021x));
 
+    svSetValueStr(ifcfg,
+                  "IEEE_8021X_OPENSSL_CIPHERS",
+                  nm_setting_802_1x_get_openssl_ciphers(s_8021x));
+
     if (!write_8021x_certs(s_8021x, secrets, blobs, FALSE, ifcfg, error))
         return FALSE;
 
@@ -1138,7 +1142,7 @@ write_wired_setting_impl(NMSettingWired *s_wired, shvarFile *ifcfg, gboolean is_
                   "GENERATE_MAC_ADDRESS_MASK",
                   nm_setting_wired_get_generate_mac_address_mask(s_wired));
 
-    macaddr_blacklist = nm_setting_wired_get_mac_address_blacklist(s_wired);
+    macaddr_blacklist = nm_setting_wired_get_mac_address_denylist(s_wired);
     if (macaddr_blacklist[0]) {
         gs_free char *blacklist_str = NULL;
 
@@ -1346,6 +1350,7 @@ write_ethtool_setting(NMConnection *connection, shvarFile *ifcfg, GError **error
         guint32              u32;
         gboolean             b;
         gboolean             any_option = FALSE;
+        char                 prop_name[300];
 
         s_con = nm_connection_get_setting_connection(connection);
         if (s_con) {
@@ -1424,6 +1429,30 @@ write_ethtool_setting(NMConnection *connection, shvarFile *ifcfg, GError **error
             g_string_append(str, nms_ifcfg_rh_utils_get_ethtool_name(ethtool_id));
             g_string_append(str, b ? " on" : " off");
             any_option = TRUE;
+        }
+
+        is_first = TRUE;
+        for (ethtool_id = _NM_ETHTOOL_ID_CHANNELS_FIRST; ethtool_id <= _NM_ETHTOOL_ID_CHANNELS_LAST;
+             ethtool_id++) {
+            if (nm_setting_option_get_uint32(NM_SETTING(s_ethtool),
+                                             nm_ethtool_data[ethtool_id]->optname,
+                                             &u32)) {
+                nm_sprintf_buf(prop_name, "ethtool.%s", nm_ethtool_data[ethtool_id]->optname);
+                set_error_unsupported(error, connection, prop_name, FALSE);
+                return FALSE;
+            }
+        }
+
+        is_first = TRUE;
+        for (ethtool_id = _NM_ETHTOOL_ID_EEE_FIRST; ethtool_id <= _NM_ETHTOOL_ID_EEE_LAST;
+             ethtool_id++) {
+            if (nm_setting_option_get_boolean(NM_SETTING(s_ethtool),
+                                              nm_ethtool_data[ethtool_id]->optname,
+                                              &b)) {
+                nm_sprintf_buf(prop_name, "ethtool.%s", nm_ethtool_data[ethtool_id]->optname);
+                set_error_unsupported(error, connection, prop_name, FALSE);
+                return FALSE;
+            }
         }
 
         if (!any_option) {
@@ -2132,7 +2161,7 @@ write_connection_setting(NMSettingConnection *s_con, shvarFile *ifcfg, const cha
 {
     guint32                       n, i;
     nm_auto_free_gstring GString *str = NULL;
-    const char                   *master, *master_iface = NULL, *type;
+    const char                   *controller, *controller_iface = NULL, *type;
     int                           vint;
     gint32                        vint32;
     NMSettingConnectionMdns       mdns;
@@ -2162,16 +2191,16 @@ write_connection_setting(NMSettingConnection *s_con, shvarFile *ifcfg, const cha
     vint = nm_setting_connection_get_multi_connect(s_con);
     svSetValueInt64_cond(ifcfg, "MULTI_CONNECT", vint != NM_CONNECTION_MULTI_CONNECT_DEFAULT, vint);
 
-    /* Only save the value for master connections */
+    /* Only save the value for controller connections */
     type = nm_setting_connection_get_connection_type(s_con);
-    if (_nm_connection_type_is_master(type)) {
-        NMSettingConnectionAutoconnectSlaves autoconnect_slaves;
-        autoconnect_slaves = nm_setting_connection_get_autoconnect_slaves(s_con);
+    if (_nm_connection_type_is_controller(type)) {
+        NMTernary autoconnect_ports;
+        autoconnect_ports = nm_setting_connection_get_autoconnect_ports(s_con);
         svSetValueStr(ifcfg,
                       "AUTOCONNECT_SLAVES",
-                      autoconnect_slaves == NM_SETTING_CONNECTION_AUTOCONNECT_SLAVES_YES  ? "yes"
-                      : autoconnect_slaves == NM_SETTING_CONNECTION_AUTOCONNECT_SLAVES_NO ? "no"
-                                                                                          : NULL);
+                      autoconnect_ports == NM_TERNARY_TRUE    ? "yes"
+                      : autoconnect_ports == NM_TERNARY_FALSE ? "no"
+                                                              : NULL);
     }
     switch (nm_setting_connection_get_lldp(s_con)) {
     case NM_SETTING_CONNECTION_LLDP_ENABLE_RX:
@@ -2222,47 +2251,51 @@ write_connection_setting(NMSettingConnection *s_con, shvarFile *ifcfg, const cha
     mud_url = nm_setting_connection_get_mud_url(s_con);
     svSetValue(ifcfg, "MUD_URL", mud_url);
 
-    master = nm_setting_connection_get_master(s_con);
-    if (master) {
+    controller = nm_setting_connection_get_controller(s_con);
+    if (controller) {
         /* The reader prefers the *_UUID variants, however we still try to resolve
          * it into an interface name, so that legacy tooling is not confused. */
         if (!nm_utils_get_testing()) {
             /* This is conditional for easier testing. */
-            master_iface = nm_manager_iface_for_uuid(NM_MANAGER_GET, master);
+            controller_iface = nm_manager_iface_for_uuid(NM_MANAGER_GET, controller);
         }
-        if (!master_iface) {
-            master_iface = master;
-            master       = NULL;
+        if (!controller_iface) {
+            controller_iface = controller;
+            controller       = NULL;
         }
 
-        if (nm_setting_connection_is_slave_type(s_con, NM_SETTING_BOND_SETTING_NAME)) {
-            svSetValueStr(ifcfg, "MASTER_UUID", master);
-            svSetValueStr(ifcfg, "MASTER", master_iface);
+        if (nm_streq0(nm_setting_connection_get_port_type(s_con), NM_SETTING_BOND_SETTING_NAME)) {
+            svSetValueStr(ifcfg, "MASTER_UUID", controller);
+            svSetValueStr(ifcfg, "MASTER", controller_iface);
             svSetValueStr(ifcfg, "SLAVE", "yes");
-        } else if (nm_setting_connection_is_slave_type(s_con, NM_SETTING_BRIDGE_SETTING_NAME)) {
-            svSetValueStr(ifcfg, "BRIDGE_UUID", master);
-            svSetValueStr(ifcfg, "BRIDGE", master_iface);
-        } else if (nm_setting_connection_is_slave_type(s_con, NM_SETTING_TEAM_SETTING_NAME)) {
-            svSetValueStr(ifcfg, "TEAM_MASTER_UUID", master);
-            svSetValueStr(ifcfg, "TEAM_MASTER", master_iface);
+        } else if (nm_streq0(nm_setting_connection_get_port_type(s_con),
+                             NM_SETTING_BRIDGE_SETTING_NAME)) {
+            svSetValueStr(ifcfg, "BRIDGE_UUID", controller);
+            svSetValueStr(ifcfg, "BRIDGE", controller_iface);
+        } else if (nm_streq0(nm_setting_connection_get_port_type(s_con),
+                             NM_SETTING_TEAM_SETTING_NAME)) {
+            svSetValueStr(ifcfg, "TEAM_MASTER_UUID", controller);
+            svSetValueStr(ifcfg, "TEAM_MASTER", controller_iface);
             if (NM_IN_STRSET(type, NM_SETTING_WIRED_SETTING_NAME, NM_SETTING_VLAN_SETTING_NAME))
                 svUnsetValue(ifcfg, "TYPE");
-        } else if (nm_setting_connection_is_slave_type(s_con, NM_SETTING_OVS_PORT_SETTING_NAME)) {
-            svSetValueStr(ifcfg, "OVS_PORT_UUID", master);
-            svSetValueStr(ifcfg, "OVS_PORT", master_iface);
-        } else if (nm_setting_connection_is_slave_type(s_con, NM_SETTING_VRF_SETTING_NAME)) {
-            svSetValueStr(ifcfg, "VRF_UUID", master);
-            svSetValueStr(ifcfg, "VRF", master_iface);
+        } else if (nm_streq0(nm_setting_connection_get_port_type(s_con),
+                             NM_SETTING_OVS_PORT_SETTING_NAME)) {
+            svSetValueStr(ifcfg, "OVS_PORT_UUID", controller);
+            svSetValueStr(ifcfg, "OVS_PORT", controller_iface);
+        } else if (nm_streq0(nm_setting_connection_get_port_type(s_con),
+                             NM_SETTING_VRF_SETTING_NAME)) {
+            svSetValueStr(ifcfg, "VRF_UUID", controller);
+            svSetValueStr(ifcfg, "VRF", controller_iface);
         } else {
-            _LOGW("don't know how to set master for a %s slave",
-                  nm_setting_connection_get_slave_type(s_con));
+            _LOGW("don't know how to set controller for a %s port",
+                  nm_setting_connection_get_port_type(s_con));
         }
     }
 
     if (nm_streq0(type, NM_SETTING_TEAM_SETTING_NAME))
         svSetValueStr(ifcfg, "DEVICETYPE", TYPE_TEAM);
-    else if (master_iface
-             && nm_setting_connection_is_slave_type(s_con, NM_SETTING_TEAM_SETTING_NAME))
+    else if (controller_iface
+             && nm_streq0(nm_setting_connection_get_port_type(s_con), NM_SETTING_TEAM_SETTING_NAME))
         svSetValueStr(ifcfg, "DEVICETYPE", TYPE_TEAM_PORT);
 
     /* secondary connection UUIDs */
@@ -2575,7 +2608,7 @@ write_user_setting(NMConnection *connection, shvarFile *ifcfg, GError **error)
 
             g_string_set_size(str, 0);
             g_string_append(str, "NM_USER_");
-            nms_ifcfg_rh_utils_user_key_encode(key, str);
+            nm_utils_env_var_encode_name(key, str);
             svSetValue(ifcfg, str->str, nm_setting_user_get_data(s_user, key));
         }
     }
@@ -3023,7 +3056,7 @@ write_ip4_aliases(NMConnection *connection, const char *base_ifcfg_path)
 
     s_ip4 = nm_connection_get_setting_ip4_config(connection);
     if (!s_ip4) {
-        /* slave-type: no alias files */
+        /* port-type: no alias files */
         return;
     }
 
@@ -3331,6 +3364,8 @@ do_write_construct(NMConnection                   *connection,
                    GError                        **error)
 {
     NMSettingConnection                *s_con;
+    NMSettingIPConfig                  *s_ip4;
+    NMSettingIPConfig                  *s_ip6;
     nm_auto_shvar_file_close shvarFile *ifcfg = NULL;
     const char                         *ifcfg_name;
     gs_free char                       *ifcfg_name_free = NULL;
@@ -3517,8 +3552,6 @@ do_write_construct(NMConnection                   *connection,
     has_complex_routes_v6 = utils_has_complex_routes(ifcfg_name, AF_INET6);
 
     if (has_complex_routes_v4 || has_complex_routes_v6) {
-        NMSettingIPConfig *s_ip4, *s_ip6;
-
         s_ip4 = nm_connection_get_setting_ip4_config(connection);
         s_ip6 = nm_connection_get_setting_ip6_config(connection);
         if ((s_ip4 && nm_setting_ip_config_get_num_routes(s_ip4) > 0)
@@ -3554,6 +3587,15 @@ do_write_construct(NMConnection                   *connection,
         route_ignore = TRUE;
     } else
         route_ignore = FALSE;
+
+    if ((s_ip4 = nm_connection_get_setting_ip4_config(connection))
+        && nm_setting_ip_config_get_dhcp_dscp(s_ip4)) {
+        set_error_unsupported(error,
+                              connection,
+                              NM_SETTING_IP4_CONFIG_SETTING_NAME "." NM_SETTING_IP_CONFIG_DHCP_DSCP,
+                              FALSE);
+        return FALSE;
+    }
 
     write_ip4_setting(connection,
                       ifcfg,

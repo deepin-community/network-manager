@@ -195,48 +195,6 @@ _nm_auto_freev(gpointer ptr)
 
 /*****************************************************************************/
 
-#if defined(__GNUC__)
-#define _NM_PRAGMA_WARNING_DO(warning) G_STRINGIFY(GCC diagnostic ignored warning)
-#elif defined(__clang__)
-#define _NM_PRAGMA_WARNING_DO(warning) G_STRINGIFY(clang diagnostic ignored warning)
-#endif
-
-/* you can only suppress a specific warning that the compiler
- * understands. Otherwise you will get another compiler warning
- * about invalid pragma option.
- * It's not that bad however, because gcc and clang often have the
- * same name for the same warning. */
-
-#if defined(__GNUC__) && (__GNUC__ > 4 || (__GNUC__ == 4 && __GNUC_MINOR__ >= 6))
-#define NM_PRAGMA_DIAGNOSTICS_PUSH _Pragma("GCC diagnostic push")
-#define NM_PRAGMA_WARNING_DISABLE(warning) \
-    NM_PRAGMA_DIAGNOSTICS_PUSH _Pragma(_NM_PRAGMA_WARNING_DO(warning))
-#define NM_PRAGMA_WARNING_REENABLE _Pragma("GCC diagnostic pop")
-#elif defined(__clang__)
-#define NM_PRAGMA_DIAGNOSTICS_PUSH _Pragma("clang diagnostic push")
-#define NM_PRAGMA_WARNING_DISABLE(warning)                                                \
-    NM_PRAGMA_DIAGNOSTICS_PUSH _Pragma(_NM_PRAGMA_WARNING_DO("-Wunknown-warning-option")) \
-        _Pragma(_NM_PRAGMA_WARNING_DO(warning))
-#define NM_PRAGMA_WARNING_REENABLE _Pragma("clang diagnostic pop")
-#else
-#define NM_PRAGMA_DIAGNOSTICS_PUSH
-#define NM_PRAGMA_WARNING_DISABLE(warning)
-#define NM_PRAGMA_WARNING_REENABLE
-#endif
-
-/*****************************************************************************/
-
-/* Seems gcc-12 has a tendency for false-positive -Wdangling-pointer warnings with
- * g_error()'s `for(;;);`. See https://bugzilla.redhat.com/show_bug.cgi?id=2056613 .
- * Work around, but only for the affected gcc 12.0.1. */
-#if defined(__GNUC__) && __GNUC__ == 12 && __GNUC_MINOR__ == 0 && __GNUC_PATCHLEVEL__ <= 1
-#define NM_PRAGMA_WARNING_DISABLE_DANGLING_POINTER NM_PRAGMA_WARNING_DISABLE("-Wdangling-pointer")
-#else
-#define NM_PRAGMA_WARNING_DISABLE_DANGLING_POINTER NM_PRAGMA_DIAGNOSTICS_PUSH
-#endif
-
-/*****************************************************************************/
-
 /**
  * NM_G_ERROR_MSG:
  * @error: (nullable): the #GError instance
@@ -571,10 +529,10 @@ nm_str_realloc(char *str)
     }
 
 #define NM_GOBJECT_PROPERTIES_DEFINE_NOTIFY(suffix, obj_type)                                 \
-    static inline void _nm_gobject_notify_together_impl##suffix(                              \
+    static inline void _nm_gobject_notify_together_full_v##suffix(                            \
         obj_type                     *obj,                                                    \
-        guint                         n,                                                      \
-        const _PropertyEnums##suffix *props)                                                  \
+        const _PropertyEnums##suffix *props,                                                  \
+        guint                         n)                                                      \
     {                                                                                         \
         GObject *const gobj        = (GObject *) obj;                                         \
         GParamSpec    *pspec_first = NULL;                                                    \
@@ -614,7 +572,7 @@ nm_str_realloc(char *str)
                                                                                               \
     _nm_unused static inline void _notify##suffix(obj_type *obj, _PropertyEnums##suffix prop) \
     {                                                                                         \
-        _nm_gobject_notify_together_impl##suffix(obj, 1, &prop);                              \
+        _nm_gobject_notify_together_full_v##suffix(obj, &prop, 1);                            \
     }                                                                                         \
     _NM_DUMMY_STRUCT_FOR_TRAILING_SEMICOLON
 
@@ -631,15 +589,15 @@ nm_str_realloc(char *str)
 /* invokes _notify() for all arguments (of type _PropertyEnums). Note, that if
  * there are more than one prop arguments, this will involve a freeze/thaw
  * of GObject property notifications. */
-#define nm_gobject_notify_together_full(suffix, obj, ...)                            \
-    G_STMT_START                                                                     \
-    {                                                                                \
-        const _PropertyEnums##suffix _props[] = {__VA_ARGS__};                       \
-                                                                                     \
-        G_STATIC_ASSERT(G_N_ELEMENTS(_props) == NM_NARG(__VA_ARGS__));               \
-                                                                                     \
-        _nm_gobject_notify_together_impl##suffix(obj, G_N_ELEMENTS(_props), _props); \
-    }                                                                                \
+#define nm_gobject_notify_together_full(suffix, obj, ...)                              \
+    G_STMT_START                                                                       \
+    {                                                                                  \
+        const _PropertyEnums##suffix _props[] = {__VA_ARGS__};                         \
+                                                                                       \
+        G_STATIC_ASSERT(G_N_ELEMENTS(_props) == NM_NARG(__VA_ARGS__));                 \
+                                                                                       \
+        _nm_gobject_notify_together_full_v##suffix(obj, _props, G_N_ELEMENTS(_props)); \
+    }                                                                                  \
     G_STMT_END
 
 #define nm_gobject_notify_together(obj, ...) nm_gobject_notify_together_full(, obj, __VA_ARGS__)
@@ -1006,8 +964,8 @@ nm_g_variant_equal(GVariant *a, GVariant *b)
 
 /* check if @flags has exactly one flag (@check) set. You should call this
  * only with @check being a compile time constant and a power of two. */
-#define NM_FLAGS_HAS(flags, check)                                       \
-    (G_STATIC_ASSERT_EXPR((check) > 0 && ((check) & ((check) -1)) == 0), \
+#define NM_FLAGS_HAS(flags, check)                                        \
+    (G_STATIC_ASSERT_EXPR((check) > 0 && ((check) & ((check) - 1)) == 0), \
      NM_FLAGS_ANY((flags), (check)))
 
 #define NM_FLAGS_ANY(flags, check) (((flags) & (check)) != 0)
@@ -1737,7 +1695,7 @@ nm_decode_version(guint version, guint *major, guint *minor, guint *micro)
 
 /*****************************************************************************/
 
-#define NM_PID_T_INVAL ((pid_t) -1)
+#define NM_PID_T_INVAL ((pid_t) - 1)
 
 /*****************************************************************************/
 

@@ -9,13 +9,86 @@ Check out website https://networkmanager.dev and our [GNOME page](https://wiki.g
 
 The release tarballs can be found at [download.gnome.org](https://download.gnome.org/sources/NetworkManager/).
 
-Our mailing list is networkmanager@lists.freedesktop.org ([archive](https://lists.freedesktop.org/archives/networkmanager/),
-[old-archive](https://mail.gnome.org/archives/networkmanager-list/)).
+Find our available communication channels at https://networkmanager.dev/community/.
 
-Find us on IRC channel `#nm` on Libera.Chat.
 
-Report issues and send patches via [gitlab.freedesktop.org](https://gitlab.freedesktop.org/NetworkManager/NetworkManager/)
-or our mailing list.
+Report issues
+-------------
+
+Report issues or feature requests in our [Gitlab's issue tracker](https://gitlab.freedesktop.org/NetworkManager/NetworkManager/-/issues)
+or our maling list.
+
+For bug reports usually NetworkManager's logs will be needed to understand the
+problem. Attach the full logs to the issue. For WiFi related issues, attach also
+the logs from wpa_supplicant, or iwd if you are using it (i.e.
+`journalctl -u NetworkManager -u wpa_supplicant`).
+
+To get more useful logs, increase the log level as explained in
+["logging SECTION" in NetworkManager.conf](https://networkmanager.dev/docs/api/latest/NetworkManager.conf.html).
+
+Logfiles contain no passwords and little sensitive information, but please
+check before posting the file online. The script [anonymize-logs.py](contrib/scripts/anonymize-logs.py)
+can do some basic data anonymization but makes a bit harder to analyze the logs
+and you still need to review them. You can also personally hand over the logfile
+to a NM developer to treat it confidential.
+
+
+Help with issues triage
+-----------------------
+
+The big amount of reported issues is difficult to handle by the small team of
+developers actively working on the project. Many bugs remain unfixed because
+there is no enough time to investigate them.
+
+Working on issues triage and investigation is a very useful help that many
+people can provide very effectively, even if they can't do the fix in the
+code afterwards.
+
+This is the kind of help that may facilitate other developers to prepare a fix:
+- Investigate if it's a real bug or if it's expected behaviour.
+- Provide information and context to explain why it is a bug and what the
+  expected behaviour would be.
+- Create reproducers.
+- Investigate where the failure might be in the code, even if you don't know
+  how to fix it.
+- In a general sense, provide any information that might be useful later.
+
+Find issues with the `help-needed::triage` and `help-needed::investigation`
+label in our [issue tracker](https://gitlab.freedesktop.org/NetworkManager/NetworkManager/-/issues)
+and help with them. Issues in "investigation" stage has been triaged, i.e.
+identified as a bug, but there is not enough information to start working on it
+yet.
+
+
+Contribute patches
+------------------
+
+Send patches to our repository at [gitlab.freedesktop.org](https://gitlab.freedesktop.org/NetworkManager/NetworkManager/).
+If you are willing to contribute, please read these guidelines first:
+
+- Find bugs or features to work on in our [Gitlab's issue tracker](https://gitlab.freedesktop.org/NetworkManager/NetworkManager/-/issues).
+
+- Work on any issue you want, but please put a comment to indicate that you are
+  willing to work on it so others don't do the same work in parallel, or to
+  check whether anyone is already doing so. You can find issues waiting for a
+  developer to work on it searching for the `help-needed::devel` label.
+
+- Issues marked as `good-first-issue` indicate that they are probably quite
+  simple fixes, well suited for first time contributors.
+
+- Contributions for features or bugs not reported in the issue tracker are also
+  welcome, but if they require a high amount of work, it is always better to
+  open an issue explaining what you intend to do first. That way, you won't
+  waste your valuable time if your idea doesn't fit well into the project or a
+  different approach would be desirable.
+
+- Reference related issues in your Merge Request description, and if the issue
+  gets resolved with it, indicate it with a line `Resolves: https://issue-url`.
+  Please use full URLs because they are clickable both from the web UI and from
+  the terminal.
+
+- Read the rest of this document to learn about the code style, code
+  organization, tests and other useful stuff.
 
 
 Documentation
@@ -49,7 +122,7 @@ Coding Style
 
 The formatting is automated using [clang-format](https://clang.llvm.org/docs/ClangFormat.html).
 Run `./contrib/scripts/nm-code-format.sh -i` ([[1]](contrib/scripts/nm-code-format.sh)) to reformat
-the code or run `clang-format` directly.
+the code or run `clang-format` directly. Pass `--help` for the list of options.
 
 As the generated format depends on the version of clang-format, you need to use the
 correct clang-format version. That is basically the version that our [gitlab-ci
@@ -58,6 +131,7 @@ for the "check-tree" test. This is the version from a recent Fedora installation
 
 You may also run `./contrib/scripts/nm-code-format-container.sh` which uses a
 Fedora container with podman and the correct version of clang-format.
+This accepts the same arguments as `./contrib/scripts/nm-code-format.sh`.
 
 You are welcome to not bother and open a merge request with wrong formatting,
 but note that we then will automatically adjust your contribution before
@@ -147,17 +221,11 @@ you can look at [this](contrib/fedora/REQUIRED_PACKAGES)
 script and [here](contrib/debian/REQUIRED_PACKAGES)
 is a script for Debian/Ubuntu.
 
-Both meson and autotools are supported. You may choose whatever you prefer.
-For autotools the common steps are
+meson is the recommended way for building NetworkManager. You can configure
+the build environment using the `meson setup` command:
 
 ```
-./autogen.sh $CONFIGURE_OPTIONS
-make -j 8
-# optional: sudo make install
-```
-and for meson it's
-```
-meson build $CONFIGURE_OPTIONS
+meson setup build/ $CONFIGURE_OPTIONS
 ninja -C build
 # optional: sudo meson install -C build
 ```
@@ -165,6 +233,13 @@ ninja -C build
 Beware to set the correct `$CONFIGURE_OPTIONS`. In particular, you may
 not want the default installation prefix and not overwrite files in
 `/usr`.
+
+To specify options when setting up the meson environment, the `-D` argument
+is used, like: `meson setup build -Ddocs=true`.
+
+To get a list of all possible configuration options, you can use `meson configure`.
+
+For additional usage, refer to the meson manual.
 
 ### Fedora
 
@@ -216,6 +291,7 @@ Code Structure
 [`./src`](src/)- source code for libnm, nmcli, nm-cloud-setup, nmtui…
 
 `./tools`- tools for generating the intermediate files or merging the file.
+
 
 Cscope/ctags
 ---------------------------
@@ -419,6 +495,7 @@ To resync our local notes use:
 ```
 $ git fetch origin refs/notes/bugs:refs/notes/bugs -f
 ```
-### Testing NetworkManager with nm-in-container script.
 
-See [the readme](tools/nm-in-container/README.md) for details.
+### Testing NetworkManager with nm-in-container or nm-in-vm scripts.
+
+See [the readme](tools/nm-guest-data/README.md) for details.

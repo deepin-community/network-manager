@@ -233,7 +233,7 @@ _secret_flags_persist_secret(NMSettingSecretFlags flags)
 /*****************************************************************************/
 /* Some setting properties also contain setting names, such as
  * NMSettingConnection's 'type' property (which specifies the base type of the
- * connection, e.g. ethernet or wifi) or 'slave-type' (specifies type of slave
+ * connection, e.g. ethernet or wifi) or 'port-type' (specifies type of port
  * connection, e.g. bond or bridge). This function handles translating those
  * properties' values to the real setting name if they are an alias.
  */
@@ -1219,9 +1219,14 @@ mac_address_parser(KeyfileReaderInfo *info,
 
     tmp_string = nm_keyfile_plugin_kf_get_string(info->keyfile, setting_name, key, NULL);
 
-    if (cloned_mac_addr && NM_CLONED_MAC_IS_SPECIAL(tmp_string)) {
-        mac_str = tmp_string;
-        goto out;
+    if (cloned_mac_addr) {
+        gboolean is_wifi;
+
+        is_wifi = NM_IS_SETTING_WIRELESS(setting);
+        if (NM_CLONED_MAC_IS_SPECIAL(tmp_string, is_wifi)) {
+            mac_str = tmp_string;
+            goto out;
+        }
     }
 
     if (tmp_string && nm_utils_hwaddr_aton(tmp_string, addr_bin, addr_len))
@@ -4068,6 +4073,16 @@ write_setting_value(KeyfileWriterInfo        *info,
         if (!_secret_flags_persist_secret(secret_flags))
             return;
     }
+
+    /* Don't write offensive terms that are already deprecated as the new inclusive terms
+     * are being written.
+     */
+    if (NM_IN_STRSET(key,
+                     NM_SETTING_CONNECTION_AUTOCONNECT_SLAVES,
+                     NM_SETTING_CONNECTION_MASTER,
+                     NM_SETTING_CONNECTION_SLAVE_TYPE,
+                     NM_SETTING_WIRED_MAC_ADDRESS_BLACKLIST))
+        return;
 
     value = (GValue){0};
 

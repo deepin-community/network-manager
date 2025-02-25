@@ -34,8 +34,8 @@ typedef enum _nm_packed {
 /**
  * NML3CfgConfigFlags:
  * @NM_L3CFG_CONFIG_FLAGS_NONE: no flags, the default.
- * @NM_L3_CONFIG_MERGE_FLAGS_ONLY_FOR_ACD: if this merge flag is set,
- *   the the NML3ConfigData doesn't get merged and it's information won't be
+ * @NM_L3CFG_CONFIG_FLAGS_ONLY_FOR_ACD: if this flag is set,
+ *   the NML3ConfigData doesn't get merged and the information won't be
  *   synced. The only purpose is to run ACD on its IPv4 addresses, but
  *   regardless whether ACD succeeds/fails, the IP addresses won't be configured.
  *   The point is to run ACD first (without configuring it), and only
@@ -354,7 +354,7 @@ gboolean nm_l3cfg_remove_config_all_dirty(NML3Cfg *self, gconstpointer tag);
  * nm_l3cfg_commit_type_register(). nm_l3cfg_commit_on_idle_schedule() also
  * accepts a one-time commit-type argument.
  *
- * This is related to NMDevice's sys_iface_state, which we use to control whether
+ * This is related to NMDevice's managed_type, which we use to control whether
  * to touch/assume/manage the interface.
  *
  * The numeric values of the enum matters: higher number mean more "important".
@@ -440,6 +440,8 @@ const NML3ConfigData *nm_l3cfg_get_combined_l3cd(NML3Cfg *self, gboolean get_com
 
 const NMPObject *
 nm_l3cfg_get_best_default_route(NML3Cfg *self, int addr_family, gboolean get_commited);
+
+in_addr_t *nm_l3cfg_get_configured_ip4_addresses(NML3Cfg *self, gsize *out_len);
 
 /*****************************************************************************/
 

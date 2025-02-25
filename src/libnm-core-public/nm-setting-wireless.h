@@ -84,6 +84,7 @@ typedef enum /*< flags >*/ {
 #define NM_SETTING_WIRELESS_CLONED_MAC_ADDRESS        "cloned-mac-address"
 #define NM_SETTING_WIRELESS_GENERATE_MAC_ADDRESS_MASK "generate-mac-address-mask"
 #define NM_SETTING_WIRELESS_MAC_ADDRESS_BLACKLIST     "mac-address-blacklist"
+#define NM_SETTING_WIRELESS_MAC_ADDRESS_DENYLIST      "mac-address-denylist"
 #define NM_SETTING_WIRELESS_MTU                       "mtu"
 #define NM_SETTING_WIRELESS_SEEN_BSSIDS               "seen-bssids"
 #define NM_SETTING_WIRELESS_HIDDEN                    "hidden"
@@ -91,6 +92,7 @@ typedef enum /*< flags >*/ {
 #define NM_SETTING_WIRELESS_MAC_ADDRESS_RANDOMIZATION "mac-address-randomization"
 #define NM_SETTING_WIRELESS_WAKE_ON_WLAN              "wake-on-wlan"
 #define NM_SETTING_WIRELESS_AP_ISOLATION              "ap-isolation"
+#define NM_SETTING_WIRELESS_CHANNEL_WIDTH             "channel-width"
 
 /**
  * NM_SETTING_WIRELESS_MODE_ADHOC:
@@ -144,6 +146,24 @@ typedef enum {
     NM_SETTING_WIRELESS_POWERSAVE_LAST = _NM_SETTING_WIRELESS_POWERSAVE_NUM - 1, /*< skip >*/
 } NMSettingWirelessPowersave;
 
+/**
+ * NMSettingWirelessChannelWidth:
+ * @NM_SETTING_WIRELESS_CHANNEL_WIDTH_AUTO: automatically determine the width
+ * @NM_SETTING_WIRELESS_CHANNEL_WIDTH_20MHZ: use a 20MHz channel width
+ * @NM_SETTING_WIRELESS_CHANNEL_WIDTH_40MHZ: use a 40MHz channel width
+ * @NM_SETTING_WIRELESS_CHANNEL_WIDTH_80MHZ: use a 80MHz channel width
+ *
+ * Indicates the wireless channel width.
+ *
+ * Since: 1.50
+ **/
+typedef enum {
+    NM_SETTING_WIRELESS_CHANNEL_WIDTH_AUTO  = 0,
+    NM_SETTING_WIRELESS_CHANNEL_WIDTH_20MHZ = 20,
+    NM_SETTING_WIRELESS_CHANNEL_WIDTH_40MHZ = 40,
+    NM_SETTING_WIRELESS_CHANNEL_WIDTH_80MHZ = 80,
+} NMSettingWirelessChannelWidth;
+
 typedef struct _NMSettingWirelessClass NMSettingWirelessClass;
 
 GType nm_setting_wireless_get_type(void);
@@ -168,14 +188,30 @@ const char *nm_setting_wireless_get_cloned_mac_address(NMSettingWireless *settin
 NM_AVAILABLE_IN_1_4
 const char *nm_setting_wireless_get_generate_mac_address_mask(NMSettingWireless *setting);
 
+NM_DEPRECATED_IN_1_48
 const char *const *nm_setting_wireless_get_mac_address_blacklist(NMSettingWireless *setting);
-guint32            nm_setting_wireless_get_num_mac_blacklist_items(NMSettingWireless *setting);
+NM_DEPRECATED_IN_1_48
+guint32 nm_setting_wireless_get_num_mac_blacklist_items(NMSettingWireless *setting);
+NM_DEPRECATED_IN_1_48
 const char *nm_setting_wireless_get_mac_blacklist_item(NMSettingWireless *setting, guint32 idx);
-gboolean    nm_setting_wireless_add_mac_blacklist_item(NMSettingWireless *setting, const char *mac);
-void        nm_setting_wireless_remove_mac_blacklist_item(NMSettingWireless *setting, guint32 idx);
-gboolean    nm_setting_wireless_remove_mac_blacklist_item_by_value(NMSettingWireless *setting,
-                                                                   const char        *mac);
-void        nm_setting_wireless_clear_mac_blacklist_items(NMSettingWireless *setting);
+NM_DEPRECATED_IN_1_48
+gboolean nm_setting_wireless_add_mac_blacklist_item(NMSettingWireless *setting, const char *mac);
+NM_DEPRECATED_IN_1_48
+void nm_setting_wireless_remove_mac_blacklist_item(NMSettingWireless *setting, guint32 idx);
+NM_DEPRECATED_IN_1_48
+gboolean nm_setting_wireless_remove_mac_blacklist_item_by_value(NMSettingWireless *setting,
+                                                                const char        *mac);
+NM_DEPRECATED_IN_1_48
+void nm_setting_wireless_clear_mac_blacklist_items(NMSettingWireless *setting);
+
+const char *const *nm_setting_wireless_get_mac_address_denylist(NMSettingWireless *setting);
+guint32            nm_setting_wireless_get_num_mac_denylist_items(NMSettingWireless *setting);
+const char *nm_setting_wireless_get_mac_denylist_item(NMSettingWireless *setting, guint32 idx);
+gboolean    nm_setting_wireless_add_mac_denylist_item(NMSettingWireless *setting, const char *mac);
+void        nm_setting_wireless_remove_mac_denylist_item(NMSettingWireless *setting, guint32 idx);
+gboolean    nm_setting_wireless_remove_mac_denylist_item_by_value(NMSettingWireless *setting,
+                                                                  const char        *mac);
+void        nm_setting_wireless_clear_mac_denylist_items(NMSettingWireless *setting);
 
 guint32  nm_setting_wireless_get_mtu(NMSettingWireless *setting);
 gboolean nm_setting_wireless_get_hidden(NMSettingWireless *setting);
@@ -203,6 +239,9 @@ NMSettingWirelessWakeOnWLan nm_setting_wireless_get_wake_on_wlan(NMSettingWirele
 
 NM_AVAILABLE_IN_1_28
 NMTernary nm_setting_wireless_get_ap_isolation(NMSettingWireless *setting);
+
+NM_AVAILABLE_IN_1_50
+NMSettingWirelessChannelWidth nm_setting_wireless_get_channel_width(NMSettingWireless *setting);
 
 G_END_DECLS
 

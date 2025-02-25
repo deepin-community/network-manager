@@ -499,3 +499,11 @@
    fun:btrfs_reflink_with_progress
    ...
 }
+{
+   _memmove_overlap
+   Memcheck:Overlap
+   fun:__memcpy_chk
+   fun:memmove
+   fun:inet_pton6
+   ...
+}

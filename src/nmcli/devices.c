@@ -597,6 +597,12 @@ _metagen_device_detail_wifi_properties_get_fcn(NMC_META_GENERIC_INFO_GET_FCN_ARG
                 ? (NM_FLAGS_HAS(wcaps, NM_WIFI_DEVICE_CAP_FREQ_5GHZ) ? N_("yes") : N_("no"))
                 : N_("unknown"),
             get_type);
+    case NMC_GENERIC_INFO_TYPE_DEVICE_DETAIL_WIFI_PROPERTIES_6GHZ:
+        return nmc_meta_generic_get_str_i18n(
+            NM_FLAGS_HAS(wcaps, NM_WIFI_DEVICE_CAP_FREQ_VALID)
+                ? (NM_FLAGS_HAS(wcaps, NM_WIFI_DEVICE_CAP_FREQ_6GHZ) ? N_("yes") : N_("no"))
+                : N_("unknown"),
+            get_type);
     case NMC_GENERIC_INFO_TYPE_DEVICE_DETAIL_WIFI_PROPERTIES_MESH:
         return nmc_meta_generic_get_bool(NM_FLAGS_HAS(wcaps, NM_WIFI_DEVICE_CAP_MESH), get_type);
     case NMC_GENERIC_INFO_TYPE_DEVICE_DETAIL_WIFI_PROPERTIES_IBSS_RSN:
@@ -643,6 +649,9 @@ const NmcMetaGenericInfo *const
         _METAGEN_DEVICE_DETAIL_WIFI_PROPERTIES(
             NMC_GENERIC_INFO_TYPE_DEVICE_DETAIL_WIFI_PROPERTIES_5GHZ,
             "5GHZ"),
+        _METAGEN_DEVICE_DETAIL_WIFI_PROPERTIES(
+            NMC_GENERIC_INFO_TYPE_DEVICE_DETAIL_WIFI_PROPERTIES_6GHZ,
+            "6GHZ"),
         _METAGEN_DEVICE_DETAIL_WIFI_PROPERTIES(
             NMC_GENERIC_INFO_TYPE_DEVICE_DETAIL_WIFI_PROPERTIES_MESH,
             "MESH"),
@@ -725,15 +734,16 @@ const NmcMetaGenericInfo *const nmc_fields_dev_wifi_list[] = {
     NMC_META_GENERIC("CHAN"),      /* 5 */
     NMC_META_GENERIC("FREQ"),      /* 6 */
     NMC_META_GENERIC("RATE"),      /* 7 */
-    NMC_META_GENERIC("SIGNAL"),    /* 8 */
-    NMC_META_GENERIC("BARS"),      /* 9 */
-    NMC_META_GENERIC("SECURITY"),  /* 10 */
-    NMC_META_GENERIC("WPA-FLAGS"), /* 11 */
-    NMC_META_GENERIC("RSN-FLAGS"), /* 12 */
-    NMC_META_GENERIC("DEVICE"),    /* 13 */
-    NMC_META_GENERIC("ACTIVE"),    /* 14 */
-    NMC_META_GENERIC("IN-USE"),    /* 15 */
-    NMC_META_GENERIC("DBUS-PATH"), /* 16 */
+    NMC_META_GENERIC("BANDWIDTH"), /* 8 */
+    NMC_META_GENERIC("SIGNAL"),    /* 9 */
+    NMC_META_GENERIC("BARS"),      /* 10 */
+    NMC_META_GENERIC("SECURITY"),  /* 11 */
+    NMC_META_GENERIC("WPA-FLAGS"), /* 12 */
+    NMC_META_GENERIC("RSN-FLAGS"), /* 13 */
+    NMC_META_GENERIC("DEVICE"),    /* 14 */
+    NMC_META_GENERIC("ACTIVE"),    /* 15 */
+    NMC_META_GENERIC("IN-USE"),    /* 16 */
+    NMC_META_GENERIC("DBUS-PATH"), /* 17 */
     NULL,
 };
 #define NMC_FIELDS_DEV_WIFI_LIST_COMMON       "IN-USE,BSSID,SSID,MODE,CHAN,RATE,SIGNAL,BARS,SECURITY"
@@ -752,12 +762,12 @@ const NmcMetaGenericInfo *const nmc_fields_dev_wimax_list[] = {
 #define NMC_FIELDS_DEV_WIMAX_LIST_COMMON       "NSP,SIGNAL,TYPE,DEVICE,ACTIVE"
 #define NMC_FIELDS_DEV_WIMAX_LIST_FOR_DEV_LIST "NAME," NMC_FIELDS_DEV_WIMAX_LIST_COMMON
 
-const NmcMetaGenericInfo *const nmc_fields_dev_show_master_prop[] = {
+const NmcMetaGenericInfo *const nmc_fields_dev_show_controller_prop[] = {
     NMC_META_GENERIC("NAME"),   /* 0 */
     NMC_META_GENERIC("SLAVES"), /* 1 */
     NULL,
 };
-#define NMC_FIELDS_DEV_SHOW_MASTER_PROP_COMMON "NAME,SLAVES"
+#define NMC_FIELDS_DEV_SHOW_CONTROLLER_PROP_COMMON "NAME,SLAVES"
 
 const NmcMetaGenericInfo *const nmc_fields_dev_show_team_prop[] = {
     NMC_META_GENERIC("NAME"),   /* 0 */
@@ -792,18 +802,18 @@ const NmcMetaGenericInfo *const nmc_fields_dev_show_sections[] = {
     NMC_META_GENERIC_WITH_NESTED("WIRED-PROPERTIES",
                                  metagen_device_detail_wired_properties), /* 5 */
     NMC_META_GENERIC_WITH_NESTED("WIMAX-PROPERTIES",
-                                 metagen_device_detail_wimax_properties),           /* 6 */
-    NMC_META_GENERIC_WITH_NESTED("NSP", nmc_fields_dev_wimax_list + 1),             /* 7 */
-    NMC_META_GENERIC_WITH_NESTED("IP4", metagen_ip4_config),                        /* 8 */
-    NMC_META_GENERIC_WITH_NESTED("DHCP4", metagen_dhcp_config),                     /* 9 */
-    NMC_META_GENERIC_WITH_NESTED("IP6", metagen_ip6_config),                        /* 10 */
-    NMC_META_GENERIC_WITH_NESTED("DHCP6", metagen_dhcp_config),                     /* 11 */
-    NMC_META_GENERIC_WITH_NESTED("BOND", nmc_fields_dev_show_master_prop + 1),      /* 12 */
-    NMC_META_GENERIC_WITH_NESTED("TEAM", nmc_fields_dev_show_team_prop + 1),        /* 13 */
-    NMC_META_GENERIC_WITH_NESTED("BRIDGE", nmc_fields_dev_show_master_prop + 1),    /* 14 */
-    NMC_META_GENERIC_WITH_NESTED("VLAN", nmc_fields_dev_show_vlan_prop + 1),        /* 15 */
-    NMC_META_GENERIC_WITH_NESTED("BLUETOOTH", nmc_fields_dev_show_bluetooth + 1),   /* 16 */
-    NMC_META_GENERIC_WITH_NESTED("CONNECTIONS", metagen_device_detail_connections), /* 17 */
+                                 metagen_device_detail_wimax_properties),            /* 6 */
+    NMC_META_GENERIC_WITH_NESTED("NSP", nmc_fields_dev_wimax_list + 1),              /* 7 */
+    NMC_META_GENERIC_WITH_NESTED("IP4", metagen_ip4_config),                         /* 8 */
+    NMC_META_GENERIC_WITH_NESTED("DHCP4", metagen_dhcp_config),                      /* 9 */
+    NMC_META_GENERIC_WITH_NESTED("IP6", metagen_ip6_config),                         /* 10 */
+    NMC_META_GENERIC_WITH_NESTED("DHCP6", metagen_dhcp_config),                      /* 11 */
+    NMC_META_GENERIC_WITH_NESTED("BOND", nmc_fields_dev_show_controller_prop + 1),   /* 12 */
+    NMC_META_GENERIC_WITH_NESTED("TEAM", nmc_fields_dev_show_team_prop + 1),         /* 13 */
+    NMC_META_GENERIC_WITH_NESTED("BRIDGE", nmc_fields_dev_show_controller_prop + 1), /* 14 */
+    NMC_META_GENERIC_WITH_NESTED("VLAN", nmc_fields_dev_show_vlan_prop + 1),         /* 15 */
+    NMC_META_GENERIC_WITH_NESTED("BLUETOOTH", nmc_fields_dev_show_bluetooth + 1),    /* 16 */
+    NMC_META_GENERIC_WITH_NESTED("CONNECTIONS", metagen_device_detail_connections),  /* 17 */
     NULL,
 };
 #define NMC_FIELDS_DEV_SHOW_SECTIONS_COMMON                                 \
@@ -1072,8 +1082,8 @@ compare_devices(const void *a, const void *b)
     NMActiveConnection *da_ac = nm_device_get_active_connection(da);
     NMActiveConnection *db_ac = nm_device_get_active_connection(db);
 
-    NM_CMP_DIRECT(nm_device_get_state(db), nm_device_get_state(da));
     NM_CMP_RETURN(nmc_active_connection_cmp(db_ac, da_ac));
+    NM_CMP_DIRECT(nm_device_get_state(db), nm_device_get_state(da));
     NM_CMP_DIRECT_STRCMP0(nm_device_get_type_description(da), nm_device_get_type_description(db));
     NM_CMP_DIRECT_STRCMP0(nm_device_get_iface(da), nm_device_get_iface(db));
     NM_CMP_DIRECT_STRCMP0(nm_object_get_path(NM_OBJECT(da)), nm_object_get_path(NM_OBJECT(db)));
@@ -1305,7 +1315,9 @@ fill_output_access_point(NMAccessPoint *ap, const APInfo *info)
     NmcOutputField        *arr;
     gboolean               active;
     NM80211ApSecurityFlags wpa_flags, rsn_flags;
-    guint32                freq, bitrate;
+    guint32                freq;
+    guint32                bitrate;
+    guint32                bandwidth;
     guint8                 strength;
     GBytes                *ssid;
     const char            *bssid;
@@ -1315,6 +1327,7 @@ fill_output_access_point(NMAccessPoint *ap, const APInfo *info)
     char                  *ssid_str     = NULL;
     char                  *ssid_hex_str = NULL;
     char                  *bitrate_str;
+    char                  *bandwidth_str;
     char                  *strength_str;
     char                  *wpa_flags_str;
     char                  *rsn_flags_str;
@@ -1333,7 +1346,8 @@ fill_output_access_point(NMAccessPoint *ap, const APInfo *info)
     freq      = nm_access_point_get_frequency(ap);
     mode      = nm_access_point_get_mode(ap);
     bitrate   = nm_access_point_get_max_bitrate(ap);
-    strength  = MIN(nm_access_point_get_strength(ap), 100);
+    bandwidth = nm_access_point_get_bandwidth(ap);
+    strength  = NM_MIN(nm_access_point_get_strength(ap), 100u);
 
     /* Convert to strings */
     if (ssid) {
@@ -1347,6 +1361,7 @@ fill_output_access_point(NMAccessPoint *ap, const APInfo *info)
     channel_str   = g_strdup_printf("%u", nm_utils_wifi_freq_to_channel(freq));
     freq_str      = g_strdup_printf(_("%u MHz"), freq);
     bitrate_str   = g_strdup_printf(_("%u Mbit/s"), bitrate / 1000);
+    bandwidth_str = g_strdup_printf(_("%u MHz"), bandwidth);
     strength_str  = nm_strdup_int(strength);
     wpa_flags_str = ap_wpa_rsn_flags_to_string(wpa_flags, NM_META_ACCESSOR_GET_TYPE_PRETTY);
     rsn_flags_str = ap_wpa_rsn_flags_to_string(rsn_flags, NM_META_ACCESSOR_GET_TYPE_PRETTY);
@@ -1402,15 +1417,16 @@ fill_output_access_point(NMAccessPoint *ap, const APInfo *info)
     set_val_str(arr, 5, channel_str);
     set_val_str(arr, 6, freq_str);
     set_val_str(arr, 7, bitrate_str);
-    set_val_str(arr, 8, strength_str);
-    set_val_strc(arr, 9, sig_bars);
-    set_val_str(arr, 10, g_string_free(security_str, FALSE));
-    set_val_str(arr, 11, wpa_flags_str);
-    set_val_str(arr, 12, rsn_flags_str);
-    set_val_strc(arr, 13, info->device);
-    set_val_strc(arr, 14, active ? _("yes") : _("no"));
-    set_val_strc(arr, 15, active ? "*" : " ");
-    set_val_strc(arr, 16, nm_object_get_path(NM_OBJECT(ap)));
+    set_val_str(arr, 8, bandwidth_str);
+    set_val_str(arr, 9, strength_str);
+    set_val_strc(arr, 10, sig_bars);
+    set_val_str(arr, 11, g_string_free(security_str, FALSE));
+    set_val_str(arr, 12, wpa_flags_str);
+    set_val_str(arr, 13, rsn_flags_str);
+    set_val_strc(arr, 14, info->device);
+    set_val_strc(arr, 15, active ? _("yes") : _("no"));
+    set_val_strc(arr, 16, active ? "*" : " ");
+    set_val_strc(arr, 17, nm_object_get_path(NM_OBJECT(ap)));
 
     /* Set colors */
     color = wifi_signal_to_color(strength);
@@ -1495,7 +1511,7 @@ print_bond_bridge_info(NMDevice   *device,
     if (ports_str->len > 0)
         g_string_truncate(ports_str, ports_str->len - 1); /* Chop off last space */
 
-    tmpl        = (const NMMetaAbstractInfo *const *) nmc_fields_dev_show_master_prop;
+    tmpl        = (const NMMetaAbstractInfo *const *) nmc_fields_dev_show_controller_prop;
     out_indices = parse_output_fields(one_field, tmpl, FALSE, NULL, NULL);
     arr         = nmc_dup_fields_array(tmpl, NMC_OF_FLAG_FIELD_NAMES);
     g_ptr_array_add(out.output_data, arr);
@@ -2203,6 +2219,13 @@ add_and_activate_cb(GObject *client, GAsyncResult *result, gpointer user_data)
     if (nmc->nowait_flag) {
         quit();
         return;
+    }
+
+    if (nmc->secret_agent) {
+        NMRemoteConnection *connection = nm_active_connection_get_connection(active);
+
+        nm_secret_agent_simple_enable(nmc->secret_agent,
+                                      nm_connection_get_path(NM_CONNECTION(connection)));
     }
 
     if (nmc->nmc_config.print_output == NMC_PRINT_PRETTY)
@@ -3646,8 +3669,7 @@ do_device_wifi_connect(const NMCCommand *cmd, NmCli *nmc, int argc, const char *
     GByteArray        *bssid2_arr            = NULL;
     gs_free NMDevice **devices               = NULL;
     int                devices_idx;
-    char              *ssid_ask   = NULL;
-    char              *passwd_ask = NULL;
+    char              *ssid_ask = NULL;
     const GPtrArray   *avail_cons;
     gboolean           name_match = FALSE;
     int                i;
@@ -4005,29 +4027,15 @@ do_device_wifi_connect(const NMCCommand *cmd, NmCli *nmc, int argc, const char *
         || (ap_rsn_flags != NM_802_11_AP_SEC_NONE
             && !NM_FLAGS_ANY(ap_rsn_flags,
                              NM_802_11_AP_SEC_KEY_MGMT_OWE | NM_802_11_AP_SEC_KEY_MGMT_OWE_TM))) {
-        const char                *con_password = NULL;
-        NMSettingWirelessSecurity *s_wsec       = NULL;
+        NMSettingWirelessSecurity *s_wsec = NULL;
 
-        if (connection) {
-            s_wsec = nm_connection_get_setting_wireless_security(connection);
-            if (s_wsec) {
-                if (ap_wpa_flags == NM_802_11_AP_SEC_NONE
-                    && ap_rsn_flags == NM_802_11_AP_SEC_NONE) {
-                    /* WEP */
-                    con_password = nm_setting_wireless_security_get_wep_key(s_wsec, 0);
-                } else if ((ap_wpa_flags & NM_802_11_AP_SEC_KEY_MGMT_PSK)
-                           || (ap_rsn_flags & NM_802_11_AP_SEC_KEY_MGMT_PSK)
-                           || (ap_rsn_flags & NM_802_11_AP_SEC_KEY_MGMT_SAE)) {
-                    /* WPA PSK */
-                    con_password = nm_setting_wireless_security_get_psk(s_wsec);
-                }
-            }
-        }
-
-        /* Ask for missing password when one is expected and '--ask' is used */
-        if (!password && !con_password && nmc->ask) {
-            password = passwd_ask =
-                nmc_readline_echo(&nmc->nmc_config, nmc->nmc_config.show_secrets, _("Password: "));
+        /* Create secret agent */
+        nmc->secret_agent = nm_secret_agent_simple_new("nmcli-connect");
+        if (nmc->secret_agent) {
+            g_signal_connect(nmc->secret_agent,
+                             NM_SECRET_AGENT_SIMPLE_REQUEST_SECRETS,
+                             G_CALLBACK(nmc_secrets_requested),
+                             nmc);
         }
 
         if (password) {
@@ -4075,7 +4083,6 @@ finish:
     if (bssid2_arr)
         g_byte_array_free(bssid2_arr, TRUE);
     g_free(ssid_ask);
-    nm_free_secret(passwd_ask);
 }
 
 static GBytes *

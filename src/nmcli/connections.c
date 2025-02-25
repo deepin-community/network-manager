@@ -291,65 +291,91 @@ connection_type_to_display(const char *type, NMMetaAccessorGetType get_type)
 static int
 active_connection_get_state_ord(NMActiveConnection *active)
 {
+    static const NMActiveConnectionState ordered_states[] = {
+        NM_ACTIVE_CONNECTION_STATE_UNKNOWN,
+        NM_ACTIVE_CONNECTION_STATE_DEACTIVATED,
+        NM_ACTIVE_CONNECTION_STATE_DEACTIVATING,
+        NM_ACTIVE_CONNECTION_STATE_ACTIVATING,
+        NM_ACTIVE_CONNECTION_STATE_ACTIVATED,
+    };
+    NMActiveConnectionState state;
+    int                     i;
+    gboolean                is_external;
+
     /* returns an integer related to @active's state, that can be used for sorting
      * active connections based on their activation state. */
-    if (!active)
-        return -2;
 
-    switch (nm_active_connection_get_state(active)) {
-    case NM_ACTIVE_CONNECTION_STATE_UNKNOWN:
-        return 0;
-    case NM_ACTIVE_CONNECTION_STATE_DEACTIVATED:
-        return 1;
-    case NM_ACTIVE_CONNECTION_STATE_DEACTIVATING:
-        return 2;
-    case NM_ACTIVE_CONNECTION_STATE_ACTIVATING:
-        return 3;
-    case NM_ACTIVE_CONNECTION_STATE_ACTIVATED:
-        return 4;
+    if (!active)
+        return -10;
+
+    state       = nm_active_connection_get_state(active);
+    is_external = NM_FLAGS_HAS(nm_active_connection_get_state_flags(active),
+                               NM_ACTIVATION_STATE_FLAG_EXTERNAL);
+
+    for (i = 0; i < (int) G_N_ELEMENTS(ordered_states); i++) {
+        if (state == ordered_states[i]) {
+            if (!is_external)
+                i += G_N_ELEMENTS(ordered_states);
+            return i;
+        }
     }
-    return -1;
+
+    return is_external ? -2 : -1;
 }
 
 int
 nmc_active_connection_cmp(NMActiveConnection *ac_a, NMActiveConnection *ac_b)
 {
-    NMSettingIPConfig  *s_ip;
-    NMRemoteConnection *conn;
+    NMSettingIPConfig  *s_ip4_a;
+    NMSettingIPConfig  *s_ip4_b;
+    NMSettingIPConfig  *s_ip6_a;
+    NMSettingIPConfig  *s_ip6_b;
+    NMRemoteConnection *conn_a;
+    NMRemoteConnection *conn_b;
     NMIPConfig         *da_ip;
     NMIPConfig         *db_ip;
-    int                 da_num_addrs;
-    int                 db_num_addrs;
-    int                 cmp = 0;
+    gint64              da_num_addrs;
+    gint64              db_num_addrs;
+    gboolean            bool_a;
+    gboolean            bool_b;
 
-    /* Non-active sort last. */
+    /* nmc_active_connection_cmp() sorts more-important ACs later. That means,
+     * - NULL comes first
+     * - then sorting by state (active_connection_get_state_ord()), with "activated" sorted last.
+     * - various properties of the AC.
+     *
+     * This is basically the inverse order of `nmcli connection`.
+     */
+
+    /* Non-active (and NULL) sort first! */
     NM_CMP_SELF(ac_a, ac_b);
-    NM_CMP_DIRECT(active_connection_get_state_ord(ac_b), active_connection_get_state_ord(ac_a));
+    NM_CMP_DIRECT(active_connection_get_state_ord(ac_a), active_connection_get_state_ord(ac_b));
+
+    conn_a = nm_active_connection_get_connection(ac_a);
+    conn_b = nm_active_connection_get_connection(ac_b);
+
+    s_ip6_a = conn_a ? nm_connection_get_setting_ip6_config(NM_CONNECTION(conn_a)) : NULL;
+    s_ip6_b = conn_b ? nm_connection_get_setting_ip6_config(NM_CONNECTION(conn_b)) : NULL;
 
     /* Shared connections (likely hotspots) go on the top if possible */
-    conn = nm_active_connection_get_connection(ac_a);
-    s_ip = conn ? nm_connection_get_setting_ip6_config(NM_CONNECTION(conn)) : NULL;
-    if (s_ip
-        && nm_streq(nm_setting_ip_config_get_method(s_ip), NM_SETTING_IP6_CONFIG_METHOD_SHARED))
-        cmp++;
-    conn = nm_active_connection_get_connection(ac_b);
-    s_ip = conn ? nm_connection_get_setting_ip6_config(NM_CONNECTION(conn)) : NULL;
-    if (s_ip
-        && nm_streq(nm_setting_ip_config_get_method(s_ip), NM_SETTING_IP6_CONFIG_METHOD_SHARED))
-        cmp--;
-    NM_CMP_RETURN(cmp);
+    bool_a = (s_ip6_a
+              && nm_streq(nm_setting_ip_config_get_method(s_ip6_a),
+                          NM_SETTING_IP6_CONFIG_METHOD_SHARED));
+    bool_b = (s_ip6_b
+              && nm_streq(nm_setting_ip_config_get_method(s_ip6_b),
+                          NM_SETTING_IP6_CONFIG_METHOD_SHARED));
+    NM_CMP_DIRECT(bool_a, bool_b);
 
-    conn = nm_active_connection_get_connection(ac_a);
-    s_ip = conn ? nm_connection_get_setting_ip4_config(NM_CONNECTION(conn)) : NULL;
-    if (s_ip
-        && nm_streq(nm_setting_ip_config_get_method(s_ip), NM_SETTING_IP4_CONFIG_METHOD_SHARED))
-        cmp++;
-    conn = nm_active_connection_get_connection(ac_b);
-    s_ip = conn ? nm_connection_get_setting_ip4_config(NM_CONNECTION(conn)) : NULL;
-    if (s_ip
-        && nm_streq(nm_setting_ip_config_get_method(s_ip), NM_SETTING_IP4_CONFIG_METHOD_SHARED))
-        cmp--;
-    NM_CMP_RETURN(cmp);
+    s_ip4_a = conn_a ? nm_connection_get_setting_ip4_config(NM_CONNECTION(conn_a)) : NULL;
+    s_ip4_b = conn_b ? nm_connection_get_setting_ip4_config(NM_CONNECTION(conn_b)) : NULL;
+
+    bool_a = (s_ip4_a
+              && nm_streq(nm_setting_ip_config_get_method(s_ip4_a),
+                          NM_SETTING_IP4_CONFIG_METHOD_SHARED));
+    bool_b = (s_ip4_b
+              && nm_streq(nm_setting_ip_config_get_method(s_ip4_b),
+                          NM_SETTING_IP4_CONFIG_METHOD_SHARED));
+    NM_CMP_DIRECT(bool_a, bool_b);
 
     /* VPNs go next */
     NM_CMP_DIRECT(!!nm_active_connection_get_vpn(ac_a), !!nm_active_connection_get_vpn(ac_b));
@@ -367,9 +393,9 @@ nmc_active_connection_cmp(NMActiveConnection *ac_a, NMActiveConnection *ac_b)
     db_num_addrs = db_ip ? nm_ip_config_get_addresses(db_ip)->len : 0;
 
     da_ip = nm_active_connection_get_ip6_config(ac_a);
-    da_num_addrs += da_ip ? nm_ip_config_get_addresses(da_ip)->len : 0;
+    da_num_addrs += (gint64) (da_ip ? nm_ip_config_get_addresses(da_ip)->len : 0u);
     db_ip = nm_active_connection_get_ip6_config(ac_b);
-    db_num_addrs += db_ip ? nm_ip_config_get_addresses(db_ip)->len : 0;
+    db_num_addrs += (gint64) (db_ip ? nm_ip_config_get_addresses(db_ip)->len : 0u);
 
     NM_CMP_DIRECT(da_num_addrs, db_num_addrs);
 
@@ -646,8 +672,7 @@ nmc_connection_check_deprecated(NMConnection *c)
     const char                *type;
 
     type = nm_connection_get_connection_type(c);
-
-    if (strcmp(type, NM_SETTING_WIMAX_SETTING_NAME) == 0)
+    if (nm_streq0(type, NM_SETTING_WIMAX_SETTING_NAME))
         return _("WiMax is no longer supported");
 
     s_wsec = nm_connection_get_setting_wireless_security(c);
@@ -779,7 +804,7 @@ _metagen_con_show_get_fcn(NMC_META_GENERIC_INFO_GET_FCN_ARGS)
     case NMC_GENERIC_INFO_TYPE_CON_SHOW_PORT:
         if (!s_con)
             return NULL;
-        return nm_setting_connection_get_slave_type(s_con);
+        return nm_setting_connection_get_port_type(s_con);
     case NMC_GENERIC_INFO_TYPE_CON_SHOW_FILENAME:
         if (!NM_IS_REMOTE_CONNECTION(c))
             return NULL;
@@ -1041,15 +1066,17 @@ const NmcMetaGenericInfo
     "," NM_SETTING_TEAM_SETTING_NAME "," NM_SETTING_TEAM_PORT_SETTING_NAME             \
     "," NM_SETTING_OVS_BRIDGE_SETTING_NAME "," NM_SETTING_OVS_INTERFACE_SETTING_NAME   \
     "," NM_SETTING_OVS_PATCH_SETTING_NAME "," NM_SETTING_OVS_PORT_SETTING_NAME         \
-    "," NM_SETTING_DCB_SETTING_NAME "," NM_SETTING_TUN_SETTING_NAME                    \
-    "," NM_SETTING_IP_TUNNEL_SETTING_NAME "," NM_SETTING_MACSEC_SETTING_NAME           \
-    "," NM_SETTING_MACVLAN_SETTING_NAME "," NM_SETTING_VXLAN_SETTING_NAME              \
-    "," NM_SETTING_VRF_SETTING_NAME "," NM_SETTING_WPAN_SETTING_NAME                   \
-    "," NM_SETTING_6LOWPAN_SETTING_NAME "," NM_SETTING_WIREGUARD_SETTING_NAME          \
-    "," NM_SETTING_LINK_SETTING_NAME "," NM_SETTING_PROXY_SETTING_NAME                 \
-    "," NM_SETTING_TC_CONFIG_SETTING_NAME "," NM_SETTING_SRIOV_SETTING_NAME            \
-    "," NM_SETTING_ETHTOOL_SETTING_NAME "," NM_SETTING_OVS_DPDK_SETTING_NAME           \
-    "," NM_SETTING_HOSTNAME_SETTING_NAME /* NM_SETTING_DUMMY_SETTING_NAME NM_SETTING_WIMAX_SETTING_NAME */
+    "," NM_SETTING_GENERIC_SETTING_NAME "," NM_SETTING_DCB_SETTING_NAME                \
+    "," NM_SETTING_TUN_SETTING_NAME "," NM_SETTING_IP_TUNNEL_SETTING_NAME              \
+    "," NM_SETTING_MACSEC_SETTING_NAME "," NM_SETTING_MACVLAN_SETTING_NAME             \
+    "," NM_SETTING_VXLAN_SETTING_NAME "," NM_SETTING_VRF_SETTING_NAME                  \
+    "," NM_SETTING_WPAN_SETTING_NAME "," NM_SETTING_6LOWPAN_SETTING_NAME               \
+    "," NM_SETTING_WIREGUARD_SETTING_NAME "," NM_SETTING_LINK_SETTING_NAME             \
+    "," NM_SETTING_PROXY_SETTING_NAME "," NM_SETTING_TC_CONFIG_SETTING_NAME            \
+    "," NM_SETTING_SRIOV_SETTING_NAME "," NM_SETTING_ETHTOOL_SETTING_NAME              \
+    "," NM_SETTING_OVS_DPDK_SETTING_NAME "," NM_SETTING_HOSTNAME_SETTING_NAME          \
+    "," NM_SETTING_HSR_SETTING_NAME
+/* NM_SETTING_DUMMY_SETTING_NAME NM_SETTING_WIMAX_SETTING_NAME */
 
 const NmcMetaGenericInfo *const nmc_fields_con_active_details_groups[] = {
     NMC_META_GENERIC_WITH_NESTED("GENERAL", metagen_con_active_general), /* 0 */
@@ -1093,7 +1120,7 @@ usage(void)
           "  up [[id | uuid | path] <ID>] [ifname <ifname>] [ap <BSSID>] [passwd-file <file with "
           "passwords>]\n\n"
           "  down [id | uuid | path | apath] <ID> ...\n\n"
-          "  add COMMON_OPTIONS TYPE_SPECIFIC_OPTIONS SLAVE_OPTIONS IP_OPTIONS [-- "
+          "  add COMMON_OPTIONS TYPE_SPECIFIC_OPTIONS PORT_OPTIONS IP_OPTIONS [-- "
           "([+|-]<setting>.<property> <value>)+]\n\n"
           "  modify [--temporary] [id | uuid | path] <ID> ([+|-]<setting>.<property> <value>)+\n\n"
           "  clone [--temporary] [id | uuid | path ] <ID> <new name>\n\n"
@@ -1169,130 +1196,131 @@ usage_connection_down(void)
 static void
 usage_connection_add(void)
 {
-    nmc_printerr(_("Usage: nmcli connection add { ARGUMENTS | help }\n"
-                   "\n"
-                   "ARGUMENTS := COMMON_OPTIONS TYPE_SPECIFIC_OPTIONS SLAVE_OPTIONS IP_OPTIONS [-- "
-                   "([+|-]<setting>.<property> <value>)+]\n\n"
-                   "  COMMON_OPTIONS:\n"
-                   "                  type <type>\n"
-                   "                  [ifname <interface name> | \"*\"]\n"
-                   "                  [con-name <connection name>]\n"
-                   "                  [autoconnect yes|no]\n"
-                   "                  [save yes|no]\n"
-                   "                  [master <master (ifname, or connection UUID or name)>]\n"
-                   "                  [slave-type <master connection type>]\n\n"
-                   "  TYPE_SPECIFIC_OPTIONS:\n"
-                   "    ethernet:     [mac <MAC address>]\n"
-                   "                  [cloned-mac <cloned MAC address>]\n"
-                   "                  [mtu <MTU>]\n\n"
-                   "    wifi:         ssid <SSID>\n"
-                   "                  [mac <MAC address>]\n"
-                   "                  [cloned-mac <cloned MAC address>]\n"
-                   "                  [mtu <MTU>]\n"
-                   "                  [mode infrastructure|ap|adhoc]\n\n"
-                   "    wimax:        [mac <MAC address>]\n"
-                   "                  [nsp <NSP>]\n\n"
-                   "    pppoe:        username <PPPoE username>\n"
-                   "                  [password <PPPoE password>]\n"
-                   "                  [service <PPPoE service name>]\n"
-                   "                  [mtu <MTU>]\n"
-                   "                  [mac <MAC address>]\n\n"
-                   "    gsm:          apn <APN>\n"
-                   "                  [user <username>]\n"
-                   "                  [password <password>]\n\n"
-                   "    cdma:         [user <username>]\n"
-                   "                  [password <password>]\n\n"
-                   "    infiniband:   [mac <MAC address>]\n"
-                   "                  [mtu <MTU>]\n"
-                   "                  [transport-mode datagram | connected]\n"
-                   "                  [parent <ifname>]\n"
-                   "                  [p-key <IPoIB P_Key>]\n\n"
-                   "    bluetooth:    [addr <bluetooth address>]\n"
-                   "                  [bt-type panu|nap|dun-gsm|dun-cdma]\n\n"
-                   "    vlan:         dev <parent device (connection UUID, ifname, or MAC)>\n"
-                   "                  id <VLAN ID>\n"
-                   "                  [flags <VLAN flags>]\n"
-                   "                  [ingress <ingress priority mapping>]\n"
-                   "                  [egress <egress priority mapping>]\n"
-                   "                  [mtu <MTU>]\n\n"
-                   "    bond:         [mode balance-rr (0) | active-backup (1) | balance-xor (2) | "
-                   "broadcast (3) |\n"
-                   "                        802.3ad    (4) | balance-tlb   (5) | balance-alb (6)]\n"
-                   "                  [primary <ifname>]\n"
-                   "                  [miimon <num>]\n"
-                   "                  [downdelay <num>]\n"
-                   "                  [updelay <num>]\n"
-                   "                  [arp-interval <num>]\n"
-                   "                  [arp-ip-target <num>]\n"
-                   "                  [lacp-rate slow (0) | fast (1)]\n\n"
-                   "    bond-slave:   master <master (ifname, or connection UUID or name)>\n"
-                   "                  [queue-id <0-65535>]\n\n"
-                   "    team:         [config <file>|<raw JSON data>]\n\n"
-                   "    team-slave:   master <master (ifname, or connection UUID or name)>\n"
-                   "                  [config <file>|<raw JSON data>]\n\n"
-                   "    bridge:       [stp yes|no]\n"
-                   "                  [priority <num>]\n"
-                   "                  [forward-delay <2-30>]\n"
-                   "                  [hello-time <1-10>]\n"
-                   "                  [max-age <6-40>]\n"
-                   "                  [ageing-time <0-1000000>]\n"
-                   "                  [multicast-snooping yes|no]\n"
-                   "                  [mac <MAC address>]\n\n"
-                   "    bridge-slave: master <master (ifname, or connection UUID or name)>\n"
-                   "                  [priority <0-63>]\n"
-                   "                  [path-cost <1-65535>]\n"
-                   "                  [hairpin yes|no]\n\n"
-                   "    vpn:          vpn-type "
-                   "vpnc|openvpn|pptp|openconnect|openswan|libreswan|ssh|l2tp|iodine|...\n"
-                   "                  [user <username>]\n\n"
-                   "    olpc-mesh:    ssid <SSID>\n"
-                   "                  [channel <1-13>]\n"
-                   "                  [dhcp-anycast <MAC address>]\n\n"
-                   "    adsl:         username <username>\n"
-                   "                  protocol pppoa|pppoe|ipoatm\n"
-                   "                  [password <password>]\n"
-                   "                  [encapsulation vcmux|llc]\n\n"
-                   "    tun:          mode tun|tap\n"
-                   "                  [owner <UID>]\n"
-                   "                  [group <GID>]\n"
-                   "                  [pi yes|no]\n"
-                   "                  [vnet-hdr yes|no]\n"
-                   "                  [multi-queue yes|no]\n\n"
-                   "    ip-tunnel:    mode ipip|gre|sit|isatap|vti|ip6ip6|ipip6|ip6gre|vti6\n"
-                   "                  remote <remote endpoint IP>\n"
-                   "                  [local <local endpoint IP>]\n"
-                   "                  [dev <parent device (ifname or connection UUID)>]\n\n"
-                   "    macsec:       dev <parent device (connection UUID, ifname, or MAC)>\n"
-                   "                  mode <psk|eap>\n"
-                   "                  [cak <key> ckn <key>]\n"
-                   "                  [encrypt yes|no]\n"
-                   "                  [port 1-65534]\n\n\n"
-                   "    macvlan:      dev <parent device (connection UUID, ifname, or MAC)>\n"
-                   "                  mode vepa|bridge|private|passthru|source\n"
-                   "                  [tap yes|no]\n\n"
-                   "    vxlan:        id <VXLAN ID>\n"
-                   "                  [remote <IP of multicast group or remote address>]\n"
-                   "                  [local <source IP>]\n"
-                   "                  [dev <parent device (ifname or connection UUID)>]\n"
-                   "                  [source-port-min <0-65535>]\n"
-                   "                  [source-port-max <0-65535>]\n"
-                   "                  [destination-port <0-65535>]\n\n"
-                   "    wpan:         [short-addr <0x0000-0xffff>]\n"
-                   "                  [pan-id <0x0000-0xffff>]\n"
-                   "                  [page <default|0-31>]\n"
-                   "                  [channel <default|0-26>]\n"
-                   "                  [mac <MAC address>]\n\n"
-                   "    6lowpan:      dev <parent device (connection UUID, ifname, or MAC)>\n"
-                   "    dummy:\n\n"
-                   "  SLAVE_OPTIONS:\n"
-                   "    bridge:       [priority <0-63>]\n"
-                   "                  [path-cost <1-65535>]\n"
-                   "                  [hairpin yes|no]\n\n"
-                   "    team:         [config <file>|<raw JSON data>]\n\n"
-                   "    bond:         [queue-id <0-65535>]\n\n"
-                   "  IP_OPTIONS:\n"
-                   "                  [ip4 <IPv4 address>] [gw4 <IPv4 gateway>]\n"
-                   "                  [ip6 <IPv6 address>] [gw6 <IPv6 gateway>]\n\n"));
+    nmc_printerr(
+        _("Usage: nmcli connection add { ARGUMENTS | help }\n"
+          "\n"
+          "ARGUMENTS := COMMON_OPTIONS TYPE_SPECIFIC_OPTIONS PORT_OPTIONS IP_OPTIONS [-- "
+          "([+|-]<setting>.<property> <value>)+]\n\n"
+          "  COMMON_OPTIONS:\n"
+          "                  type <type>\n"
+          "                  [ifname <interface name> | \"*\"]\n"
+          "                  [con-name <connection name>]\n"
+          "                  [autoconnect yes|no]\n"
+          "                  [save yes|no]\n"
+          "                  [controller <controller (ifname, or connection UUID or name)>]\n"
+          "                  [port-type <controller connection type>]\n\n"
+          "  TYPE_SPECIFIC_OPTIONS:\n"
+          "    ethernet:     [mac <MAC address>]\n"
+          "                  [cloned-mac <cloned MAC address>]\n"
+          "                  [mtu <MTU>]\n\n"
+          "    wifi:         ssid <SSID>\n"
+          "                  [mac <MAC address>]\n"
+          "                  [cloned-mac <cloned MAC address>]\n"
+          "                  [mtu <MTU>]\n"
+          "                  [mode infrastructure|ap|adhoc]\n\n"
+          "    wimax:        [mac <MAC address>]\n"
+          "                  [nsp <NSP>]\n\n"
+          "    pppoe:        username <PPPoE username>\n"
+          "                  [password <PPPoE password>]\n"
+          "                  [service <PPPoE service name>]\n"
+          "                  [mtu <MTU>]\n"
+          "                  [mac <MAC address>]\n\n"
+          "    gsm:          apn <APN>\n"
+          "                  [user <username>]\n"
+          "                  [password <password>]\n\n"
+          "    cdma:         [user <username>]\n"
+          "                  [password <password>]\n\n"
+          "    infiniband:   [mac <MAC address>]\n"
+          "                  [mtu <MTU>]\n"
+          "                  [transport-mode datagram | connected]\n"
+          "                  [parent <ifname>]\n"
+          "                  [p-key <IPoIB P_Key>]\n\n"
+          "    bluetooth:    [addr <bluetooth address>]\n"
+          "                  [bt-type panu|nap|dun-gsm|dun-cdma]\n\n"
+          "    vlan:         dev <parent device (connection UUID, ifname, or MAC)>\n"
+          "                  id <VLAN ID>\n"
+          "                  [flags <VLAN flags>]\n"
+          "                  [ingress <ingress priority mapping>]\n"
+          "                  [egress <egress priority mapping>]\n"
+          "                  [mtu <MTU>]\n\n"
+          "    bond:         [mode balance-rr (0) | active-backup (1) | balance-xor (2) | "
+          "broadcast (3) |\n"
+          "                        802.3ad    (4) | balance-tlb   (5) | balance-alb (6)]\n"
+          "                  [primary <ifname>]\n"
+          "                  [miimon <num>]\n"
+          "                  [downdelay <num>]\n"
+          "                  [updelay <num>]\n"
+          "                  [arp-interval <num>]\n"
+          "                  [arp-ip-target <num>]\n"
+          "                  [lacp-rate slow (0) | fast (1)]\n\n"
+          "    bond-slave:   controller <controller (ifname, or connection UUID or name)>\n"
+          "                  [queue-id <0-65535>]\n\n"
+          "    team:         [config <file>|<raw JSON data>]\n\n"
+          "    team-slave:   controller <controller (ifname, or connection UUID or name)>\n"
+          "                  [config <file>|<raw JSON data>]\n\n"
+          "    bridge:       [stp yes|no]\n"
+          "                  [priority <num>]\n"
+          "                  [forward-delay <2-30>]\n"
+          "                  [hello-time <1-10>]\n"
+          "                  [max-age <6-40>]\n"
+          "                  [ageing-time <0-1000000>]\n"
+          "                  [multicast-snooping yes|no]\n"
+          "                  [mac <MAC address>]\n\n"
+          "    bridge-slave: controller <controller (ifname, or connection UUID or name)>\n"
+          "                  [priority <0-63>]\n"
+          "                  [path-cost <1-65535>]\n"
+          "                  [hairpin yes|no]\n\n"
+          "    vpn:          vpn-type "
+          "vpnc|openvpn|pptp|openconnect|openswan|libreswan|ssh|l2tp|iodine|...\n"
+          "                  [user <username>]\n\n"
+          "    olpc-mesh:    ssid <SSID>\n"
+          "                  [channel <1-13>]\n"
+          "                  [dhcp-anycast <MAC address>]\n\n"
+          "    adsl:         username <username>\n"
+          "                  protocol pppoa|pppoe|ipoatm\n"
+          "                  [password <password>]\n"
+          "                  [encapsulation vcmux|llc]\n\n"
+          "    tun:          mode tun|tap\n"
+          "                  [owner <UID>]\n"
+          "                  [group <GID>]\n"
+          "                  [pi yes|no]\n"
+          "                  [vnet-hdr yes|no]\n"
+          "                  [multi-queue yes|no]\n\n"
+          "    ip-tunnel:    mode ipip|gre|sit|isatap|vti|ip6ip6|ipip6|ip6gre|vti6\n"
+          "                  remote <remote endpoint IP>\n"
+          "                  [local <local endpoint IP>]\n"
+          "                  [dev <parent device (ifname or connection UUID)>]\n\n"
+          "    macsec:       dev <parent device (connection UUID, ifname, or MAC)>\n"
+          "                  mode <psk|eap>\n"
+          "                  [cak <key> ckn <key>]\n"
+          "                  [encrypt yes|no]\n"
+          "                  [port 1-65534]\n\n\n"
+          "    macvlan:      dev <parent device (connection UUID, ifname, or MAC)>\n"
+          "                  mode vepa|bridge|private|passthru|source\n"
+          "                  [tap yes|no]\n\n"
+          "    vxlan:        id <VXLAN ID>\n"
+          "                  [remote <IP of multicast group or remote address>]\n"
+          "                  [local <source IP>]\n"
+          "                  [dev <parent device (ifname or connection UUID)>]\n"
+          "                  [source-port-min <0-65535>]\n"
+          "                  [source-port-max <0-65535>]\n"
+          "                  [destination-port <0-65535>]\n\n"
+          "    wpan:         [short-addr <0x0000-0xffff>]\n"
+          "                  [pan-id <0x0000-0xffff>]\n"
+          "                  [page <default|0-31>]\n"
+          "                  [channel <default|0-26>]\n"
+          "                  [mac <MAC address>]\n\n"
+          "    6lowpan:      dev <parent device (connection UUID, ifname, or MAC)>\n"
+          "    dummy:\n\n"
+          "  PORT_OPTIONS:\n"
+          "    bridge:       [priority <0-63>]\n"
+          "                  [path-cost <1-65535>]\n"
+          "                  [hairpin yes|no]\n\n"
+          "    team:         [config <file>|<raw JSON data>]\n\n"
+          "    bond:         [queue-id <0-65535>]\n\n"
+          "  IP_OPTIONS:\n"
+          "                  [ip4 <IPv4 address>] [gw4 <IPv4 gateway>]\n"
+          "                  [ip6 <IPv6 address>] [gw6 <IPv6 gateway>]\n\n"));
 }
 
 static void
@@ -1447,7 +1475,7 @@ get_ac_for_connection_cmp(gconstpointer pa, gconstpointer pb)
     NMActiveConnection *ac_a = *((NMActiveConnection *const *) pa);
     NMActiveConnection *ac_b = *((NMActiveConnection *const *) pb);
 
-    NM_CMP_RETURN(nmc_active_connection_cmp(ac_a, ac_b));
+    NM_CMP_RETURN(nmc_active_connection_cmp(ac_b, ac_a));
     NM_CMP_DIRECT_STRCMP0(nm_active_connection_get_id(ac_a), nm_active_connection_get_id(ac_b));
     NM_CMP_DIRECT_STRCMP0(nm_active_connection_get_connection_type(ac_a),
                           nm_active_connection_get_connection_type(ac_b));
@@ -2262,7 +2290,7 @@ get_connection(NmCli              *nmc,
                             NMCLI_ERROR,
                             NMC_RESULT_ERROR_USER_INPUT,
                             _("%s argument is missing"),
-                            selector);
+                            (*argv)[0]);
                 return NULL;
             }
         } else {
@@ -3506,7 +3534,7 @@ get_name_alias_toplevel(const char *name, const char *port_type)
     if (port_type) {
         const char *port_name;
 
-        if (nm_meta_setting_info_valid_parts_for_slave_type(port_type, &port_name))
+        if (nm_meta_setting_info_valid_parts_for_port_type(port_type, &port_name))
             return port_name ?: name;
         return name;
     }
@@ -3771,6 +3799,7 @@ check_valid_name_toplevel(const char *val, const char **port_type, GError **erro
     gs_unref_ptrarray GPtrArray   *tmp_arr = NULL;
     const NMMetaSettingInfoEditor *setting_info;
     gs_free_error GError          *tmp_err = NULL;
+    GType                          gtype   = G_TYPE_INVALID;
     const char                    *str;
     int                            i;
 
@@ -3780,6 +3809,13 @@ check_valid_name_toplevel(const char *val, const char **port_type, GError **erro
     tmp_arr = g_ptr_array_sized_new(32);
     for (i = 0; i < _NM_META_SETTING_TYPE_NUM; i++) {
         setting_info = &nm_meta_setting_infos_editor[i];
+
+        /* skip "non-base" settings (that means, not valid for a connection's "type") */
+        gtype = setting_info->general->get_setting_gtype();
+        if (nm_meta_setting_info_get_base_type_priority(setting_info->general, gtype)
+            == NM_SETTING_PRIORITY_INVALID)
+            continue;
+
         g_ptr_array_add(tmp_arr, (gpointer) setting_info->general->setting_name);
         if (setting_info->alias)
             g_ptr_array_add(tmp_arr, (gpointer) setting_info->alias);
@@ -3838,7 +3874,7 @@ is_setting_mandatory(NMConnection *connection, NMSetting *setting)
     g_return_val_if_fail(s_con, FALSE);
 
     c_type = nm_setting_connection_get_connection_type(s_con);
-    s_type = nm_setting_connection_get_slave_type(s_con);
+    s_type = nm_setting_connection_get_port_type(s_con);
 
     name = nm_setting_get_name(setting);
 
@@ -3846,7 +3882,7 @@ is_setting_mandatory(NMConnection *connection, NMSetting *setting)
         if (i == 0)
             item = get_valid_settings_array(c_type);
         else
-            item = nm_meta_setting_info_valid_parts_for_slave_type(s_type, NULL);
+            item = nm_meta_setting_info_valid_parts_for_port_type(s_type, NULL);
         for (; item && *item; item++) {
             if (nm_streq(name, (*item)->setting_info->general->setting_name))
                 return (*item)->mandatory;
@@ -3954,7 +3990,8 @@ normalized_controller_for_port(const GPtrArray *connections,
     }
 
     if (!out_controller) {
-        nmc_print(_("Warning: master='%s' doesn't refer to any existing profile.\n"), controller);
+        nmc_print(_("Warning: controller='%s' doesn't refer to any existing profile.\n"),
+                  controller);
         out_controller = controller;
         if (out_type)
             *out_type = type;
@@ -4427,13 +4464,13 @@ con_settings(NMConnection                             *connection,
     s_con = nm_connection_get_setting_connection(connection);
     g_return_val_if_fail(s_con, FALSE);
 
-    con_type       = nm_setting_connection_get_slave_type(s_con);
-    *port_settings = nm_meta_setting_info_valid_parts_for_slave_type(con_type, NULL);
+    con_type       = nm_setting_connection_get_port_type(s_con);
+    *port_settings = nm_meta_setting_info_valid_parts_for_port_type(con_type, NULL);
     if (!*port_settings) {
         g_set_error(error,
                     NMCLI_ERROR,
                     NMC_RESULT_ERROR_USER_INPUT,
-                    _("Error: invalid slave type; %s."),
+                    _("Error: invalid port type; %s."),
                     con_type);
         return FALSE;
     }
@@ -4527,14 +4564,16 @@ enable_type_settings_and_options(NmCli *nmc, NMConnection *con, GError **error)
     s_con = nm_connection_get_setting_connection(con);
     g_return_val_if_fail(s_con, FALSE);
 
-    if (nm_setting_connection_get_slave_type(s_con))
-        enable_options(NM_SETTING_CONNECTION_SETTING_NAME, NM_SETTING_CONNECTION_MASTER, NULL);
+    if (nm_setting_connection_get_port_type(s_con)) {
+        enable_options(NM_SETTING_CONNECTION_SETTING_NAME, NM_SETTING_CONNECTION_CONTROLLER, NULL);
+    }
 
     if (NM_IN_STRSET(nm_setting_connection_get_connection_type(s_con),
                      NM_SETTING_BLUETOOTH_SETTING_NAME,
                      NM_SETTING_BOND_SETTING_NAME,
                      NM_SETTING_BRIDGE_SETTING_NAME,
                      NM_SETTING_DUMMY_SETTING_NAME,
+                     NM_SETTING_HSR_SETTING_NAME,
                      NM_SETTING_OVS_BRIDGE_SETTING_NAME,
                      NM_SETTING_OVS_PATCH_SETTING_NAME,
                      NM_SETTING_OVS_PORT_SETTING_NAME,
@@ -4587,7 +4626,7 @@ set_connection_type(NmCli            *nmc,
         if (!set_property(nmc->client,
                           con,
                           NM_SETTING_CONNECTION_SETTING_NAME,
-                          NM_SETTING_CONNECTION_SLAVE_TYPE,
+                          NM_SETTING_CONNECTION_PORT_TYPE,
                           port_type,
                           NM_META_ACCESSOR_MODIFIER_SET,
                           error)) {
@@ -4653,18 +4692,18 @@ set_connection_controller(NmCli            *nmc,
         g_set_error_literal(error,
                             NMCLI_ERROR,
                             NMC_RESULT_ERROR_USER_INPUT,
-                            _("Error: master is required"));
+                            _("Error: controller is required"));
         return FALSE;
     }
 
-    port_type   = nm_setting_connection_get_slave_type(s_con);
+    port_type   = nm_setting_connection_get_port_type(s_con);
     connections = nmc_get_connections(nmc);
     value       = normalized_controller_for_port(connections, value, port_type, &port_type);
 
     if (!set_property(nmc->client,
                       con,
                       NM_SETTING_CONNECTION_SETTING_NAME,
-                      NM_SETTING_CONNECTION_SLAVE_TYPE,
+                      NM_SETTING_CONNECTION_PORT_TYPE,
                       port_type,
                       NM_META_ACCESSOR_MODIFIER_SET,
                       error)) {
@@ -4894,6 +4933,11 @@ _meta_abstract_get_option_info(const NMMetaAbstractInfo *abstract_info)
                     "master",
                     set_connection_controller,
                     NULL),
+        OPTION_INFO(CONNECTION,
+                    NM_SETTING_CONNECTION_CONTROLLER,
+                    "controller",
+                    set_connection_controller,
+                    NULL),
         OPTION_INFO(BLUETOOTH,
                     NM_SETTING_BLUETOOTH_TYPE,
                     "bt-type",
@@ -4984,9 +5028,9 @@ complete_property_name(NmCli                 *nmc,
     connection_type = nm_connection_get_connection_type(connection);
     s_con           = nm_connection_get_setting_connection(connection);
     if (s_con)
-        port_type = nm_setting_connection_get_slave_type(s_con);
+        port_type = nm_setting_connection_get_port_type(s_con);
     valid_settings_main = get_valid_settings_array(connection_type);
-    valid_settings_port = nm_meta_setting_info_valid_parts_for_slave_type(port_type, NULL);
+    valid_settings_port = nm_meta_setting_info_valid_parts_for_port_type(port_type, NULL);
 
     word_list = get_valid_properties_string(valid_settings_main,
                                             valid_settings_port,
@@ -5927,7 +5971,7 @@ read_properties:
 
     /* Traditionally, we didn't ask for these options for ethernet ports. They don't
      * make much sense, since these are likely to be set by the controller anyway. */
-    if (nm_setting_connection_get_slave_type(s_con)) {
+    if (nm_setting_connection_get_port_type(s_con)) {
         disable_options(NM_SETTING_WIRED_SETTING_NAME, NM_SETTING_WIRED_MTU);
         disable_options(NM_SETTING_WIRED_SETTING_NAME, NM_SETTING_WIRED_MAC_ADDRESS);
         disable_options(NM_SETTING_WIRED_SETTING_NAME, NM_SETTING_WIRED_CLONED_MAC_ADDRESS);
@@ -5938,7 +5982,7 @@ read_properties:
     if (!nm_setting_connection_get_id(s_con)) {
         const char *ifname    = nm_setting_connection_get_interface_name(s_con);
         const char *type      = nm_setting_connection_get_connection_type(s_con);
-        const char *port_type = nm_setting_connection_get_slave_type(s_con);
+        const char *port_type = nm_setting_connection_get_port_type(s_con);
 
         /* If only bother when there's a type, which is not guaranteed at this point.
          * Otherwise, the validation will fail anyway. */
@@ -6205,7 +6249,7 @@ gen_setting_names(const char *text, int state)
                 return g_strdup(s_name);
         }
 
-        /* Let's give a try to parameters related to slave type */
+        /* Let's give a try to parameters related to port type */
         list_idx = 0;
         is_port  = 1;
     }
@@ -6213,8 +6257,8 @@ gen_setting_names(const char *text, int state)
     /* is_port */
     s_con = nm_connection_get_setting_connection(nmc_tab_completion.connection);
     if (s_con)
-        s_type = nm_setting_connection_get_slave_type(s_con);
-    valid_settings_arr = nm_meta_setting_info_valid_parts_for_slave_type(s_type, NULL);
+        s_type = nm_setting_connection_get_port_type(s_con);
+    valid_settings_arr = nm_meta_setting_info_valid_parts_for_port_type(s_type, NULL);
 
     if (list_idx < NM_PTRARRAY_LEN(valid_settings_arr)) {
         while (valid_settings_arr[list_idx]) {
@@ -6271,7 +6315,7 @@ gen_property_names(const char *text, int state)
             port_type = NM_SETTING_BOND_SETTING_NAME;
         else
             port_type = NULL;
-        valid_settings_port = nm_meta_setting_info_valid_parts_for_slave_type(port_type, NULL);
+        valid_settings_port = nm_meta_setting_info_valid_parts_for_port_type(port_type, NULL);
 
         setting_name = check_valid_name(strv[0], valid_settings_main, valid_settings_port, NULL);
         if (setting_name) {
@@ -6540,8 +6584,15 @@ extract_setting_and_property(const char *prompt, const char *line, char **settin
             p2   = dot + 1;
             num1 = strcspn(p1, ".");
             num2 = len > num1 + 1 ? len - num1 - 1 : 0;
-            sett = num1 > 0 ? g_strndup(p1, num1) : sett;
-            prop = num2 > 0 ? g_strndup(p2, num2) : prop;
+            if (num1 > 0) {
+                g_free(sett);
+                sett = g_strndup(p1, num1);
+            }
+
+            if (num2 > 0) {
+                g_free(prop);
+                prop = g_strndup(p2, num2);
+            }
         } else {
             if (!prop)
                 prop = len > 0 ? g_strndup(p1, len) : NULL;
@@ -6580,15 +6631,17 @@ get_setting_and_property(const char *prompt,
         /* Is this too much (and useless?) effort for an unlikely case? */
         s_con = nm_connection_get_setting_connection(nmc_tab_completion.connection);
         if (s_con)
-            s_type = nm_setting_connection_get_slave_type(s_con);
+            s_type = nm_setting_connection_get_port_type(s_con);
 
         valid_settings_main = get_valid_settings_array(nmc_tab_completion.con_type);
-        valid_settings_port = nm_meta_setting_info_valid_parts_for_slave_type(s_type, NULL);
+        valid_settings_port = nm_meta_setting_info_valid_parts_for_port_type(s_type, NULL);
 
         setting_name = check_valid_name(sett, valid_settings_main, valid_settings_port, NULL);
-        setting      = nm_meta_setting_info_editor_new_setting(
-            nm_meta_setting_info_editor_find_by_name(setting_name, FALSE),
-            NM_META_ACCESSOR_SETTING_INIT_TYPE_DEFAULT);
+        if (setting_name) {
+            setting = nm_meta_setting_info_editor_new_setting(
+                nm_meta_setting_info_editor_find_by_name(setting_name, FALSE),
+                NM_META_ACCESSOR_SETTING_INIT_TYPE_DEFAULT);
+        }
     } else
         setting = nm_g_object_ref(nmc_tab_completion.setting);
 
@@ -7951,10 +8004,10 @@ editor_menu_main(NmCli *nmc, NMConnection *connection, const char *connection_ty
 
     s_con = nm_connection_get_setting_connection(connection);
     if (s_con)
-        s_type = nm_setting_connection_get_slave_type(s_con);
+        s_type = nm_setting_connection_get_port_type(s_con);
 
     valid_settings_main = get_valid_settings_array(connection_type);
-    valid_settings_port = nm_meta_setting_info_valid_parts_for_slave_type(s_type, NULL);
+    valid_settings_port = nm_meta_setting_info_valid_parts_for_port_type(s_type, NULL);
 
     valid_settings_str = get_valid_options_string(valid_settings_main, valid_settings_port);
     nmc_print(_("You may edit the following settings: %s\n"), valid_settings_str);
@@ -8824,9 +8877,9 @@ editor_init_new_connection(NmCli *nmc, NMConnection *connection, const char *por
         g_object_set(s_con,
                      NM_SETTING_CONNECTION_TYPE,
                      NM_SETTING_WIRED_SETTING_NAME,
-                     NM_SETTING_CONNECTION_MASTER,
+                     NM_SETTING_CONNECTION_CONTROLLER,
                      dev_ifname ?: "eth0",
-                     NM_SETTING_CONNECTION_SLAVE_TYPE,
+                     NM_SETTING_CONNECTION_PORT_TYPE,
                      port_type,
                      NULL);
     } else {
@@ -9369,8 +9422,10 @@ do_connection_delete(const NMCCommand *cmd, NmCli *nmc, int argc, const char *co
             g_clear_error(&error);
 
             if (nmc->return_value != NMC_RESULT_ERROR_NOT_FOUND) {
-                g_string_free(invalid_cons, TRUE);
-                invalid_cons = NULL;
+                if (invalid_cons) {
+                    g_string_free(invalid_cons, TRUE);
+                    invalid_cons = NULL;
+                }
                 goto finish;
             }
 

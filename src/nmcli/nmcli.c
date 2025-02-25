@@ -35,49 +35,50 @@
 #define NMCLI_VERSION VERSION
 #endif
 
-#define _NMC_COLOR_PALETTE_INIT()                              \
-    {                                                          \
-        .ansi_seq = {                                          \
-            [NM_META_COLOR_CONNECTION_ACTIVATED]     = "32",   \
-            [NM_META_COLOR_CONNECTION_ACTIVATING]    = "33",   \
-            [NM_META_COLOR_CONNECTION_DISCONNECTING] = "31",   \
-            [NM_META_COLOR_CONNECTION_INVISIBLE]     = "2",    \
-            [NM_META_COLOR_CONNECTION_EXTERNAL]      = "32;2", \
-            [NM_META_COLOR_CONNECTION_DEPRECATED]    = "2",    \
-            [NM_META_COLOR_CONNECTIVITY_FULL]        = "32",   \
-            [NM_META_COLOR_CONNECTIVITY_LIMITED]     = "33",   \
-            [NM_META_COLOR_CONNECTIVITY_NONE]        = "31",   \
-            [NM_META_COLOR_CONNECTIVITY_PORTAL]      = "33",   \
-            [NM_META_COLOR_DEVICE_ACTIVATED]         = "32",   \
-            [NM_META_COLOR_DEVICE_ACTIVATING]        = "33",   \
-            [NM_META_COLOR_DEVICE_DISCONNECTED]      = "31",   \
-            [NM_META_COLOR_DEVICE_FIRMWARE_MISSING]  = "31",   \
-            [NM_META_COLOR_DEVICE_PLUGIN_MISSING]    = "31",   \
-            [NM_META_COLOR_DEVICE_UNAVAILABLE]       = "2",    \
-            [NM_META_COLOR_DEVICE_DISABLED]          = "31",   \
-            [NM_META_COLOR_DEVICE_EXTERNAL]          = "32;2", \
-            [NM_META_COLOR_MANAGER_RUNNING]          = "32",   \
-            [NM_META_COLOR_MANAGER_STARTING]         = "33",   \
-            [NM_META_COLOR_MANAGER_STOPPED]          = "31",   \
-            [NM_META_COLOR_PERMISSION_AUTH]          = "33",   \
-            [NM_META_COLOR_PERMISSION_NO]            = "31",   \
-            [NM_META_COLOR_PERMISSION_YES]           = "32",   \
-            [NM_META_COLOR_STATE_ASLEEP]             = "31",   \
-            [NM_META_COLOR_STATE_CONNECTED_GLOBAL]   = "32",   \
-            [NM_META_COLOR_STATE_CONNECTED_LOCAL]    = "32",   \
-            [NM_META_COLOR_STATE_CONNECTED_SITE]     = "32",   \
-            [NM_META_COLOR_STATE_CONNECTING]         = "33",   \
-            [NM_META_COLOR_STATE_DISCONNECTED]       = "31",   \
-            [NM_META_COLOR_STATE_DISCONNECTING]      = "33",   \
-            [NM_META_COLOR_WIFI_SIGNAL_EXCELLENT]    = "32",   \
-            [NM_META_COLOR_WIFI_SIGNAL_FAIR]         = "35",   \
-            [NM_META_COLOR_WIFI_SIGNAL_GOOD]         = "33",   \
-            [NM_META_COLOR_WIFI_SIGNAL_POOR]         = "36",   \
-            [NM_META_COLOR_WIFI_SIGNAL_UNKNOWN]      = "2",    \
-            [NM_META_COLOR_WIFI_DEPRECATED]          = "2",    \
-            [NM_META_COLOR_ENABLED]                  = "32",   \
-            [NM_META_COLOR_DISABLED]                 = "31",   \
-        },                                                     \
+#define _NMC_COLOR_PALETTE_INIT()                                  \
+    {                                                              \
+        .ansi_seq =                                                \
+            {                                                      \
+                [NM_META_COLOR_CONNECTION_ACTIVATED]     = "32",   \
+                [NM_META_COLOR_CONNECTION_ACTIVATING]    = "33",   \
+                [NM_META_COLOR_CONNECTION_DISCONNECTING] = "31",   \
+                [NM_META_COLOR_CONNECTION_INVISIBLE]     = "2",    \
+                [NM_META_COLOR_CONNECTION_EXTERNAL]      = "32;2", \
+                [NM_META_COLOR_CONNECTION_DEPRECATED]    = "2",    \
+                [NM_META_COLOR_CONNECTIVITY_FULL]        = "32",   \
+                [NM_META_COLOR_CONNECTIVITY_LIMITED]     = "33",   \
+                [NM_META_COLOR_CONNECTIVITY_NONE]        = "31",   \
+                [NM_META_COLOR_CONNECTIVITY_PORTAL]      = "33",   \
+                [NM_META_COLOR_DEVICE_ACTIVATED]         = "32",   \
+                [NM_META_COLOR_DEVICE_ACTIVATING]        = "33",   \
+                [NM_META_COLOR_DEVICE_DISCONNECTED]      = "31",   \
+                [NM_META_COLOR_DEVICE_FIRMWARE_MISSING]  = "31",   \
+                [NM_META_COLOR_DEVICE_PLUGIN_MISSING]    = "31",   \
+                [NM_META_COLOR_DEVICE_UNAVAILABLE]       = "2",    \
+                [NM_META_COLOR_DEVICE_DISABLED]          = "31",   \
+                [NM_META_COLOR_DEVICE_EXTERNAL]          = "32;2", \
+                [NM_META_COLOR_MANAGER_RUNNING]          = "32",   \
+                [NM_META_COLOR_MANAGER_STARTING]         = "33",   \
+                [NM_META_COLOR_MANAGER_STOPPED]          = "31",   \
+                [NM_META_COLOR_PERMISSION_AUTH]          = "33",   \
+                [NM_META_COLOR_PERMISSION_NO]            = "31",   \
+                [NM_META_COLOR_PERMISSION_YES]           = "32",   \
+                [NM_META_COLOR_STATE_ASLEEP]             = "31",   \
+                [NM_META_COLOR_STATE_CONNECTED_GLOBAL]   = "32",   \
+                [NM_META_COLOR_STATE_CONNECTED_LOCAL]    = "32",   \
+                [NM_META_COLOR_STATE_CONNECTED_SITE]     = "32",   \
+                [NM_META_COLOR_STATE_CONNECTING]         = "33",   \
+                [NM_META_COLOR_STATE_DISCONNECTED]       = "31",   \
+                [NM_META_COLOR_STATE_DISCONNECTING]      = "33",   \
+                [NM_META_COLOR_WIFI_SIGNAL_EXCELLENT]    = "32",   \
+                [NM_META_COLOR_WIFI_SIGNAL_FAIR]         = "35",   \
+                [NM_META_COLOR_WIFI_SIGNAL_GOOD]         = "33",   \
+                [NM_META_COLOR_WIFI_SIGNAL_POOR]         = "36",   \
+                [NM_META_COLOR_WIFI_SIGNAL_UNKNOWN]      = "2",    \
+                [NM_META_COLOR_WIFI_DEPRECATED]          = "2",    \
+                [NM_META_COLOR_ENABLED]                  = "32",   \
+                [NM_META_COLOR_DISABLED]                 = "31",   \
+            },                                                     \
     }
 
 static NmCli nm_cli = {
@@ -162,17 +163,18 @@ complete_one(gpointer key, gpointer value, gpointer user_data)
         last = prefix;
 
     if ((!*last && !strchr(name, '.')) || matches(last, name)) {
-        if (option != prefix) {
+        if (!nm_streq0(option, prefix)) {
             /* value prefix was not a standalone argument,
              * it was part of --option=<value> argument.
              * Repeat the part leading to "=". */
-            nmc_print("%s=", option);
+            nmc_print("%s\n", option);
+        } else {
+            nmc_print("%.*s%s%s\n",
+                      (int) (last - prefix),
+                      prefix,
+                      name,
+                      nm_streq(last, name) ? "," : "");
         }
-        nmc_print("%.*s%s%s\n",
-                  (int) (last - prefix),
-                  prefix,
-                  name,
-                  strcmp(last, name) == 0 ? "," : "");
     }
 }
 
@@ -201,7 +203,7 @@ complete_fields(const char *option, const char *prefix)
     complete_field(h, metagen_device_detail_wimax_properties);
     complete_field(h, nmc_fields_dev_wifi_list);
     complete_field(h, nmc_fields_dev_wimax_list);
-    complete_field(h, nmc_fields_dev_show_master_prop);
+    complete_field(h, nmc_fields_dev_show_controller_prop);
     complete_field(h, nmc_fields_dev_show_team_prop);
     complete_field(h, nmc_fields_dev_show_vlan_prop);
     complete_field(h, nmc_fields_dev_show_bluetooth);
@@ -224,13 +226,14 @@ complete_option_with_value(const char *option, const char *prefix, ...)
     va_start(args, prefix);
     while ((candidate = va_arg(args, const char *))) {
         if (!*prefix || matches(prefix, candidate)) {
-            if (option != prefix) {
+            if (!nm_streq0(option, prefix)) {
                 /* value prefix was not a standalone argument,
                  * it was part of --option=<value> argument.
                  * Repeat the part leading to "=". */
-                nmc_print("%s=", option);
+                nmc_print("%s%s\n", option, candidate + strlen(prefix));
+            } else {
+                nmc_print("%s\n", candidate);
             }
-            nmc_print("%s\n", candidate);
         }
     }
     va_end(args);
@@ -1042,6 +1045,8 @@ main(int argc, char *argv[])
 
     if (process_command_line(&nm_cli, argc, argv))
         g_main_loop_run(loop);
+
+    nmc_cleanup_readline();
 
     if (nm_cli.complete) {
         /* Remove error statuses from command completion runs. */

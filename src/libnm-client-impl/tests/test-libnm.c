@@ -57,9 +57,11 @@ _test_fixup_string(const TestFixupData *data, guint n_data, char *(*func)(const 
     }
 }
 
-#define T_DATA(_desc, _expected)                                \
-    {                                                           \
-        .desc = _desc, .expected = _expected, .line = __LINE__, \
+#define T_DATA(_desc, _expected) \
+    {                            \
+        .desc     = _desc,       \
+        .expected = _expected,   \
+        .line     = __LINE__,    \
     }
 
 static void
@@ -2397,10 +2399,10 @@ _do_read_vpn_details_impl1(const char              *file,
 
         g_print(">>>> n_read=%zd;  \"%s\"",
                 n_read,
-                n_read > 0 ? (
-                    ss = nm_utils_buf_utf8safe_escape_cp(read_buf,
-                                                         n_read,
-                                                         NM_UTILS_STR_UTF8_SAFE_FLAG_ESCAPE_CTRL))
+                n_read > 0 ? (ss = nm_utils_buf_utf8safe_escape_cp(
+                                  read_buf,
+                                  n_read,
+                                  NM_UTILS_STR_UTF8_SAFE_FLAG_ESCAPE_CTRL))
                            : "");
     }
 
@@ -2688,6 +2690,7 @@ test_types(void)
         G(nm_device_ethernet_get_type),
         G(nm_device_generic_get_type),
         G(nm_device_get_type),
+        G(nm_device_hsr_get_type),
         G(nm_device_infiniband_get_type),
         G(nm_device_ip_tunnel_get_type),
         G(nm_device_macsec_get_type),
@@ -2760,6 +2763,7 @@ test_types(void)
         G(nm_setting_generic_get_type),
         G(nm_setting_get_type),
         G(nm_setting_gsm_get_type),
+        G(nm_setting_hsr_get_type),
         G(nm_setting_infiniband_get_type),
         G(nm_setting_ip4_config_get_type),
         G(nm_setting_ip6_config_addr_gen_mode_get_type),
@@ -3188,6 +3192,10 @@ check_dbus_properties:
                            && nm_streq(pspec->name, NM_DEVICE_WIREGUARD_FWMARK)) {
                     g_assert_cmpstr(obj_property_name, ==, "fw-mark");
                     expected_property_name = NM_DEVICE_WIREGUARD_FWMARK;
+                } else if (mif == &_nml_dbus_meta_iface_nm_device_iptunnel
+                           && nm_streq(pspec->name, NM_DEVICE_IP_TUNNEL_FWMARK)) {
+                    g_assert_cmpstr(obj_property_name, ==, "fw-mark");
+                    expected_property_name = NM_DEVICE_IP_TUNNEL_FWMARK;
                 } else if (NM_IN_SET(mif,
                                      &_nml_dbus_meta_iface_nm_ip4config,
                                      &_nml_dbus_meta_iface_nm_ip6config)
@@ -3375,6 +3383,11 @@ test_dbus_meta_types(void)
         {
             NM_DBUS_INTERFACE_DEVICE_GENERIC,
             NM_TYPE_DEVICE_GENERIC,
+            NML_DBUS_META_INTERFACE_PRIO_INSTANTIATE_30,
+        },
+        {
+            NM_DBUS_INTERFACE_DEVICE_HSR,
+            NM_TYPE_DEVICE_HSR,
             NML_DBUS_META_INTERFACE_PRIO_INSTANTIATE_30,
         },
         {

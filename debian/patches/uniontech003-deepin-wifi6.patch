@@ -1,0 +1,122 @@
+Index: nm/src/core/nm-core-utils.c
+===================================================================
+--- nm.orig/src/core/nm-core-utils.c
++++ nm/src/core/nm-core-utils.c
+@@ -4783,13 +4783,15 @@ get_max_rate_vht(const guint8 *bytes, gu
+ #define WLAN_EID_HT_CAPABILITY   45
+ #define WLAN_EID_VHT_CAPABILITY  191
+ #define WLAN_EID_VENDOR_SPECIFIC 221
++#define WLAN_EID_EXTENSION       255
+ 
+ void
+ nm_wifi_utils_parse_ies(const guint8 *bytes,
+                         gsize         len,
+                         guint32      *out_max_rate,
+                         gboolean     *out_metered,
+-                        gboolean     *out_owe_transition_mode)
++                        gboolean     *out_owe_transition_mode,
++                        gboolean     *out_he_support)
+ {
+     guint8  id, elem_len;
+     guint32 m;
+@@ -4797,6 +4799,7 @@ nm_wifi_utils_parse_ies(const guint8 *by
+     NM_SET_OUT(out_max_rate, 0);
+     NM_SET_OUT(out_metered, FALSE);
+     NM_SET_OUT(out_owe_transition_mode, FALSE);
++    NM_SET_OUT(out_he_support, FALSE);
+ 
+     while (len) {
+         if (len < 2)
+@@ -4835,6 +4838,10 @@ nm_wifi_utils_parse_ies(const guint8 *by
+                 && bytes[3] == 0x1c) /* OUI type: OWE Transition Mode */
+                 NM_SET_OUT(out_owe_transition_mode, TRUE);
+             break;
++        case WLAN_EID_EXTENSION:
++            if (elem_len > 0 && bytes[0] == 0x23)
++                NM_SET_OUT(out_he_support, TRUE);
++            break;
+         }
+ 
+         len -= elem_len;
+Index: nm/src/core/nm-core-utils.h
+===================================================================
+--- nm.orig/src/core/nm-core-utils.h
++++ nm/src/core/nm-core-utils.h
+@@ -456,7 +456,8 @@ void nm_wifi_utils_parse_ies(const guint
+                              gsize         len,
+                              guint32      *out_max_rate,
+                              gboolean     *out_metered,
+-                             gboolean     *out_owe_transition_mode);
++                             gboolean     *out_owe_transition_mode,
++                             gboolean     *out_he_support);
+ 
+ guint8 nm_wifi_utils_level_to_quality(int val);
+ 
+Index: nm/src/core/supplicant/nm-supplicant-interface.c
+===================================================================
+--- nm.orig/src/core/supplicant/nm-supplicant-interface.c
++++ nm/src/core/supplicant/nm-supplicant-interface.c
+@@ -653,10 +653,6 @@ _bss_info_properties_changed(NMSupplican
+                                               | NM_802_11_AP_FLAGS_WPS_PIN,
+                                           f);
+     }
+-    if (bss_info->ap_flags != p_ap_flags) {
+-        bss_info->ap_flags = p_ap_flags;
+-        nm_assert(bss_info->ap_flags == p_ap_flags);
+-    }
+ 
+     if (nm_g_variant_lookup(properties, "Mode", "&s", &v_s)) {
+         if (nm_streq(v_s, "infrastructure"))
+@@ -765,14 +761,20 @@ _bss_info_properties_changed(NMSupplican
+     if (v_v) {
+         gboolean p_owe_transition_mode;
+         gboolean p_metered;
++        gboolean p_he_support;
+         guint32  rate;
+ 
+         arr_data = g_variant_get_fixed_array(v_v, &arr_len, 1);
+-        nm_wifi_utils_parse_ies(arr_data, arr_len, &rate, &p_metered, &p_owe_transition_mode);
++        nm_wifi_utils_parse_ies(arr_data, arr_len, &rate, &p_metered, &p_owe_transition_mode, &p_he_support);
+         p_max_rate     = NM_MAX(p_max_rate, rate);
+         p_max_rate_has = TRUE;
+         g_variant_unref(v_v);
+ 
++        if (p_he_support)
++            p_ap_flags |= NM_802_11_AP_FLAGS_HE;
++        else
++            p_ap_flags &= ~NM_802_11_AP_FLAGS_HE;
++            
+         if (p_owe_transition_mode)
+             bss_info->rsn_flags |= NM_802_11_AP_SEC_KEY_MGMT_OWE_TM;
+         else
+@@ -780,6 +782,10 @@ _bss_info_properties_changed(NMSupplican
+ 
+         bss_info->metered = p_metered;
+     }
++    if (bss_info->ap_flags != p_ap_flags) {
++        bss_info->ap_flags = p_ap_flags;
++        nm_assert(bss_info->ap_flags == p_ap_flags);
++    }
+ 
+     if (p_max_rate_has)
+         bss_info->max_rate = p_max_rate / 1000u;
+Index: nm/src/libnm-core-public/nm-dbus-interface.h
+===================================================================
+--- nm.orig/src/libnm-core-public/nm-dbus-interface.h
++++ nm/src/libnm-core-public/nm-dbus-interface.h
+@@ -336,6 +336,7 @@ typedef enum /*< flags >*/ {
+  * @NM_802_11_AP_FLAGS_WPS: access point supports some WPS method
+  * @NM_802_11_AP_FLAGS_WPS_PBC: access point supports push-button WPS
+  * @NM_802_11_AP_FLAGS_WPS_PIN: access point supports PIN-based WPS
++ * @NM_802_11_AP_FLAGS_HE: access point support high efficiency (new feature in 802.11ax)
+  *
+  * 802.11 access point flags.
+  **/
+@@ -345,6 +346,7 @@ typedef enum /*< underscore_name=nm_802_
+     NM_802_11_AP_FLAGS_WPS     = 0x00000002,
+     NM_802_11_AP_FLAGS_WPS_PBC = 0x00000004,
+     NM_802_11_AP_FLAGS_WPS_PIN = 0x00000008,
++    NM_802_11_AP_FLAGS_HE      = 0x00000010,
+ } NM80211ApFlags;
+ 
+ /**

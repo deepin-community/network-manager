@@ -1,3 +1,9 @@
+network-manager (1.44.2-7deepin6) unstable; urgency=medium
+
+  * add flags of wifi6
+
+ -- caixiangrong <caixiangrong@uniontech.com>  Wed, 30 Apr 2025 15:28:36 +0800
+
 network-manager (1.44.2-7deepin5) unstable; urgency=medium
 
   * add supplicant dbus property SAEConfirmMismatch.

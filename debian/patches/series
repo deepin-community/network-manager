@@ -7,3 +7,4 @@ deepin-fix-NetworkManagerwaitonline-failed.patch
 0001-disable-broken-ut.patch
 uniontech002_add_activeconnection_flags.patch
 uniontech-sae-display-wrong-password-hint.patch
+uniontech003-deepin-wifi6.patch

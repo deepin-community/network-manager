@@ -9,3 +9,4 @@ uniontech002_add_activeconnection_flags.patch
 uniontech-sae-display-wrong-password-hint.patch
 uniontech003-deepin-wifi6.patch
 uniontech-early-request-dbus-name.patch
+uniontech-apapter-no-domain-vpn.patch

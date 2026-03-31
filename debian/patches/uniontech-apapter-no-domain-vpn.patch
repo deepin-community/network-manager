@@ -1,0 +1,48 @@
+Index: network-manager/src/core/dns/nm-dns-systemd-resolved.c
+===================================================================
+--- network-manager.orig/src/core/dns/nm-dns-systemd-resolved.c
++++ network-manager/src/core/dns/nm-dns-systemd-resolved.c
+@@ -383,18 +383,26 @@ update_add_ip_config(NMDnsSystemdResolve
+     const char                  *domain;
+     gboolean                     has_config = FALSE;
+     const char *const           *strarr;
++    gboolean                    need_add_default_domain = FALSE;
+ 
+     addr_size = nm_utils_addr_family_to_size(ip_data->addr_family);
+ 
++    strarr = nm_l3_config_data_get_nameservers(ip_data->l3cd, ip_data->addr_family, &n);
++
+     if ((!ip_data->domains.search || !ip_data->domains.search[0])
+         && !ip_data->domains.has_default_route_exclusive && !ip_data->domains.has_default_route) {
+         /* we have no search domain (which systemd-resolved uses to routing the request), but
+          * also the "DefaultRoute" is not set on the interface. This setting has no effect and
+          * gets ignored. */
+-        return FALSE;
++        if (n == 0) {
++            return FALSE;
++        }
++        /* [DEEPIN PATCH]: This link has DNS servers but lacks any routing/search
++         * information. We must ensure a routing domain is added later to
++         * prevent systemd-resolved from ignoring these DNS servers. */
++        need_add_default_domain = TRUE;
+     }
+ 
+-    strarr = nm_l3_config_data_get_nameservers(ip_data->l3cd, ip_data->addr_family, &n);
+     for (i = 0; i < n; i++) {
+         const char *server_name;
+         NMIPAddr    a;
+@@ -442,6 +450,14 @@ update_add_ip_config(NMDnsSystemdResolve
+         }
+     }
+ 
++    /* Supplement a wild-card routing domain (~.) for
++     * links that have DNS but would otherwise be ignored by resolved. */
++    if (has_config && need_add_default_domain) {
++        _LOGD("resolved: link %d has DNS servers but no routing domain, adding '.' as fallback",
++                  ip_data->data->ifindex);
++        g_variant_builder_add(domains, "(sb)", ".", TRUE);
++    }
++
+     return has_config;
+ }
+ 

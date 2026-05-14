@@ -12,17 +12,24 @@ void string_hash_func(const char *p, struct siphash *state) {
         siphash24_compress(p, strlen(p) + 1, state);
 }
 
-DEFINE_HASH_OPS(string_hash_ops, char, string_hash_func, string_compare_func);
-DEFINE_HASH_OPS_WITH_KEY_DESTRUCTOR(string_hash_ops_free,
-                                    char, string_hash_func, string_compare_func, free);
-DEFINE_HASH_OPS_FULL(string_hash_ops_free_free,
-                     char, string_hash_func, string_compare_func, free,
-                     void, free);
-DEFINE_HASH_OPS_FULL(string_hash_ops_free_strv_free,
-                     char, string_hash_func, string_compare_func, free,
-                     char*, strv_free);
+DEFINE_HASH_OPS(string_hash_ops,
+                char, string_hash_func, string_compare_func);
+DEFINE_HASH_OPS_WITH_KEY_DESTRUCTOR(
+                string_hash_ops_free,
+                char, string_hash_func, string_compare_func, free);
+DEFINE_HASH_OPS_WITH_VALUE_DESTRUCTOR(
+                string_hash_ops_value_free,
+                char, string_hash_func, string_compare_func,
+                void, free);
+DEFINE_HASH_OPS_FULL(
+                string_hash_ops_free_free,
+                char, string_hash_func, string_compare_func, free,
+                void, free);
+DEFINE_HASH_OPS_FULL(
+                string_hash_ops_free_strv_free,
+                char, string_hash_func, string_compare_func, free,
+                char*, strv_free);
 
-#if 0 /* NM_IGNORED */
 void path_hash_func(const char *q, struct siphash *state) {
         bool add_slash = false;
 
@@ -36,7 +43,7 @@ void path_hash_func(const char *q, struct siphash *state) {
 
         /* if path is absolute, add one "/" to the hash. */
         if (path_is_absolute(q))
-                siphash24_compress("/", 1, state);
+                siphash24_compress_byte('/', state);
 
         for (;;) {
                 const char *e;
@@ -62,54 +69,57 @@ void path_hash_func(const char *q, struct siphash *state) {
         }
 }
 
-DEFINE_HASH_OPS(path_hash_ops, char, path_hash_func, path_compare);
-DEFINE_HASH_OPS_WITH_KEY_DESTRUCTOR(path_hash_ops_free,
-                                    char, path_hash_func, path_compare, free);
-DEFINE_HASH_OPS_FULL(path_hash_ops_free_free,
-                     char, path_hash_func, path_compare, free,
-                     void, free);
-#endif /* NM_IGNORED */
+DEFINE_HASH_OPS(path_hash_ops,
+                char, path_hash_func, path_compare);
+DEFINE_HASH_OPS_WITH_KEY_DESTRUCTOR(
+                path_hash_ops_free,
+                char, path_hash_func, path_compare, free);
+DEFINE_HASH_OPS_FULL(
+                path_hash_ops_free_free,
+                char, path_hash_func, path_compare, free,
+                void, free);
 
 void trivial_hash_func(const void *p, struct siphash *state) {
-        siphash24_compress(&p, sizeof(p), state);
+        siphash24_compress_typesafe(p, state);
 }
 
 int trivial_compare_func(const void *a, const void *b) {
         return CMP(a, b);
 }
 
-const struct hash_ops trivial_hash_ops = {
-        .hash = trivial_hash_func,
-        .compare = trivial_compare_func,
-};
-
-const struct hash_ops trivial_hash_ops_free = {
-        .hash = trivial_hash_func,
-        .compare = trivial_compare_func,
-        .free_key = free,
-};
-
-const struct hash_ops trivial_hash_ops_free_free = {
-        .hash = trivial_hash_func,
-        .compare = trivial_compare_func,
-        .free_key = free,
-        .free_value = free,
-};
+DEFINE_HASH_OPS(trivial_hash_ops,
+                void, trivial_hash_func, trivial_compare_func);
+DEFINE_HASH_OPS_WITH_KEY_DESTRUCTOR(
+                trivial_hash_ops_free,
+                void, trivial_hash_func, trivial_compare_func, free);
+DEFINE_HASH_OPS_WITH_VALUE_DESTRUCTOR(
+                trivial_hash_ops_value_free,
+                void, trivial_hash_func, trivial_compare_func,
+                void, free);
+DEFINE_HASH_OPS_FULL(
+                trivial_hash_ops_free_free,
+                void, trivial_hash_func, trivial_compare_func, free,
+                void, free);
 
 void uint64_hash_func(const uint64_t *p, struct siphash *state) {
-        siphash24_compress(p, sizeof(uint64_t), state);
+        siphash24_compress_typesafe(*p, state);
 }
 
 int uint64_compare_func(const uint64_t *a, const uint64_t *b) {
         return CMP(*a, *b);
 }
 
-DEFINE_HASH_OPS(uint64_hash_ops, uint64_t, uint64_hash_func, uint64_compare_func);
+DEFINE_HASH_OPS(uint64_hash_ops,
+                uint64_t, uint64_hash_func, uint64_compare_func);
+DEFINE_HASH_OPS_WITH_VALUE_DESTRUCTOR(
+                uint64_hash_ops_value_free,
+                uint64_t, uint64_hash_func, uint64_compare_func,
+                void, free);
 
 #if 0 /* NM_IGNORED */
 #if SIZEOF_DEV_T != 8
 void devt_hash_func(const dev_t *p, struct siphash *state) {
-        siphash24_compress(p, sizeof(dev_t), state);
+        siphash24_compress_typesafe(*p, state);
 }
 #endif
 

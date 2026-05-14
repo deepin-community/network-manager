@@ -1,26 +1,17 @@
 <?xml version='1.0'?>
 <?xml-stylesheet type="text/xsl" href="http://docbook.sourceforge.net/release/xsl/current/xhtml/docbook.xsl"?>
-<!DOCTYPE refentry PUBLIC "-//OASIS//DTD DocBook XML V4.2//EN"
-"http://www.oasis-open.org/docbook/xml/4.2/docbookx.dtd" [
+<!DOCTYPE refentry PUBLIC "-//OASIS//DTD DocBook XML V4.5//EN"
+"http://www.oasis-open.org/docbook/xml/4.5/docbookx.dtd" [
 <!ENTITY % entities SYSTEM "common.ent" >
 %entities;
 ]>
 
 <!--
+  SPDX-License-Identifier: GFDL-1.1-no-invariants-or-later
+
   nm-initrd-generator(8) manual page
 
   Copyright 2018 Red Hat, Inc.
-
-  Permission is granted to copy, distribute and/or modify this document
-  under the terms of the GNU Free Documentation License, Version 1.1
-  or any later version published by the Free Software Foundation;
-  with no Invariant Sections, no Front-Cover Texts, and no Back-Cover
-  Texts. You may obtain a copy of the GNU Free Documentation License
-  from the Free Software Foundation by visiting their Web site or by
-  writing to:
-
-  Free Software Foundation, Inc.,
-  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301, USA.
 -->
 
 <refentry id='nm-initrd-generator'>
@@ -163,12 +154,18 @@
             <member><option>net.ifnames</option></member>
             <member><option>rd.peerdns</option></member>
             <member><option>rd.iscsi.ibft</option></member>
+            <member><option>rd.nvmf.nonbft</option></member>
             <member><option>rd.bootif</option></member>
             <member><option>rd.neednet</option></member>
             <member><option>rd.ethtool</option></member>
+            <member><option>rd.net.dns</option></member>
+            <member><option>rd.net.dns-backend</option></member>
+            <member><option>rd.net.dns-resolve-mode</option></member>
             <member><option>rd.net.timeout.dhcp</option></member>
+            <member><option>rd.net.dhcp.client-id</option></member>
             <member><option>rd.net.dhcp.retry</option></member>
             <member><option>rd.net.dhcp.vendor-class</option></member>
+            <member><option>rd.net.dhcp.dscp</option></member>
             <member><option>rd.net.timeout.carrier</option></member>
             <member><option>rd.znet</option></member>
             <member><option>rd.znet_ifname</option></member>
@@ -232,6 +229,63 @@
         <replaceable>SPEED</replaceable> accepts positive integer values.
         </para>
       </listitem>
+
+      <listitem>
+        <para>NetworkManager supports the
+        <option>rd.net.dns-backend</option>=<replaceable>VALUE</replaceable>
+        kernel command line option to configure the DNS processing
+        mode. See the description of the <literal>"dns"</literal> key in
+        the <literal>"main section"</literal> paragraph of <link
+        linkend='NetworkManager.conf'><citerefentry><refentrytitle>NetworkManager.conf</refentrytitle><manvolnum>5</manvolnum></citerefentry></link>. For
+        example: <literal>rd.net.dns-backend=systemd-resolved</literal>,
+        <literal>rd.net.dns-backend=dnsconfd</literal>
+        </para>
+      </listitem>
+
+      <listitem>
+        <para>NetworkManager supports the
+        <option>rd.net.dns</option>=<replaceable>SERVER</replaceable>
+        kernel command line option to configure a global (non
+        interface-specific) DNS server. The option can be specified
+        multiple time to add more than one server. Each server can be
+        specified as a plain IP or as an URI according to the
+        description in the "global-dns-domains sections" paragraph of
+        <link
+        linkend='NetworkManager.conf'><citerefentry><refentrytitle>NetworkManager.conf</refentrytitle><manvolnum>5</manvolnum></citerefentry></link>. For
+        example: <literal>rd.net.dns=2001:db8::1</literal>,
+        <literal>rd.net.dns=dns+tls://192.0.2.0</literal>,
+        <literal>rd.net.dns=dns+tls://[2001:db8::2]:5353#example.org</literal>.
+        In addition, it supports configuring the <literal>"resolve-mode"</literal>
+        key in the global DNS configuration via the
+        <option>rd.net.dns-resolve-mode</option> command line option.
+        </para>
+      </listitem>
+
+      <listitem>
+        <para>NetworkManager supports the
+        <option>rd.net.dhcp.dscp</option>={<replaceable>CS0</replaceable>|<replaceable>CS4</replaceable>|<replaceable>CS6</replaceable>}
+        kernel command line option to set a specific DSCP (TOS) value
+        in the IP header of DHCP messages.
+        </para>
+      </listitem>
+
+      <listitem>
+        <para>NetworkManager supports the
+        <option>rd.net.dhcp.client-id</option>=<replaceable>interface</replaceable>:<replaceable>client-id</replaceable>
+        kernel command line option to set a specific DHCPv4 client identifier
+        for the given interface. The client-id can be specified either as a
+        sequence of bytes in hexadecimal format separated by dashes, or as the
+        character '@' followed by a non-empty string. When using the second
+        format, NetworkManager prepends a zero byte to the given string,
+        according to section 9.14 of RFC 2132. See the "ipv4.dhcp-client-id"
+        section of <link
+        linkend='nm-settings-nmcli'><citerefentry><refentrytitle>nm-settings-nmcli</refentrytitle><manvolnum>5</manvolnum></citerefentry></link>
+        for more details. Examples:
+        <literal>rd.net.dhcp.client-id=eth0:01-52-54-00-45-87-42</literal>,
+        <literal>rd.net.dhcp.client-id=enp1s0:@example.com</literal>.
+        </para>
+      </listitem>
+
     </itemizedlist>
   </refsect1>
 
@@ -242,6 +296,7 @@
 
   <refsect1 id='see_also'><title>See Also</title>
     <para><link linkend='dracut.cmdline'><citerefentry><refentrytitle>dracut.cmdline</refentrytitle><manvolnum>7</manvolnum></citerefentry></link>,
-    <link linkend='NetworkManager'><citerefentry><refentrytitle>NetworkManager</refentrytitle><manvolnum>8</manvolnum></citerefentry></link>.</para>
+    <link linkend='NetworkManager'><citerefentry><refentrytitle>NetworkManager</refentrytitle><manvolnum>8</manvolnum></citerefentry></link>,
+    <link linkend='nm-settings-nmcli'><citerefentry><refentrytitle>nm-settings-nmcli</refentrytitle><manvolnum>5</manvolnum></citerefentry></link>.</para>
   </refsect1>
 </refentry>

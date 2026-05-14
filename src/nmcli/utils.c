@@ -497,7 +497,7 @@ nmc_string_to_arg_array(const char *line,
 
     arr0 = nm_strsplit_set(line ?: "", delim ?: " \t");
     if (!arr0)
-        arr = g_new0(char *, 1);
+        arr = nm_strv_empty_new();
     else
         arr = g_strdupv((char **) arr0);
 
@@ -1016,6 +1016,8 @@ _print_fill(const NmcConfig    *nmc_config,
         PrintDataHeaderCell      *header_cell;
         guint                     col_idx;
         const NMMetaAbstractInfo *info;
+        const char               *setting_name;
+        gboolean                  is_prop;
 
         col = &cols[i_col];
         if (!col->is_leaf)
@@ -1036,14 +1038,23 @@ _print_fill(const NmcConfig    *nmc_config,
         header_cell->to_print = FALSE;
 
         header_cell->title = nm_meta_abstract_info_get_name(info, TRUE);
-        if (nmc_config->multiline_output && col->parent_col
-            && NM_IN_SET(info->meta_type,
-                         &nm_meta_type_property_info,
-                         &nmc_meta_type_generic_info)) {
-            header_cell->title = g_strdup_printf(
-                "%s.%s",
-                nm_meta_abstract_info_get_name(col->parent_col->selection_item->info, FALSE),
-                header_cell->title);
+
+        is_prop =
+            col->parent_col
+            && NM_IN_SET(info->meta_type, &nm_meta_type_property_info, &nmc_meta_type_generic_info);
+
+        if (is_prop) {
+            /* Some properties has different name for the user than internally in
+             * libnm and D-Bus. Make the conversion from libnm names to user names.
+             */
+            setting_name =
+                nm_meta_abstract_info_get_name(col->parent_col->selection_item->info, FALSE);
+            header_cell->title =
+                nmc_setting_propname_libnm_to_user(setting_name, header_cell->title);
+        }
+
+        if (nmc_config->multiline_output && is_prop) {
+            header_cell->title         = g_strdup_printf("%s.%s", setting_name, header_cell->title);
             header_cell->title_to_free = TRUE;
         }
     }
@@ -1829,6 +1840,9 @@ nmc_warn_if_version_mismatch(NMClient *client)
     const char *nm_ver;
 
     g_return_if_fail(client != NULL);
+
+    if (!nm_client_get_nm_running(client))
+        return;
 
     nm_ver = nm_client_get_version(client);
     if (!nm_streq0(nm_ver, VERSION)) {

@@ -10,6 +10,7 @@
 #include "settings/nm-settings-connection.h"
 #include "c-list/src/c-list.h"
 #include "nm-dbus-manager.h"
+#include "nm-config-data.h"
 
 #define NM_TYPE_MANAGER            (nm_manager_get_type())
 #define NM_MANAGER(obj)            (_NM_G_TYPE_CHECK_INSTANCE_CAST((obj), NM_TYPE_MANAGER, NMManager))
@@ -60,6 +61,7 @@
 #define NM_MANAGER_CONFIGURE_QUIT            "configure-quit"
 #define NM_MANAGER_INTERNAL_DEVICE_ADDED     "internal-device-added"
 #define NM_MANAGER_INTERNAL_DEVICE_REMOVED   "internal-device-removed"
+#define NM_MANAGER_SHARING_IPV4_CHANGED      "sharing-ipv4-changed"
 
 GType nm_manager_get_type(void);
 
@@ -211,6 +213,9 @@ struct _NMDnsManager;
 
 struct _NMDnsManager *nm_manager_get_dns_manager(NMManager *self);
 
+void     nm_manager_update_shared_connection(NMManager *self, int addr_family, gboolean enabled);
+gboolean nm_manager_get_sharing_ipv4(NMManager *self);
+
 /*****************************************************************************/
 
 void nm_manager_notify_delete_settings_connections(NMManager            *self,
@@ -265,5 +270,7 @@ gboolean nm_manager_devcon_autoconnect_blocked_reason_set(NMManager            *
                                                           NMSettingsConnection *sett_conn,
                                                           NMSettingsAutoconnectBlockedReason value,
                                                           gboolean                           set);
+
+NMConfig *nm_manager_get_config(NMManager *self);
 
 #endif /* __NETWORKMANAGER_MANAGER_H__ */

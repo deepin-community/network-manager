@@ -263,7 +263,7 @@ handle_kill:
           PIDFILE);
 
     gl_pid.kill_external_data  = g_slice_new(GlPidKillExternalData);
-    *gl_pid.kill_external_data = (GlPidKillExternalData){
+    *gl_pid.kill_external_data = (GlPidKillExternalData) {
         .shutdown_wait_handle = nm_shutdown_wait_obj_register_handle_full(
             g_strdup_printf("kill-external-dnsmasq-process-%" G_PID_FORMAT, pid),
             TRUE),
@@ -521,9 +521,10 @@ _gl_pid_spawn_next_step(void)
     argv[argv_idx++] = "--no-resolv"; /* Use only commandline */
     argv[argv_idx++] = "--keep-in-foreground";
     argv[argv_idx++] = "--no-hosts"; /* don't use /etc/hosts to resolve */
-    argv[argv_idx++] = "--bind-interfaces";
+    argv[argv_idx++] = "--bind-dynamic";
     argv[argv_idx++] = "--pid-file=" PIDFILE;
-    argv[argv_idx++] = "--listen-address=127.0.0.1"; /* Should work for both 4 and 6 */
+    argv[argv_idx++] = "--listen-address=127.0.0.1";
+    argv[argv_idx++] = "--listen-address=::1";
     argv[argv_idx++] = "--cache-size=400";
     argv[argv_idx++] = "--clear-on-reload";     /* clear cache when dns server changes */
     argv[argv_idx++] = "--conf-file=/dev/null"; /* avoid loading /etc/dnsmasq.conf */
@@ -623,7 +624,7 @@ _gl_pid_spawn(const char           *dm_binary,
         nm_assert(notify);
         nm_assert(G_IS_CANCELLABLE(cancellable));
         gl_pid.spawn_data  = g_slice_new(GlPidSpawnAsyncData);
-        *gl_pid.spawn_data = (GlPidSpawnAsyncData){
+        *gl_pid.spawn_data = (GlPidSpawnAsyncData) {
             .dm_binary        = dm_binary,
             .notify           = notify,
             .notify_user_data = notify_user_data,
@@ -853,13 +854,16 @@ add_global_config(NMDnsDnsmasq            *self,
         const char *const *servers = nm_global_dns_domain_get_servers(domain);
         const char        *name    = nm_global_dns_domain_get_name(domain);
 
-        g_return_if_fail(name);
+        nm_assert(name);
 
         for (j = 0; servers && servers[j]; j++) {
-            if (!strcmp(name, "*"))
-                add_dnsmasq_nameserver(self, dnsmasq_servers, servers[j], NULL);
-            else
-                add_dnsmasq_nameserver(self, dnsmasq_servers, servers[j], name);
+            char str[NM_INET_ADDRSTRLEN];
+
+            /* TODO: support IPv6 link-local addresses with scope id */
+            if (!nm_dns_uri_parse_plain(AF_UNSPEC, servers[j], str, NULL))
+                continue;
+
+            add_dnsmasq_nameserver(self, dnsmasq_servers, str, nm_streq(name, "*") ? NULL : name);
         }
     }
 }
@@ -881,7 +885,7 @@ add_ip_config(NMDnsDnsmasq *self, GVariantBuilder *servers, const NMDnsConfigIPD
     for (i = 0; i < num; i++) {
         NMIPAddr a;
 
-        if (!nm_utils_dnsname_parse_assert(ip_data->addr_family, strarr[i], NULL, &a, NULL))
+        if (!nm_dns_uri_parse_plain(ip_data->addr_family, strarr[i], NULL, &a))
             continue;
 
         ip_addr_to_string(ip_data->addr_family, &a, iface, ip_addr_to_string_buf);

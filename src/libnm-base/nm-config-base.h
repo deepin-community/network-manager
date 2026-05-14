@@ -35,7 +35,6 @@
 #define NM_CONFIG_KEYFILE_KEY_MAIN_NO_AUTO_DEFAULT             "no-auto-default"
 #define NM_CONFIG_KEYFILE_KEY_MAIN_PLUGINS                     "plugins"
 #define NM_CONFIG_KEYFILE_KEY_MAIN_RC_MANAGER                  "rc-manager"
-#define NM_CONFIG_KEYFILE_KEY_MAIN_SLAVES_ORDER                "slaves-order"
 #define NM_CONFIG_KEYFILE_KEY_MAIN_SYSTEMD_RESOLVED            "systemd-resolved"
 
 #define NM_CONFIG_KEYFILE_KEY_LOGGING_AUDIT   "audit"
@@ -45,6 +44,7 @@
 
 #define NM_CONFIG_KEYFILE_KEY_CONNECTIVITY_ENABLED  "enabled"
 #define NM_CONFIG_KEYFILE_KEY_CONNECTIVITY_INTERVAL "interval"
+#define NM_CONFIG_KEYFILE_KEY_CONNECTIVITY_TIMEOUT  "timeout"
 #define NM_CONFIG_KEYFILE_KEY_CONNECTIVITY_RESPONSE "response"
 #define NM_CONFIG_KEYFILE_KEY_CONNECTIVITY_URI      "uri"
 
@@ -55,8 +55,10 @@
 
 #define NM_CONFIG_KEYFILE_KEY_IFUPDOWN_MANAGED "managed"
 
-#define NM_CONFIG_KEYFILE_KEY_GLOBAL_DNS_SEARCHES "searches"
-#define NM_CONFIG_KEYFILE_KEY_GLOBAL_DNS_OPTIONS  "options"
+#define NM_CONFIG_KEYFILE_KEY_GLOBAL_DNS_SEARCHES                "searches"
+#define NM_CONFIG_KEYFILE_KEY_GLOBAL_DNS_OPTIONS                 "options"
+#define NM_CONFIG_KEYFILE_KEY_GLOBAL_DNS_CERTIFICATION_AUTHORITY "certification-authority"
+#define NM_CONFIG_KEYFILE_KEY_GLOBAL_DNS_RESOLVE_MODE            "resolve-mode"
 
 #define NM_CONFIG_KEYFILE_KEY_GLOBAL_DNS_DOMAIN_SERVERS "servers"
 #define NM_CONFIG_KEYFILE_KEY_GLOBAL_DNS_DOMAIN_OPTIONS "options"

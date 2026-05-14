@@ -121,7 +121,8 @@ _nm_singleton_instance_weak_cb(gpointer data, GObject *where_the_object_was)
     _singletons = g_slist_remove(_singletons, where_the_object_was);
 }
 
-static void __attribute__((destructor)) _nm_singleton_instance_destroy(void)
+static void __attribute__((destructor))
+_nm_singleton_instance_destroy(void)
 {
     _singletons_shutdown = TRUE;
 
@@ -738,19 +739,20 @@ nm_utils_kill_child_sync(pid_t       pid,
 
             if (!was_waiting) {
                 nm_log_dbg(log_domain,
-                           LOG_NAME_FMT ": waiting up to %ld milliseconds for process to terminate "
+                           LOG_NAME_FMT ": waiting up to %lu milliseconds for process to terminate "
                                         "normally after sending %s...",
                            LOG_NAME_ARGS,
-                           (long) MAX(wait_before_kill_msec, 0),
+                           (unsigned long) wait_before_kill_msec,
                            _kc_signal_to_string(sig));
                 was_waiting = TRUE;
             }
 
-            sleep_time = MIN(wait_until - now, sleep_duration_usec);
+            sleep_time = NM_MIN(wait_until - now, (gint64) sleep_duration_usec);
             if (loop_count < 20) {
                 /* At the beginning we expect the process to die fast.
                  * Limit the sleep time, the limit doubles with every iteration. */
-                sleep_time = MIN(sleep_time, (((guint64) 1) << loop_count) * G_USEC_PER_SEC / 2000);
+                sleep_time =
+                    NM_MIN(sleep_time, (((guint64) 1) << loop_count) * G_USEC_PER_SEC / 2000);
                 loop_count++;
             }
             g_usleep(sleep_time);
@@ -1031,17 +1033,17 @@ nm_utils_kill_process_sync(pid_t       pid,
                 loop_count =
                     0; /* reset the loop_count. Now we really expect the process to die quickly. */
             } else
-                sleep_time = MIN(wait_until_sigkill - now, sleep_duration_usec);
+                sleep_time = NM_MIN(wait_until_sigkill - now, (gint64) sleep_duration_usec);
         }
 
         if (!was_waiting) {
             if (wait_until_sigkill != 0) {
                 nm_log_dbg(log_domain,
                            LOG_NAME_PROCESS_FMT
-                           ": waiting up to %ld milliseconds for process to disappear before "
+                           ": waiting up to %lu milliseconds for process to disappear before "
                            "sending KILL signal after sending %s...",
                            LOG_NAME_ARGS,
-                           (long) wait_before_kill_msec,
+                           (unsigned long) wait_before_kill_msec,
                            _kc_signal_to_string(sig));
             } else if (max_wait_until != 0) {
                 nm_log_dbg(
@@ -1064,7 +1066,7 @@ nm_utils_kill_process_sync(pid_t       pid,
         if (loop_count < 20) {
             /* At the beginning we expect the process to die fast.
              * Limit the sleep time, the limit doubles with every iteration. */
-            sleep_time = MIN(sleep_time, (((guint64) 1) << loop_count) * G_USEC_PER_SEC / 2000);
+            sleep_time = NM_MIN(sleep_time, (((guint64) 1) << loop_count) * G_USEC_PER_SEC / 2000);
             loop_count++;
         }
         g_usleep(sleep_time);
@@ -1432,7 +1434,7 @@ nm_match_spec_device(const GSList *specs, const NMMatchSpecDeviceData *data)
     if (!specs)
         return NM_MATCH_SPEC_NO_MATCH;
 
-    match_data = (MatchSpecDeviceData){
+    match_data = (MatchSpecDeviceData) {
         .data           = data,
         .device_type    = nm_str_not_empty(data->device_type),
         .driver         = nm_str_not_empty(data->driver),
@@ -2711,7 +2713,7 @@ _host_id_read_timestamp(gboolean      use_secret_key_file,
 
 #define EPOCH_TWO_YEARS (G_GINT64_CONSTANT(2 * 365 * 24 * 3600) * NM_UTILS_NSEC_PER_SEC)
 
-    v = nm_hash_siphash42(1156657133u, host_id, host_id_len);
+    v = c_siphash_hash(NM_HASH_SEED_16_U64(1156657133u), host_id, host_id_len);
 
     now = time(NULL);
     *out_timestamp_ns =
@@ -2832,10 +2834,7 @@ _host_id_read(guint8 **out_host_id, gsize *out_host_id_len)
         int    base64_save  = 0;
         gsize  len;
 
-        if (nm_random_get_crypto_bytes(rnd_buf, sizeof(rnd_buf)) < 0)
-            nm_random_get_bytes_full(rnd_buf, sizeof(rnd_buf), &success);
-        else
-            success = TRUE;
+        nm_random_get_bytes(rnd_buf, sizeof(rnd_buf));
 
         /* Our key is really binary data. But since we anyway generate a random seed
          * (with 32 random bytes), don't write it in binary, but instead create
@@ -2856,17 +2855,15 @@ _host_id_read(guint8 **out_host_id, gsize *out_host_id_len)
 
         secret_arr = _host_id_hash_v2(new_content, len, sha256_digest);
         secret_len = NM_UTILS_CHECKSUM_LENGTH_SHA256;
+        success    = TRUE;
 
-        if (!success)
-            nm_log_warn(LOGD_CORE,
-                        "secret-key: failure to generate good random data for secret-key (use "
-                        "non-persistent key)");
-        else if (nm_utils_get_testing()) {
+        if (nm_utils_get_testing()) {
             /* for test code, we don't write the generated secret-key to disk. */
         } else if (!nm_utils_file_set_contents(SECRET_KEY_FILE,
                                                (const char *) new_content,
                                                len,
                                                0600,
+                                               NULL,
                                                NULL,
                                                NULL,
                                                &error)) {
@@ -3009,7 +3006,7 @@ nmtst_utils_host_id_push(const guint8 *host_id,
 
     h = nm_g_array_append_new(nmtst_host_id_stack, HostIdData);
 
-    *h = (HostIdData){
+    *h = (HostIdData) {
         .host_id           = nm_memdup(host_id, host_id_len),
         .host_id_len       = host_id_len,
         .timestamp_nsec    = p_timestamp_nsec ? *p_timestamp_nsec : 0,
@@ -3396,6 +3393,7 @@ nm_utils_stable_id_parse(const char *stable_id,
                          const char *hwaddr,
                          const char *bootid,
                          const char *uuid,
+                         GBytes     *ssid,
                          char      **out_generated)
 {
     nm_auto_str_buf NMStrBuf str = NM_STR_BUF_INIT_A(NM_UTILS_GET_NEXT_REALLOC_SIZE_232, FALSE);
@@ -3481,7 +3479,29 @@ nm_utils_stable_id_parse(const char *stable_id,
             _stable_id_append(&str, deviceid);
         else if (CHECK_PREFIX("${MAC}"))
             _stable_id_append(&str, hwaddr);
-        else if (g_str_has_prefix(&stable_id[i], "${RANDOM}")) {
+        else if (CHECK_PREFIX("${NETWORK_SSID}")) {
+            gs_free char *value_free = NULL;
+            gs_free char *s          = NULL;
+            const char   *value;
+            const char   *type_id;
+
+            if (ssid) {
+                type_id = "s:";
+                value   = nm_utils_buf_utf8safe_escape_bytes(ssid,
+                                                           NM_UTILS_STR_UTF8_SAFE_FLAG_ESCAPE_CTRL,
+                                                           &value_free);
+            } else {
+                /* If we have no SSID, we fallback to the connection's UUID.
+                 *
+                 * Give a separate prefix (@type_id), so that an SSID and a UUID
+                 * fallback never result in the same output. */
+                type_id = "c:";
+                value   = uuid ?: "";
+            }
+
+            s = g_strjoin("", type_id, value, NULL);
+            _stable_id_append(&str, s);
+        } else if (g_str_has_prefix(&stable_id[i], "${RANDOM}")) {
             /* RANDOM makes not so much sense for cloned-mac-address
              * as the result is similar to specifying "cloned-mac-address=random".
              * It makes however sense for RFC 7217 Stable Privacy IPv6 addresses
@@ -3522,6 +3542,29 @@ nm_utils_stable_id_parse(const char *stable_id,
     return NM_UTILS_STABLE_TYPE_GENERATED;
 }
 
+NMUtilsStableType
+nm_utils_stable_id_parse_network_ssid(GBytes     *ssid,
+                                      const char *uuid,
+                                      gboolean    complete,
+                                      char      **out_stable_id)
+{
+    NMUtilsStableType stable_type;
+
+    stable_type =
+        nm_utils_stable_id_parse("${NETWORK_SSID}", NULL, NULL, NULL, uuid, ssid, out_stable_id);
+
+    nm_assert(stable_type == NM_UTILS_STABLE_TYPE_GENERATED);
+    nm_assert(!out_stable_id || nm_str_not_empty(*out_stable_id));
+
+    if (complete && out_stable_id) {
+        gs_free char *ss = g_steal_pointer(out_stable_id);
+
+        *out_stable_id = nm_utils_stable_id_generated_complete(ss);
+    }
+
+    return stable_type;
+}
+
 /*****************************************************************************/
 
 static gboolean
@@ -3537,11 +3580,11 @@ _is_reserved_ipv6_iid(const guint8 *iid)
     /* 0200:5EFF:FE00:0000 - 0200:5EFF:FE00:5212 (Reserved IPv6 Interface Identifiers corresponding to the IANA Ethernet Block [RFC4291])
      * 0200:5EFF:FE00:5213                       (Proxy Mobile IPv6 [RFC6543])
      * 0200:5EFF:FE00:5214 - 0200:5EFF:FEFF:FFFF (Reserved IPv6 Interface Identifiers corresponding to the IANA Ethernet Block [RFC4291]) */
-    if (memcmp(iid, (const guint8[]){0x02, 0x00, 0x5E, 0xFF, 0xFE}, 5) == 0)
+    if (memcmp(iid, (const guint8[]) {0x02, 0x00, 0x5E, 0xFF, 0xFE}, 5) == 0)
         return TRUE;
 
     /* FDFF:FFFF:FFFF:FF80 - FDFF:FFFF:FFFF:FFFF (Reserved Subnet Anycast Addresses [RFC2526]) */
-    if (memcmp(iid, (const guint8[]){0xFD, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF}, 7) == 0) {
+    if (memcmp(iid, (const guint8[]) {0xFD, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF}, 7) == 0) {
         if (iid[7] & 0x80)
             return TRUE;
     }
@@ -3567,7 +3610,7 @@ nm_utils_ipv6_addr_set_stable_privacy_with_host_id(NMUtilsStableType stable_type
 
     sum = g_checksum_new(G_CHECKSUM_SHA256);
 
-    host_id_len = MIN(host_id_len, G_MAXUINT32);
+    host_id_len = NM_MIN(host_id_len, G_MAXUINT32);
 
     if (stable_type != NM_UTILS_STABLE_TYPE_UUID) {
         guint8 stable_type_uint8;
@@ -3690,7 +3733,7 @@ _hw_addr_eth_complete(struct ether_addr *addr,
 
     nm_assert((ouis == NULL) ^ (ouis_len != 0));
     if (ouis) {
-        oui = ouis[nm_random_u64_range(ouis_len)];
+        oui = ouis[nm_random_u64_range(0, ouis_len)];
         g_free(ouis);
     } else {
         if (!nm_utils_hwaddr_aton(current_mac_address, &oui, ETH_ALEN))
@@ -3742,7 +3785,7 @@ _hw_addr_gen_stable_eth(NMUtilsStableType stable_type,
 
     sum = g_checksum_new(G_CHECKSUM_SHA256);
 
-    host_id_len = MIN(host_id_len, G_MAXUINT32);
+    host_id_len = NM_MIN(host_id_len, G_MAXUINT32);
 
     nm_assert(stable_type < (NMUtilsStableType) 255);
     stable_type_uint8 = stable_type;
@@ -3819,23 +3862,23 @@ nm_utils_dhcp_client_id_mac(int arp_type, const guint8 *hwaddr, gsize hwaddr_len
     return g_bytes_new_take(client_id_buf, hwaddr_len + 1);
 }
 
-#define HASH_KEY              \
-    ((const guint8[16]){0x80, \
-                        0x11, \
-                        0x8c, \
-                        0xc2, \
-                        0xfe, \
-                        0x4a, \
-                        0x03, \
-                        0xee, \
-                        0x3e, \
-                        0xd6, \
-                        0x0c, \
-                        0x6f, \
-                        0x36, \
-                        0x39, \
-                        0x14, \
-                        0x09})
+#define HASH_KEY          \
+    NM_HASH_SEED_16(0x80, \
+                    0x11, \
+                    0x8c, \
+                    0xc2, \
+                    0xfe, \
+                    0x4a, \
+                    0x03, \
+                    0xee, \
+                    0x3e, \
+                    0xd6, \
+                    0x0c, \
+                    0x6f, \
+                    0x36, \
+                    0x39, \
+                    0x14, \
+                    0x09)
 
 /**
  * nm_utils_create_dhcp_iaid:
@@ -4255,8 +4298,8 @@ read_device_factory_paths_sort_fcn(gconstpointer a, gconstpointer b)
     const struct plugin_info *db = b;
     time_t                    ta, tb;
 
-    ta = MAX(da->st.st_mtime, da->st.st_ctime);
-    tb = MAX(db->st.st_mtime, db->st.st_ctime);
+    ta = NM_MAX(da->st.st_mtime, da->st.st_ctime);
+    tb = NM_MAX(db->st.st_mtime, db->st.st_ctime);
 
     if (ta < tb)
         return 1;
@@ -4600,13 +4643,13 @@ get_max_rate_vht_80_ss3(int mcs)
     case 5:
         return 702000000;
     case 6:
-        return 0;
+        return 0; /* invalid */
     case 7:
         return 877500000;
     case 8:
-        return 105300000;
+        return 1053000000;
     case 9:
-        return 117000000;
+        return 1170000000;
     }
     return 0;
 }
@@ -4690,7 +4733,7 @@ get_max_rate_vht_160_ss3(int mcs)
     case 8:
         return 2106000000;
     case 9:
-        return 0;
+        return 0; /* invalid */
     }
     return 0;
 }
@@ -4779,15 +4822,91 @@ get_max_rate_vht(const guint8 *bytes, guint len, guint32 *out_maxrate)
     return TRUE;
 }
 
+static gboolean
+get_bandwidth_ht(const guint8 *bytes, guint len, guint32 *out_bandwidth)
+{
+    guint8 ht_op_flag_group;
+
+    /* http://standards.ieee.org/getieee802/download/802.11-2012.pdf
+     * https://mrncciew.com/2014/11/04/cwap-ht-operations-ie/
+     * IEEE std 802.11-2020 section 9.4.2.56
+     */
+
+    if (len != 22)
+        return FALSE;
+
+    ht_op_flag_group = bytes[1];
+
+    /* Check bit for 20Mhz or 40Mhz */
+    if (ht_op_flag_group & (1 << 2))
+        *out_bandwidth = 40;
+    else
+        *out_bandwidth = 20;
+
+    return TRUE;
+}
+
+static gboolean
+get_bandwidth_vht(const guint8 *bytes, guint len, guint32 *out_bandwidth)
+{
+    guint8 sta_channel_width;
+    guint8 ccfs0;
+    guint8 ccfs1;
+
+    /* http://chimera.labs.oreilly.com/books/1234000001739/ch03.html#management_frames
+     * https://community.arubanetworks.com/community-home/librarydocuments/viewdocument?DocumentKey=799aad1b-d9c4-421a-a492-a111e8680d34&CommunityKey=39a6bdf4-2376-46f9-853a-49420d2d0caa&tab=librarydocuments
+     * IEEE Std 802.11-2020 section 9.4.2.158
+     */
+
+    if (len < 3)
+        return FALSE;
+
+    sta_channel_width = bytes[0];
+    ccfs0             = bytes[1];
+    ccfs1             = bytes[2];
+    switch (sta_channel_width) {
+    case 0:
+        /* we rely on HT Operation IE value*/
+        return FALSE;
+    case 1:
+        if (ccfs1 == 0)
+            *out_bandwidth = 80;
+        else if (abs(ccfs1 - ccfs0) == 8)
+            *out_bandwidth = 160;
+        else if (abs(ccfs1 - ccfs0) > 16)
+            /* we are considering 80+80 as 160 */
+            *out_bandwidth = 160;
+        else
+            /* falling back to 80 MHz */
+            *out_bandwidth = 80;
+        break;
+    case 2:
+        /* deprecated */
+        *out_bandwidth = 160;
+        break;
+    case 3:
+        /* deprecated */
+        *out_bandwidth = 160;
+        break;
+    default:
+        return FALSE;
+    }
+
+    return TRUE;
+}
+
 /* Management Frame Information Element IDs, ieee80211_eid */
 #define WLAN_EID_HT_CAPABILITY   45
+#define WLAN_EID_HT_OPERATION    61
 #define WLAN_EID_VHT_CAPABILITY  191
+#define WLAN_EID_VHT_OPERATION   192
 #define WLAN_EID_VENDOR_SPECIFIC 221
 
 void
 nm_wifi_utils_parse_ies(const guint8 *bytes,
                         gsize         len,
                         guint32      *out_max_rate,
+                        guint32      *out_bandwidth,
                         gboolean     *out_metered,
                         gboolean     *out_owe_transition_mode)
 {
@@ -4795,6 +4914,7 @@ nm_wifi_utils_parse_ies(const guint8 *bytes,
     guint32 m;
 
     NM_SET_OUT(out_max_rate, 0);
+    NM_SET_OUT(out_bandwidth, 0);
     NM_SET_OUT(out_metered, FALSE);
     NM_SET_OUT(out_owe_transition_mode, FALSE);
 
@@ -4816,11 +4936,19 @@ nm_wifi_utils_parse_ies(const guint8 *bytes,
                     *out_max_rate = NM_MAX(*out_max_rate, m);
             }
             break;
+        case WLAN_EID_HT_OPERATION:
+            if (out_bandwidth)
+                get_bandwidth_ht(bytes, elem_len, out_bandwidth);
+            break;
         case WLAN_EID_VHT_CAPABILITY:
             if (out_max_rate) {
                 if (get_max_rate_vht(bytes, elem_len, &m))
                     *out_max_rate = NM_MAX(*out_max_rate, m);
             }
+            break;
+        case WLAN_EID_VHT_OPERATION:
+            if (out_bandwidth)
+                get_bandwidth_vht(bytes, elem_len, out_bandwidth);
             break;
         case WLAN_EID_VENDOR_SPECIFIC:
             if (len == 8 && bytes[0] == 0x00 /* OUI: Microsoft */
@@ -4884,6 +5012,7 @@ typedef struct {
     int      child_stdin;
     int      child_stdout;
     int      child_stderr;
+    gboolean binary_output;
     GSource *input_source;
     GSource *output_source;
     GSource *error_source;
@@ -4963,7 +5092,17 @@ helper_complete(HelperInfo *info, GError *error)
     }
 
     nm_clear_g_cancellable_disconnect(g_task_get_cancellable(info->task), &info->cancellable_id);
-    g_task_return_pointer(info->task, nm_str_buf_finalize(&info->in_buffer, NULL), g_free);
+
+    if (info->binary_output) {
+        g_task_return_pointer(
+            info->task,
+            g_bytes_new(nm_str_buf_get_str_unsafe(&info->in_buffer), info->in_buffer.len),
+            (GDestroyNotify) (g_bytes_unref));
+    } else {
+        g_task_return_pointer(info->task,
+                              nm_str_buf_finalize(&info->in_buffer, NULL) ?: g_new0(char, 1),
+                              g_free);
+    }
     helper_info_free(info);
 }
 
@@ -5023,6 +5162,14 @@ helper_have_data(int fd, GIOCondition condition, gpointer user_data)
 
     n_read = nm_utils_fd_read(fd, &info->in_buffer);
     _LOG2T(info, "read returns %ld", (long) n_read);
+
+    if (info->in_buffer.len > 32 * 1024 * 1024) {
+        helper_complete(info,
+                        g_error_new_literal(NM_UTILS_ERROR,
+                                            NM_UTILS_ERROR_UNKNOWN,
+                                            "the output is larger than 32MiB"));
+        return G_SOURCE_CONTINUE;
+    }
 
     if (n_read > 0)
         return G_SOURCE_CONTINUE;
@@ -5106,6 +5253,7 @@ helper_cancelled(GObject *object, gpointer user_data)
 
 void
 nm_utils_spawn_helper(const char *const  *args,
+                      gboolean            binary_output,
                       GCancellable       *cancellable,
                       GAsyncReadyCallback callback,
                       gpointer            cb_data)
@@ -5120,9 +5268,14 @@ nm_utils_spawn_helper(const char *const  *args,
     nm_assert(args && args[0]);
 
     info  = g_new(HelperInfo, 1);
-    *info = (HelperInfo){
-        .task = nm_g_task_new(NULL, cancellable, nm_utils_spawn_helper, callback, cb_data),
+    *info = (HelperInfo) {
+        .task          = nm_g_task_new(NULL, cancellable, nm_utils_spawn_helper, callback, cb_data),
+        .binary_output = binary_output,
     };
+
+    /* Store if the caller requested binary output so that we can check later
+     * that the right result function is called. */
+    g_task_set_task_data(info->task, GINT_TO_POINTER(binary_output), NULL);
 
     if (!g_spawn_async_with_pipes("/",
                                   (char **) NM_MAKE_STRV(LIBEXECDIR "/nm-daemon-helper"),
@@ -5234,11 +5387,25 @@ nm_utils_spawn_helper(const char *const  *args,
 }
 
 char *
-nm_utils_spawn_helper_finish(GAsyncResult *result, GError **error)
+nm_utils_spawn_helper_finish_string(GAsyncResult *result, GError **error)
 {
     GTask *task = G_TASK(result);
 
     nm_assert(nm_g_task_is_valid(result, NULL, nm_utils_spawn_helper));
+    /* Check binary_output */
+    nm_assert(GPOINTER_TO_INT(g_task_get_task_data(task)) == FALSE);
+
+    return g_task_propagate_pointer(task, error);
+}
+
+GBytes *
+nm_utils_spawn_helper_finish_binary(GAsyncResult *result, GError **error)
+{
+    GTask *task = G_TASK(result);
+
+    nm_assert(nm_g_task_is_valid(result, NULL, nm_utils_spawn_helper));
+    /* Check binary_output */
+    nm_assert(GPOINTER_TO_INT(g_task_get_task_data(task)) == TRUE);
 
     return g_task_propagate_pointer(task, error);
 }
@@ -5288,7 +5455,7 @@ again:
     if ((g = g_atomic_int_get(&g_static)) == -1) {
         gid_t g2;
 
-        g2 = geteuid();
+        g2 = getegid();
         g  = g2;
         nm_assert(g == g2);
         nm_assert(g >= 0);
@@ -5333,7 +5500,7 @@ nm_utils_shorten_hostname(const char *hostname, char **shortened)
         l = (dot - hostname);
     else
         l = strlen(hostname);
-    l = MIN(l, (gsize) NM_HOST_NAME_MAX);
+    l = NM_MIN(l, (gsize) NM_HOST_NAME_MAX);
 
     s = g_strndup(hostname, l);
 
@@ -5344,4 +5511,335 @@ nm_utils_shorten_hostname(const char *hostname, char **shortened)
 
     *shortened = g_steal_pointer(&s);
     return TRUE;
+}
+
+/**
+ * nm_utils_connection_supported:
+ * @connection: the connection
+ * @error: on return, the reason why the connection in not supported
+ *
+ * Returns whether the given connection is supported by this version
+ * of NetworkManager.
+ */
+gboolean
+nm_utils_connection_supported(NMConnection *connection, GError **error)
+{
+    const char *type;
+    const char *feature = NULL;
+
+    g_return_val_if_fail(connection, FALSE);
+    g_return_val_if_fail(!error || !*error, FALSE);
+
+    type = nm_connection_get_connection_type(connection);
+
+    if (!WITH_TEAMDCTL) {
+        NMSettingConnection *s_con;
+
+        if (nm_streq0(type, NM_SETTING_TEAM_SETTING_NAME)) {
+            feature = "team";
+            goto out_disabled;
+        }
+
+        /* Match team ports */
+        if ((s_con = nm_connection_get_setting_connection(connection))
+            && nm_streq0(nm_setting_connection_get_port_type(s_con),
+                         NM_SETTING_TEAM_SETTING_NAME)) {
+            feature = "team";
+            goto out_disabled;
+        }
+    }
+
+    if (!WITH_OPENVSWITCH) {
+        if (NM_IN_STRSET(type,
+                         NM_SETTING_OVS_BRIDGE_SETTING_NAME,
+                         NM_SETTING_OVS_PORT_SETTING_NAME,
+                         NM_SETTING_OVS_INTERFACE_SETTING_NAME)) {
+            feature = "Open vSwitch";
+            goto out_disabled;
+        }
+
+        /* Match OVS system interfaces */
+        if (nm_connection_get_setting_ovs_interface(connection)) {
+            feature = "Open vSwitch";
+            goto out_disabled;
+        }
+    }
+
+    if (!WITH_WIFI
+        && NM_IN_STRSET(type,
+                        NM_SETTING_WIRELESS_SETTING_NAME,
+                        NM_SETTING_OLPC_MESH_SETTING_NAME,
+                        NM_SETTING_WIFI_P2P_SETTING_NAME)) {
+        feature = "Wi-Fi";
+        goto out_disabled;
+    }
+
+    if (!WITH_WWAN
+        && NM_IN_STRSET(type, NM_SETTING_GSM_SETTING_NAME, NM_SETTING_CDMA_SETTING_NAME)) {
+        feature = "WWAN";
+        goto out_disabled;
+    }
+
+    if (nm_streq0(type, NM_SETTING_WIMAX_SETTING_NAME)) {
+        feature = "WiMAX";
+        goto out_removed;
+    }
+
+    return TRUE;
+
+out_disabled:
+    nm_assert(feature);
+    g_set_error(error,
+                NM_SETTINGS_ERROR,
+                NM_SETTINGS_ERROR_FEATURE_DISABLED,
+                "%s support is disabled in this build",
+                feature);
+    return FALSE;
+
+out_removed:
+    nm_assert(feature);
+    g_set_error(error,
+                NM_SETTINGS_ERROR,
+                NM_SETTINGS_ERROR_FEATURE_REMOVED,
+                "%s is no longer supported",
+                feature);
+    return FALSE;
+}
+
+/*****************************************************************************/
+
+/**
+ * nm_rate_limit_check():
+ * @rate_limit: the NMRateLimit instance
+ * @window_sec: the time window in seconds, between 1 and 864000 (ten days)
+ * @burst: the number of max allowed event occurrences in the given time
+ *   window
+ *
+ * The function rate limits an event. Call it multiple times with the
+ * same @window_sec, and @burst values.
+ *
+ * Returns: TRUE if the event is allowed, FALSE if it is rate-limited
+ */
+gboolean
+nm_rate_limit_check(NMRateLimit *rate_limit, gint32 window_sec, gint32 burst)
+{
+    gint64 now;
+    gint64 old_ts_msec;
+    gint64 window_msec;
+    gint64 capacity;
+    gint64 elapsed;
+
+    nm_assert(window_sec >= 1 && window_sec <= 864000);
+    nm_assert(burst >= 1);
+
+    /* This implements a simple token bucket algorithm. For each millisecond,
+     * refill "burst" tokens. Thus, during a full time window we
+     * refill (window_msec * burst) tokens. Each event consumes @window_msec
+     * tokens. */
+
+    window_msec         = (gint64) window_sec * NM_UTILS_MSEC_PER_SEC;
+    capacity            = window_msec * (gint64) burst;
+    old_ts_msec         = rate_limit->ts_msec;
+    now                 = nm_utils_get_monotonic_timestamp_msec();
+    rate_limit->ts_msec = now;
+
+    elapsed = now - old_ts_msec;
+    if (old_ts_msec == 0 || elapsed > window_msec) {
+        /* On the first call, or in case a whole window passed, (re)start with
+         * a full budget */
+        rate_limit->tokens = capacity;
+    } else {
+        rate_limit->tokens += elapsed * (gint64) burst;
+        rate_limit->tokens = NM_MIN(rate_limit->tokens, capacity);
+    }
+
+    /* Consume the tokens */
+    if (rate_limit->tokens >= window_msec) {
+        rate_limit->tokens -= window_msec;
+        return TRUE;
+    }
+
+    return FALSE;
+}
+
+const char *
+nm_utils_get_connection_first_permissions_user(NMConnection *connection)
+{
+    NMSettingConnection *s_con;
+
+    s_con = nm_connection_get_setting_connection(connection);
+    nm_assert(s_con);
+
+    return _nm_setting_connection_get_first_permissions_user(s_con);
+}
+
+/*****************************************************************************/
+
+const char **
+nm_utils_get_connection_private_files_paths(NMConnection *connection)
+{
+    GPtrArray          *files;
+    gs_free NMSetting **settings = NULL;
+    guint               num_settings;
+    guint               i;
+
+    files    = g_ptr_array_new();
+    settings = nm_connection_get_settings(connection, &num_settings);
+    for (i = 0; i < num_settings; i++) {
+        _nm_setting_get_private_files(settings[i], files);
+    }
+    g_ptr_array_add(files, NULL);
+
+    return (const char **) g_ptr_array_free(files, files->len == 1);
+}
+
+typedef struct _ReadInfo ReadInfo;
+
+typedef struct {
+    char     *path;
+    ReadInfo *read_info;
+} FileInfo;
+
+struct _ReadInfo {
+    GTask      *task;
+    GHashTable *table;
+    GPtrArray  *file_infos; /* of FileInfo */
+    GError     *first_error;
+    guint       num_pending;
+};
+
+static void
+read_file_helper_cb(GObject *source, GAsyncResult *result, gpointer user_data)
+{
+    FileInfo              *file_info = user_data;
+    ReadInfo              *read_info = file_info->read_info;
+    gs_unref_bytes GBytes *output    = NULL;
+    gs_free_error GError  *error     = NULL;
+
+    output = nm_utils_spawn_helper_finish_binary(result, &error);
+
+    nm_assert(read_info->num_pending > 0);
+    read_info->num_pending--;
+
+    if (nm_utils_error_is_cancelled(error)) {
+        /* nop */
+    } else if (error) {
+        nm_log_dbg(LOGD_CORE,
+                   "read-private-files: failed to read file '%s': %s",
+                   file_info->path,
+                   error->message);
+        if (!read_info->first_error) {
+            /* @error just says "helper process exited with status X".
+             * Return a more human-friendly one. */
+            read_info->first_error = g_error_new(NM_UTILS_ERROR,
+                                                 NM_UTILS_ERROR_UNKNOWN,
+                                                 "error reading file '%s'",
+                                                 file_info->path);
+        }
+    } else {
+        nm_log_dbg(LOGD_SUPPLICANT,
+                   "read-private-files: successfully read file '%s'",
+                   file_info->path);
+
+        /* Store the file contents in the hash table */
+        if (!read_info->table) {
+            read_info->table = g_hash_table_new_full(nm_str_hash,
+                                                     g_str_equal,
+                                                     g_free,
+                                                     (GDestroyNotify) g_bytes_unref);
+        }
+        g_hash_table_insert(read_info->table,
+                            g_steal_pointer(&file_info->path),
+                            g_steal_pointer(&output));
+    }
+
+    g_clear_pointer(&file_info->path, g_free);
+
+    /* If all operations are completed, return  */
+    if (read_info->num_pending == 0) {
+        if (read_info->first_error) {
+            g_task_return_error(read_info->task, g_steal_pointer(&read_info->first_error));
+        } else {
+            g_task_return_pointer(read_info->task,
+                                  g_steal_pointer(&read_info->table),
+                                  (GDestroyNotify) g_hash_table_unref);
+        }
+
+        if (read_info->table)
+            g_hash_table_unref(read_info->table);
+        if (read_info->file_infos)
+            g_ptr_array_unref(read_info->file_infos);
+
+        g_object_unref(read_info->task);
+        g_free(read_info);
+    }
+}
+
+/**
+ * nm_utils_read_private_files:
+ * @paths: array of file paths to be read
+ * @user: name of the user to impersonate when reading the files
+ * @cancellable: cancellable to cancel the operation
+ * @callback: callback to invoke on completion
+ * @cb_data: data for @callback
+ *
+ * Reads the given list of files @paths on behalf of user @user. Invokes
+ * @callback asynchronously on completion. The callback must use
+ * nm_utils_read_private_files_finish() to obtain the result.
+ */
+void
+nm_utils_read_private_files(const char *const  *paths,
+                            const char         *user,
+                            GCancellable       *cancellable,
+                            GAsyncReadyCallback callback,
+                            gpointer            cb_data)
+{
+    ReadInfo *read_info;
+    FileInfo *file_info;
+    guint     i;
+
+    g_return_if_fail(paths && paths[0]);
+    g_return_if_fail(cancellable);
+    g_return_if_fail(callback);
+    g_return_if_fail(cb_data);
+
+    read_info  = g_new(ReadInfo, 1);
+    *read_info = (ReadInfo) {
+        .task = nm_g_task_new(NULL, cancellable, nm_utils_read_private_files, callback, cb_data),
+        .file_infos = g_ptr_array_new_with_free_func(g_free),
+    };
+
+    for (i = 0; paths[i]; i++) {
+        file_info  = g_new(FileInfo, 1);
+        *file_info = (FileInfo) {
+            .path      = g_strdup(paths[i]),
+            .read_info = read_info,
+        };
+        g_ptr_array_add(read_info->file_infos, file_info);
+        read_info->num_pending++;
+
+        nm_utils_spawn_helper(NM_MAKE_STRV("read-file-as-user", user, paths[i]),
+                              TRUE,
+                              cancellable,
+                              read_file_helper_cb,
+                              file_info);
+    }
+}
+
+/**
+ * nm_utils_read_private_files_finish:
+ * @result: the GAsyncResult
+ * @error: on return, the error
+ *
+ * Returns the files read by nm_utils_read_private_files(). The return value
+ * is a hash table {char * -> GBytes *}. Free it with g_hash_table_unref().
+ */
+GHashTable *
+nm_utils_read_private_files_finish(GAsyncResult *result, GError **error)
+{
+    GTask *task = G_TASK(result);
+
+    nm_assert(nm_g_task_is_valid(result, NULL, nm_utils_read_private_files));
+
+    return g_task_propagate_pointer(task, error);
 }

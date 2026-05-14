@@ -384,8 +384,7 @@ complete_connection(NMDevice            *device,
                               NULL,
                               _("VXLAN connection"),
                               NULL,
-                              NULL,
-                              TRUE);
+                              NULL);
 
     s_vxlan = nm_connection_get_setting_vxlan(connection);
     if (!s_vxlan) {
@@ -576,7 +575,11 @@ static const NMDBusInterfaceInfoExtended interface_info_device_vxlan = {
         NM_DBUS_INTERFACE_DEVICE_VXLAN,
         .properties = NM_DEFINE_GDBUS_PROPERTY_INFOS(
             NM_DEFINE_DBUS_PROPERTY_INFO_EXTENDED_READABLE("Parent", "o", NM_DEVICE_PARENT),
-            NM_DEFINE_DBUS_PROPERTY_INFO_EXTENDED_READABLE("HwAddress", "s", NM_DEVICE_HW_ADDRESS),
+            NM_DEFINE_DBUS_PROPERTY_INFO_EXTENDED_READABLE(
+                "HwAddress",
+                "s",
+                NM_DEVICE_HW_ADDRESS,
+                .annotations = NM_GDBUS_ANNOTATION_INFO_LIST_DEPRECATED(), ),
             NM_DEFINE_DBUS_PROPERTY_INFO_EXTENDED_READABLE("Id", "u", NM_DEVICE_VXLAN_ID),
             NM_DEFINE_DBUS_PROPERTY_INFO_EXTENDED_READABLE("Group", "s", NM_DEVICE_VXLAN_GROUP),
             NM_DEFINE_DBUS_PROPERTY_INFO_EXTENDED_READABLE("Local", "s", NM_DEVICE_VXLAN_LOCAL),
@@ -773,27 +776,10 @@ get_connection_parent(NMDeviceFactory *factory, NMConnection *connection)
     g_return_val_if_fail(nm_connection_is_type(connection, NM_SETTING_VXLAN_SETTING_NAME), NULL);
 
     s_vxlan = nm_connection_get_setting_vxlan(connection);
-    g_assert(s_vxlan);
-
-    return nm_setting_vxlan_get_parent(s_vxlan);
-}
-
-static char *
-get_connection_iface(NMDeviceFactory *factory, NMConnection *connection, const char *parent_iface)
-{
-    const char     *ifname;
-    NMSettingVxlan *s_vxlan;
-
-    g_return_val_if_fail(nm_connection_is_type(connection, NM_SETTING_VXLAN_SETTING_NAME), NULL);
-
-    s_vxlan = nm_connection_get_setting_vxlan(connection);
-    g_assert(s_vxlan);
-
-    if (nm_setting_vxlan_get_parent(s_vxlan) && !parent_iface)
+    if (s_vxlan)
+        return nm_setting_vxlan_get_parent(s_vxlan);
+    else
         return NULL;
-
-    ifname = nm_connection_get_interface_name(connection);
-    return g_strdup(ifname);
 }
 
 NM_DEVICE_FACTORY_DEFINE_INTERNAL(
@@ -803,5 +789,4 @@ NM_DEVICE_FACTORY_DEFINE_INTERNAL(
     NM_DEVICE_FACTORY_DECLARE_LINK_TYPES(NM_LINK_TYPE_VXLAN)
         NM_DEVICE_FACTORY_DECLARE_SETTING_TYPES(NM_SETTING_VXLAN_SETTING_NAME),
     factory_class->create_device         = create_device;
-    factory_class->get_connection_parent = get_connection_parent;
-    factory_class->get_connection_iface  = get_connection_iface;);
+    factory_class->get_connection_parent = get_connection_parent;);

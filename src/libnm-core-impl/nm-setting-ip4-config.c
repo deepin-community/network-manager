@@ -39,7 +39,8 @@
 NM_GOBJECT_PROPERTIES_DEFINE_BASE(PROP_DHCP_CLIENT_ID,
                                   PROP_DHCP_FQDN,
                                   PROP_DHCP_VENDOR_CLASS_IDENTIFIER,
-                                  PROP_LINK_LOCAL, );
+                                  PROP_LINK_LOCAL,
+                                  PROP_DHCP_IPV6_ONLY_PREFERRED, );
 
 typedef struct {
     NMSettingIPConfigPrivate parent;
@@ -48,6 +49,7 @@ typedef struct {
     char  *dhcp_fqdn;
     char  *dhcp_vendor_class_identifier;
     gint32 link_local;
+    gint32 dhcp_ipv6_only_preferred;
 } NMSettingIP4ConfigPrivate;
 
 /**
@@ -56,20 +58,18 @@ typedef struct {
  * IPv4 Settings
  */
 struct _NMSettingIP4Config {
-    NMSettingIPConfig parent;
-    /* In the past, this struct was public API. Preserve ABI! */
+    NMSettingIPConfig         parent;
+    NMSettingIP4ConfigPrivate _priv;
 };
 
 struct _NMSettingIP4ConfigClass {
     NMSettingIPConfigClass parent;
-    /* In the past, this struct was public API. Preserve ABI! */
-    gpointer padding[4];
 };
 
 G_DEFINE_TYPE(NMSettingIP4Config, nm_setting_ip4_config, NM_TYPE_SETTING_IP_CONFIG)
 
 #define NM_SETTING_IP4_CONFIG_GET_PRIVATE(o) \
-    (G_TYPE_INSTANCE_GET_PRIVATE((o), NM_TYPE_SETTING_IP4_CONFIG, NMSettingIP4ConfigPrivate))
+    _NM_GET_PRIVATE(o, NMSettingIP4Config, NM_IS_SETTING_IP4_CONFIG, NMSettingIPConfig, NMSetting)
 
 /*****************************************************************************/
 
@@ -148,6 +148,26 @@ nm_setting_ip4_config_get_link_local(NMSettingIP4Config *setting)
     return NM_SETTING_IP4_CONFIG_GET_PRIVATE(setting)->link_local;
 }
 
+/**
+ * nm_setting_ip4_config_get_dhcp_ipv6_only_preferred:
+ * @setting: the #NMSettingIP4Config
+ *
+ * Returns the value in the #NMSettingIP4Config:dhcp-ipv6-only-preferred
+ * property.
+ *
+ * Returns: the DHCP IPv6-only preferred property value
+ *
+ * Since: 1.52
+ **/
+NMSettingIP4DhcpIpv6OnlyPreferred
+nm_setting_ip4_config_get_dhcp_ipv6_only_preferred(NMSettingIP4Config *setting)
+{
+    g_return_val_if_fail(NM_IS_SETTING_IP4_CONFIG(setting),
+                         NM_SETTING_IP4_DHCP_IPV6_ONLY_PREFERRED_DEFAULT);
+
+    return NM_SETTING_IP4_CONFIG_GET_PRIVATE(setting)->dhcp_ipv6_only_preferred;
+}
+
 static gboolean
 verify(NMSetting *setting, NMConnection *connection, GError **error)
 {
@@ -165,17 +185,17 @@ verify(NMSetting *setting, NMConnection *connection, GError **error)
     g_assert(method);
 
     if (!strcmp(method, NM_SETTING_IP4_CONFIG_METHOD_MANUAL)) {
-        if (nm_setting_ip_config_get_num_addresses(s_ip) == 0) {
+        if (nm_setting_ip_config_get_num_addresses(s_ip) == 0
+            && nm_setting_ip_config_get_num_routes(s_ip) == 0) {
             g_set_error(error,
                         NM_CONNECTION_ERROR,
                         NM_CONNECTION_ERROR_MISSING_PROPERTY,
-                        _("this property cannot be empty for '%s=%s'"),
-                        NM_SETTING_IP_CONFIG_METHOD,
+                        _("method '%s' requires at least an address or a route"),
                         method);
             g_prefix_error(error,
                            "%s.%s: ",
                            NM_SETTING_IP4_CONFIG_SETTING_NAME,
-                           NM_SETTING_IP_CONFIG_ADDRESSES);
+                           NM_SETTING_IP_CONFIG_METHOD);
             return FALSE;
         }
     } else if (!strcmp(method, NM_SETTING_IP4_CONFIG_METHOD_LINK_LOCAL)
@@ -243,7 +263,8 @@ verify(NMSetting *setting, NMConnection *connection, GError **error)
                    NM_SETTING_IP4_LL_AUTO,
                    NM_SETTING_IP4_LL_DEFAULT,
                    NM_SETTING_IP4_LL_DISABLED,
-                   NM_SETTING_IP4_LL_ENABLED)) {
+                   NM_SETTING_IP4_LL_ENABLED,
+                   NM_SETTING_IP4_LL_FALLBACK)) {
         g_set_error(error,
                     NM_CONNECTION_ERROR,
                     NM_CONNECTION_ERROR_INVALID_PROPERTY,
@@ -254,7 +275,7 @@ verify(NMSetting *setting, NMConnection *connection, GError **error)
                        NM_SETTING_IP4_CONFIG_LINK_LOCAL);
         return FALSE;
     }
-    if (priv->link_local == NM_SETTING_IP4_LL_ENABLED
+    if (NM_IN_SET(priv->link_local, NM_SETTING_IP4_LL_ENABLED, NM_SETTING_IP4_LL_FALLBACK)
         && nm_streq(method, NM_SETTING_IP4_CONFIG_METHOD_DISABLED)) {
         g_set_error_literal(error,
                             NM_CONNECTION_ERROR,
@@ -405,6 +426,8 @@ ip4_dns_from_dbus(_NM_SETT_INFO_PROP_FROM_DBUS_FCN_ARGS _nm_nil)
     }
 
     strv = nm_utils_ip4_dns_from_variant(value);
+    nm_assert(strv);
+
     g_object_set(setting, NM_SETTING_IP_CONFIG_DNS, strv, NULL);
     return TRUE;
 }
@@ -425,31 +448,24 @@ ip4_addresses_from_dbus(_NM_SETT_INFO_PROP_FROM_DBUS_FCN_ARGS _nm_nil)
 {
     gs_unref_ptrarray GPtrArray *addrs   = NULL;
     gs_unref_variant GVariant   *s_ip4   = NULL;
-    gs_free const char         **labels  = NULL;
+    gs_unref_variant GVariant   *labels  = NULL;
     gs_free char                *gateway = NULL;
-    guint                        i;
-
-    /* FIXME: properly handle errors */
+    bool                         strict  = NM_FLAGS_HAS(parse_flags, NM_SETTING_PARSE_FLAGS_STRICT);
 
     if (!_nm_setting_use_legacy_property(setting, connection_dict, "addresses", "address-data")) {
         *out_is_modified = FALSE;
         return TRUE;
     }
 
-    addrs = nm_utils_ip4_addresses_from_variant(value, &gateway);
-
     s_ip4 = g_variant_lookup_value(connection_dict,
                                    NM_SETTING_IP4_CONFIG_SETTING_NAME,
                                    NM_VARIANT_TYPE_SETTING);
-    if (g_variant_lookup(s_ip4, "address-labels", "^a&s", &labels)) {
-        for (i = 0; i < addrs->len && labels[i]; i++) {
-            if (*labels[i]) {
-                nm_ip_address_set_attribute(addrs->pdata[i],
-                                            NM_IP_ADDRESS_ATTRIBUTE_LABEL,
-                                            g_variant_new_string(labels[i]));
-            }
-        }
-    }
+
+    labels = g_variant_lookup_value(s_ip4, "address-labels", NULL);
+
+    addrs = _nm_utils_ip4_addresses_from_variant(value, labels, &gateway, strict, error);
+    if (!addrs)
+        return FALSE;
 
     g_object_set(setting,
                  NM_SETTING_IP_CONFIG_ADDRESSES,
@@ -514,9 +530,8 @@ ip4_address_data_to_dbus(_NM_SETT_INFO_PROP_TO_DBUS_FCN_ARGS _nm_nil)
 static gboolean
 ip4_address_data_from_dbus(_NM_SETT_INFO_PROP_FROM_DBUS_FCN_ARGS _nm_nil)
 {
-    gs_unref_ptrarray GPtrArray *addrs = NULL;
-
-    /* FIXME: properly handle errors */
+    gs_unref_ptrarray GPtrArray *addrs  = NULL;
+    bool                         strict = NM_FLAGS_HAS(parse_flags, NM_SETTING_PARSE_FLAGS_STRICT);
 
     /* Ignore 'address-data' if we're going to process 'addresses' */
     if (_nm_setting_use_legacy_property(setting, connection_dict, "addresses", "address-data")) {
@@ -524,7 +539,10 @@ ip4_address_data_from_dbus(_NM_SETT_INFO_PROP_FROM_DBUS_FCN_ARGS _nm_nil)
         return TRUE;
     }
 
-    addrs = nm_utils_ip_addresses_from_variant(value, AF_INET);
+    addrs = _nm_utils_ip_addresses_from_variant(value, AF_INET, strict, error);
+    if (!addrs)
+        return FALSE;
+
     g_object_set(setting, NM_SETTING_IP_CONFIG_ADDRESSES, addrs, NULL);
     return TRUE;
 }
@@ -542,15 +560,17 @@ static gboolean
 ip4_routes_from_dbus(_NM_SETT_INFO_PROP_FROM_DBUS_FCN_ARGS _nm_nil)
 {
     gs_unref_ptrarray GPtrArray *routes = NULL;
-
-    /* FIXME: properly handle errors */
+    bool                         strict = NM_FLAGS_HAS(parse_flags, NM_SETTING_PARSE_FLAGS_STRICT);
 
     if (!_nm_setting_use_legacy_property(setting, connection_dict, "routes", "route-data")) {
         *out_is_modified = FALSE;
         return TRUE;
     }
 
-    routes = nm_utils_ip4_routes_from_variant(value);
+    routes = _nm_utils_ip4_routes_from_variant(value, strict, error);
+    if (!routes)
+        return FALSE;
+
     g_object_set(setting, property_info->name, routes, NULL);
     return TRUE;
 }
@@ -571,8 +591,7 @@ static gboolean
 ip4_route_data_from_dbus(_NM_SETT_INFO_PROP_FROM_DBUS_FCN_ARGS _nm_nil)
 {
     gs_unref_ptrarray GPtrArray *routes = NULL;
-
-    /* FIXME: properly handle errors */
+    bool                         strict = NM_FLAGS_HAS(parse_flags, NM_SETTING_PARSE_FLAGS_STRICT);
 
     /* Ignore 'route-data' if we're going to process 'routes' */
     if (_nm_setting_use_legacy_property(setting, connection_dict, "routes", "route-data")) {
@@ -580,7 +599,10 @@ ip4_route_data_from_dbus(_NM_SETT_INFO_PROP_FROM_DBUS_FCN_ARGS _nm_nil)
         return TRUE;
     }
 
-    routes = nm_utils_ip_routes_from_variant(value, AF_INET);
+    routes = _nm_utils_ip_routes_from_variant(value, AF_INET, strict, error);
+    if (!routes)
+        return FALSE;
+
     g_object_set(setting, NM_SETTING_IP_CONFIG_ROUTES, routes, NULL);
     return TRUE;
 }
@@ -616,14 +638,12 @@ nm_setting_ip4_config_class_init(NMSettingIP4ConfigClass *klass)
     NMSettingIPConfigClass *setting_ip_config_class = NM_SETTING_IP_CONFIG_CLASS(klass);
     GArray *properties_override = _nm_sett_info_property_override_create_array_ip_config(AF_INET);
 
-    g_type_class_add_private(klass, sizeof(NMSettingIP4ConfigPrivate));
-
     object_class->get_property = _nm_setting_property_get_property_direct;
     object_class->set_property = _nm_setting_property_set_property_direct;
 
     setting_class->verify = verify;
 
-    setting_ip_config_class->private_offset = g_type_class_get_instance_private_offset(klass);
+    setting_ip_config_class->private_offset = G_STRUCT_OFFSET(NMSettingIP4Config, _priv);
     setting_ip_config_class->is_ipv4        = TRUE;
     setting_ip_config_class->addr_family    = AF_INET;
 
@@ -639,6 +659,7 @@ nm_setting_ip4_config_class_init(NMSettingIP4ConfigClass *klass)
 
     /* ---keyfile---
      * property: dns
+     * variable: dns
      * format: list of DNS IP addresses
      * description: List of DNS servers.
      * example: dns=1.2.3.4;8.8.8.8;8.8.4.4;
@@ -665,9 +686,15 @@ nm_setting_ip4_config_class_init(NMSettingIP4ConfigClass *klass)
     /* ---keyfile---
      * property: addresses
      * variable: address1, address2, ...
-     * format: address/plen
-     * description: List of static IP addresses.
-     * example: address1=192.168.100.100/24 address2=10.1.1.5/24
+     * format: address/prefix-length[,gateway]
+     * description: Static IPv4 addresses, one address per variable. The
+     *   variables can also contain the gateway after a comma or semicolon;
+     *   it is recommended to use the "gateway" variable instead.
+     * example: address1=192.168.100.100/24
+     *
+     *          address2=10.1.1.5/16
+     *
+     *          address1=192.168.100.100/24,192.168.100.1
      * ---end---
      */
     /* ---ifcfg-rh---
@@ -682,8 +709,12 @@ nm_setting_ip4_config_class_init(NMSettingIP4ConfigClass *klass)
      * property: gateway
      * variable: gateway
      * format: string
-     * description: Gateway IP addresses as a string.
-     * example: gateway=192.168.100.1
+     * description: Gateway IP address as a string. The gateway can be also specified in one
+     *   of the "address1", "address2", etc. variables after the address, separated by a comma or
+     *   semicolon (for example "address1=192.168.100.1/24,192.168.100.254").
+     *   The value from the "gateway" variable takes precedence over any gateway specified in one
+     *   of the "address*" variables.
+     * example: gateway=192.168.100.254
      * ---end---
      */
     /* ---ifcfg-rh---
@@ -703,11 +734,31 @@ nm_setting_ip4_config_class_init(NMSettingIP4ConfigClass *klass)
      *   route2=7.7.0.0/16
      * ---end---
      */
+    /* ---keyfile---
+     * property: routes (attributes)
+     * variable: route1_options, route2_options, ...
+     * format: key=val[,key=val...]
+     * description: Attributes defined for the routes, if any. The supported
+     *   attributes are explained in ipv4.routes entry in `man nm-settings-nmcli`.
+     * example: route1_options=mtu=1000,onlink=true
+     * ---end---
+     */
     /* ---ifcfg-rh---
      * property: routes
      * variable: ADDRESS1, NETMASK1, GATEWAY1, METRIC1, OPTIONS1, ...
      * description: List of static routes. They are not stored in ifcfg-* file,
      *   but in route-* file instead.
+     * ---end---
+     */
+
+    /* ---keyfile---
+     * property: routing-rules
+     * variable: routing-rule1, routing-rule2, ...
+     * format: routing rule string
+     * description: Routing rules as defined with `ip rule add`, but with mandatory
+     *    fixed priority. The "lookup" and "table" options don't support a table name,
+     *    only a number.
+     * example: routing-rule1=priority 5 from 192.167.4.0/24 table 45
      * ---end---
      */
 
@@ -875,9 +926,20 @@ nm_setting_ip4_config_class_init(NMSettingIP4ConfigClass *klass)
      * stable-id, you may want to include the "${DEVICE}" or "${MAC}" specifier to get a
      * per-device key.
      *
-     * If unset, a globally configured default is used. If still unset, the default
-     * depends on the DHCP plugin.
+     * The special value "none" prevents any client identifier from being sent. Note that
+     * this is normally not recommended.
+     *
+     * If unset, a globally configured default from NetworkManager.conf is
+     * used. If still unset, the default depends on the DHCP plugin. The
+     * internal dhcp client will default to "mac" and the dhclient plugin will
+     * try to use one from its config file if present, or won't sent any
+     * client-id otherwise.
      **/
+    /* ---nmcli---
+     * property: dhcp-client-id
+     * special-values: mac, perm-mac, duid, ipv6-duid, stable, none
+     * ---end---
+     */
     /* ---ifcfg-rh---
      * property: dhcp-client-id
      * variable: DHCP_CLIENT_ID(+)
@@ -892,7 +954,8 @@ nm_setting_ip4_config_class_init(NMSettingIP4ConfigClass *klass)
                                               PROP_DHCP_CLIENT_ID,
                                               NM_SETTING_PARAM_NONE,
                                               NMSettingIP4ConfigPrivate,
-                                              dhcp_client_id);
+                                              dhcp_client_id,
+                                              .direct_string_allow_empty = TRUE);
 
     /* ---ifcfg-rh---
      * property: dad-timeout
@@ -945,7 +1008,8 @@ nm_setting_ip4_config_class_init(NMSettingIP4ConfigClass *klass)
                                               PROP_DHCP_FQDN,
                                               NM_SETTING_PARAM_NONE,
                                               NMSettingIP4ConfigPrivate,
-                                              dhcp_fqdn);
+                                              dhcp_fqdn,
+                                              .direct_string_allow_empty = TRUE);
 
     /**
      * NMSettingIP4Config:dhcp-vendor-class-identifier:
@@ -972,7 +1036,8 @@ nm_setting_ip4_config_class_init(NMSettingIP4ConfigClass *klass)
                                               PROP_DHCP_VENDOR_CLASS_IDENTIFIER,
                                               NM_SETTING_PARAM_NONE,
                                               NMSettingIP4ConfigPrivate,
-                                              dhcp_vendor_class_identifier);
+                                              dhcp_vendor_class_identifier,
+                                              .direct_string_allow_empty = TRUE);
 
     /**
      * NMSettingIP4Config:link-local:
@@ -986,6 +1051,8 @@ nm_setting_ip4_config_class_init(NMSettingIP4ConfigClass *klass)
      * When set to "default", it honors the global connection default, before
      * falling back to "auto". Note that if "ipv4.method" is "disabled", then
      * link local addressing is always disabled too. The default is "default".
+     * Since 1.52, when set to "fallback", a link-local address is obtained
+     * if no other IPv4 address is set.
      *
      * Since: 1.40
      */
@@ -1244,7 +1311,8 @@ nm_setting_ip4_config_class_init(NMSettingIP4ConfigClass *klass)
      *   A comma separated list of routing rules for policy routing. The format
      *   is based on <command>ip rule add</command> syntax and mostly compatible.
      *   One difference is that routing rules in NetworkManager always need a
-     *   fixed priority.
+     *   fixed priority. Also, the "lookup" and "table" options don't support a
+     *   table name, only a number.
      *   </para>
      *   <para>
      *   Example: <literal>priority 5 from 192.167.4.0/24 table 45</literal>
@@ -1282,11 +1350,43 @@ nm_setting_ip4_config_class_init(NMSettingIP4ConfigClass *klass)
      * ---end---
      */
 
+    /**
+     * NMSettingIP4Config:dhcp-ipv6-only-preferred
+     *
+     * Controls the "IPv6-Only Preferred" DHCPv4 option (RFC 8925).
+     *
+     * When set to %NM_SETTING_IP4_DHCP_IPV6_ONLY_PREFERRED_YES, the host adds the
+     * option to the parameter request list; if the DHCP server sends the option back,
+     * the host stops the DHCP client for the time interval specified in the option.
+     *
+     * Enable this feature if the host supports an IPv6-only mode, i.e. either all
+     * applications are IPv6-only capable or there is a form of 464XLAT deployed.
+     *
+     * When set to %NM_SETTING_IP4_DHCP_IPV6_ONLY_PREFERRED_DEFAULT, the actual value
+     * is looked up in the global configuration; if not specified, it defaults to
+     * %NM_SETTING_IP4_DHCP_IPV6_ONLY_PREFERRED_NO.
+     *
+     * If the connection has IPv6 method set to "disabled", this property does not
+     * have effect and the "IPv6-Only Preferred" option is always disabled.
+     *
+     * Since: 1.52
+     */
+    _nm_setting_property_define_direct_enum(properties_override,
+                                            obj_properties,
+                                            NM_SETTING_IP4_CONFIG_DHCP_IPV6_ONLY_PREFERRED,
+                                            PROP_DHCP_IPV6_ONLY_PREFERRED,
+                                            NM_TYPE_SETTING_IP4_DHCP_IPV6_ONLY_PREFERRED,
+                                            NM_SETTING_IP4_DHCP_IPV6_ONLY_PREFERRED_DEFAULT,
+                                            NM_SETTING_PARAM_NONE,
+                                            NULL,
+                                            NMSettingIP4ConfigPrivate,
+                                            dhcp_ipv6_only_preferred);
+
     g_object_class_install_properties(object_class, _PROPERTY_ENUMS_LAST, obj_properties);
 
     _nm_setting_class_commit(setting_class,
                              NM_META_SETTING_TYPE_IP4_CONFIG,
                              NULL,
                              properties_override,
-                             setting_ip_config_class->private_offset);
+                             G_STRUCT_OFFSET(NMSettingIP4Config, _priv));
 }

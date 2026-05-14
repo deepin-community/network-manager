@@ -33,49 +33,60 @@ G_BEGIN_DECLS
 #define NM_SETTING_CONNECTION_AUTOCONNECT_PRIORITY_MAX     999
 #define NM_SETTING_CONNECTION_AUTOCONNECT_PRIORITY_DEFAULT 0
 
-#define NM_SETTING_CONNECTION_ID                    "id"
-#define NM_SETTING_CONNECTION_UUID                  "uuid"
-#define NM_SETTING_CONNECTION_STABLE_ID             "stable-id"
-#define NM_SETTING_CONNECTION_INTERFACE_NAME        "interface-name"
-#define NM_SETTING_CONNECTION_TYPE                  "type"
-#define NM_SETTING_CONNECTION_AUTOCONNECT           "autoconnect"
-#define NM_SETTING_CONNECTION_AUTOCONNECT_PRIORITY  "autoconnect-priority"
-#define NM_SETTING_CONNECTION_AUTOCONNECT_RETRIES   "autoconnect-retries"
-#define NM_SETTING_CONNECTION_MULTI_CONNECT         "multi-connect"
-#define NM_SETTING_CONNECTION_TIMESTAMP             "timestamp"
-#define NM_SETTING_CONNECTION_READ_ONLY             "read-only"
-#define NM_SETTING_CONNECTION_PERMISSIONS           "permissions"
-#define NM_SETTING_CONNECTION_ZONE                  "zone"
-#define NM_SETTING_CONNECTION_MASTER                "master"
-#define NM_SETTING_CONNECTION_SLAVE_TYPE            "slave-type"
-#define NM_SETTING_CONNECTION_AUTOCONNECT_SLAVES    "autoconnect-slaves"
-#define NM_SETTING_CONNECTION_SECONDARIES           "secondaries"
-#define NM_SETTING_CONNECTION_GATEWAY_PING_TIMEOUT  "gateway-ping-timeout"
-#define NM_SETTING_CONNECTION_METERED               "metered"
-#define NM_SETTING_CONNECTION_LLDP                  "lldp"
-#define NM_SETTING_CONNECTION_AUTH_RETRIES          "auth-retries"
-#define NM_SETTING_CONNECTION_MDNS                  "mdns"
-#define NM_SETTING_CONNECTION_LLMNR                 "llmnr"
-#define NM_SETTING_CONNECTION_DNS_OVER_TLS          "dns-over-tls"
-#define NM_SETTING_CONNECTION_MPTCP_FLAGS           "mptcp-flags"
-#define NM_SETTING_CONNECTION_WAIT_DEVICE_TIMEOUT   "wait-device-timeout"
-#define NM_SETTING_CONNECTION_MUD_URL               "mud-url"
-#define NM_SETTING_CONNECTION_WAIT_ACTIVATION_DELAY "wait-activation-delay"
+#define NM_SETTING_CONNECTION_ID                            "id"
+#define NM_SETTING_CONNECTION_UUID                          "uuid"
+#define NM_SETTING_CONNECTION_STABLE_ID                     "stable-id"
+#define NM_SETTING_CONNECTION_INTERFACE_NAME                "interface-name"
+#define NM_SETTING_CONNECTION_TYPE                          "type"
+#define NM_SETTING_CONNECTION_AUTOCONNECT                   "autoconnect"
+#define NM_SETTING_CONNECTION_AUTOCONNECT_PRIORITY          "autoconnect-priority"
+#define NM_SETTING_CONNECTION_AUTOCONNECT_RETRIES           "autoconnect-retries"
+#define NM_SETTING_CONNECTION_MULTI_CONNECT                 "multi-connect"
+#define NM_SETTING_CONNECTION_TIMESTAMP                     "timestamp"
+#define NM_SETTING_CONNECTION_READ_ONLY                     "read-only"
+#define NM_SETTING_CONNECTION_PERMISSIONS                   "permissions"
+#define NM_SETTING_CONNECTION_ZONE                          "zone"
+#define NM_SETTING_CONNECTION_MASTER                        "master"
+#define NM_SETTING_CONNECTION_CONTROLLER                    "controller"
+#define NM_SETTING_CONNECTION_SLAVE_TYPE                    "slave-type"
+#define NM_SETTING_CONNECTION_PORT_TYPE                     "port-type"
+#define NM_SETTING_CONNECTION_AUTOCONNECT_SLAVES            "autoconnect-slaves"
+#define NM_SETTING_CONNECTION_AUTOCONNECT_PORTS             "autoconnect-ports"
+#define NM_SETTING_CONNECTION_SECONDARIES                   "secondaries"
+#define NM_SETTING_CONNECTION_GATEWAY_PING_TIMEOUT          "gateway-ping-timeout"
+#define NM_SETTING_CONNECTION_METERED                       "metered"
+#define NM_SETTING_CONNECTION_LLDP                          "lldp"
+#define NM_SETTING_CONNECTION_AUTH_RETRIES                  "auth-retries"
+#define NM_SETTING_CONNECTION_MDNS                          "mdns"
+#define NM_SETTING_CONNECTION_LLMNR                         "llmnr"
+#define NM_SETTING_CONNECTION_DNS_OVER_TLS                  "dns-over-tls"
+#define NM_SETTING_CONNECTION_DNSSEC                        "dnssec"
+#define NM_SETTING_CONNECTION_MPTCP_FLAGS                   "mptcp-flags"
+#define NM_SETTING_CONNECTION_WAIT_DEVICE_TIMEOUT           "wait-device-timeout"
+#define NM_SETTING_CONNECTION_MUD_URL                       "mud-url"
+#define NM_SETTING_CONNECTION_WAIT_ACTIVATION_DELAY         "wait-activation-delay"
+#define NM_SETTING_CONNECTION_DOWN_ON_POWEROFF              "down-on-poweroff"
+#define NM_SETTING_CONNECTION_IP_PING_TIMEOUT               "ip-ping-timeout"
+#define NM_SETTING_CONNECTION_IP_PING_ADDRESSES             "ip-ping-addresses"
+#define NM_SETTING_CONNECTION_IP_PING_ADDRESSES_REQUIRE_ALL "ip-ping-addresses-require-all"
 
 /* Types for property values */
 /**
  * NMSettingConnectionAutoconnectSlaves:
  * @NM_SETTING_CONNECTION_AUTOCONNECT_SLAVES_DEFAULT: default value
  * @NM_SETTING_CONNECTION_AUTOCONNECT_SLAVES_NO: slaves are not brought up when
- *   master is activated
+ *   controller is activated
  * @NM_SETTING_CONNECTION_AUTOCONNECT_SLAVES_YES: slaves are brought up when
- *   master is activated
+ *   controller is activated
  *
  * #NMSettingConnectionAutoconnectSlaves values indicate whether slave connections
- * should be activated when master is activated.
+ * should be activated when controller is activated.
  *
  * Since: 1.2
+ *
+ * Deprecated: 1.46
  */
+NM_DEPRECATED_IN_1_46
 typedef enum {
     NM_SETTING_CONNECTION_AUTOCONNECT_SLAVES_DEFAULT = -1,
     NM_SETTING_CONNECTION_AUTOCONNECT_SLAVES_NO      = 0,
@@ -152,6 +163,41 @@ typedef enum {
     NM_SETTING_CONNECTION_DNS_OVER_TLS_YES           = 2,
 } NMSettingConnectionDnsOverTls;
 
+/**
+ * NMSettingConnectionDnssec:
+ * @NM_SETTING_CONNECTION_DNSSEC_DEFAULT: default value
+ * @NM_SETTING_CONNECTION_DNSSEC_NO: disable DNSSEC
+ * @NM_SETTING_CONNECTION_DNSSEC_ALLOW_DOWNGRADE: enable DNSSEC but allow fallback to non-DNSSEC mode
+ * @NM_SETTING_CONNECTION_DNSSEC_YES: force enable DNSSEC
+ *
+ * #NMSettingConnectionDnssec values indicate whether DNSSEC should be enabled.
+ *
+ * Since: 1.56
+ */
+typedef enum {
+    NM_SETTING_CONNECTION_DNSSEC_DEFAULT         = -1,
+    NM_SETTING_CONNECTION_DNSSEC_NO              = 0,
+    NM_SETTING_CONNECTION_DNSSEC_ALLOW_DOWNGRADE = 1,
+    NM_SETTING_CONNECTION_DNSSEC_YES             = 2,
+} NMSettingConnectionDnssec;
+
+/**
+ * NMSettingConnectionDownOnPoweroff:
+ * @NM_SETTING_CONNECTION_DOWN_ON_POWEROFF_DEFAULT: default value
+ * @NM_SETTING_CONNECTION_DOWN_ON_POWEROFF_NO: disable down-on-poweroff
+ * @NM_SETTING_CONNECTION_DOWN_ON_POWEROFF_YES: enable down-on-poweroff
+ *
+ * #NMSettingConnectionDownOnPoweroff indicates whether the connection will be
+ * brought down before the system is powered off.
+ *
+ * Since: 1.48
+ */
+typedef enum {
+    NM_SETTING_CONNECTION_DOWN_ON_POWEROFF_DEFAULT = -1,
+    NM_SETTING_CONNECTION_DOWN_ON_POWEROFF_NO      = 0,
+    NM_SETTING_CONNECTION_DOWN_ON_POWEROFF_YES     = 1,
+} NMSettingConnectionDownOnPoweroff;
+
 typedef struct _NMSettingConnectionClass NMSettingConnectionClass;
 
 GType nm_setting_connection_get_type(void);
@@ -193,12 +239,28 @@ gboolean    nm_setting_connection_remove_permission_by_value(NMSettingConnection
                                                              const char          *pitem,
                                                              const char          *detail);
 
+NM_DEPRECATED_IN_1_46
 const char *nm_setting_connection_get_master(NMSettingConnection *setting);
-gboolean    nm_setting_connection_is_slave_type(NMSettingConnection *setting, const char *type);
+
+NM_AVAILABLE_IN_1_46
+const char *nm_setting_connection_get_controller(NMSettingConnection *setting);
+
+NM_DEPRECATED_IN_1_46
+gboolean nm_setting_connection_is_slave_type(NMSettingConnection *setting, const char *type);
+
+NM_DEPRECATED_IN_1_46
 const char *nm_setting_connection_get_slave_type(NMSettingConnection *setting);
+
+NM_AVAILABLE_IN_1_46
+const char *nm_setting_connection_get_port_type(NMSettingConnection *setting);
+
 NM_AVAILABLE_IN_1_2
+NM_DEPRECATED_IN_1_46
 NMSettingConnectionAutoconnectSlaves
 nm_setting_connection_get_autoconnect_slaves(NMSettingConnection *setting);
+
+NM_AVAILABLE_IN_1_46
+NMTernary nm_setting_connection_get_autoconnect_ports(NMSettingConnection *setting);
 
 guint32     nm_setting_connection_get_num_secondaries(NMSettingConnection *setting);
 const char *nm_setting_connection_get_secondary(NMSettingConnection *setting, guint32 idx);
@@ -232,8 +294,37 @@ gint32 nm_setting_connection_get_wait_device_timeout(NMSettingConnection *settin
 NM_AVAILABLE_IN_1_40
 gint32 nm_setting_connection_get_wait_activation_delay(NMSettingConnection *setting);
 
+NM_AVAILABLE_IN_1_48
+NMSettingConnectionDownOnPoweroff
+nm_setting_connection_get_down_on_poweroff(NMSettingConnection *setting);
+
 NM_AVAILABLE_IN_1_26
 const char *nm_setting_connection_get_mud_url(NMSettingConnection *setting);
+
+NM_AVAILABLE_IN_1_52
+guint32 nm_setting_connection_get_ip_ping_timeout(NMSettingConnection *setting);
+
+NM_AVAILABLE_IN_1_52
+const char *nm_setting_connection_get_ip_ping_address(NMSettingConnection *setting, guint32 idx);
+
+NM_AVAILABLE_IN_1_52
+gboolean nm_setting_connection_add_ip_ping_address(NMSettingConnection *setting,
+                                                   const char          *address);
+NM_AVAILABLE_IN_1_52
+void nm_setting_connection_remove_ip_ping_address(NMSettingConnection *setting, guint32 idx);
+
+NM_AVAILABLE_IN_1_52
+gboolean nm_setting_connection_remove_ip_ping_address_by_value(NMSettingConnection *setting,
+                                                               const char          *address);
+
+NM_AVAILABLE_IN_1_52
+void nm_setting_connection_clear_ip_ping_addresses(NMSettingConnection *setting);
+
+NM_AVAILABLE_IN_1_52
+NMTernary nm_setting_connection_get_ip_ping_addresses_require_all(NMSettingConnection *setting);
+
+NM_AVAILABLE_IN_1_56
+NMSettingConnectionDnssec nm_setting_connection_get_dnssec(NMSettingConnection *setting);
 
 G_END_DECLS
 

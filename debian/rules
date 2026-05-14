@@ -13,52 +13,59 @@ PPPD_PLUGIN_DIR := $(shell dh_ppp --plugin-dir)
 %:
 	dh $@ --with ppp
 
-override_dh_autoreconf:
-	NOCONFIGURE=true dh_autoreconf ./autogen.sh
-
 override_dh_auto_configure:
 	dh_auto_configure -- \
-		--runstatedir=/run \
-		--with-pppd-plugin-dir=$(PPPD_PLUGIN_DIR) \
-		--with-pppd=/usr/sbin/pppd \
-		--with-nft=/usr/sbin/nft \
-		--with-iptables=/usr/sbin/iptables \
-		--with-resolvconf=/sbin/resolvconf \
-		--with-dhclient=/sbin/dhclient \
-		--with-dnsmasq=/usr/sbin/dnsmasq \
-		--with-modprobe=/sbin/modprobe \
-		--with-polkit-agent-helper-1=/usr/lib/policykit-1/polkit-agent-helper-1 \
-		--with-systemdsystemunitdir=/usr/lib/systemd/system \
-		--with-udev-dir=/usr/lib/udev \
-		--with-dbus-sys-dir=/usr/share/dbus-1/system.d \
-		--with-crypto=gnutls \
-		--with-session-tracking=systemd \
-		--with-suspend-resume=systemd \
-		--with-modem-manager-1 \
-		--with-nmtui \
-		--with-nmcli \
-		--with-selinux \
-		--with-libaudit \
-		--with-iwd \
-		--without-dhcpcanon \
-		--without-nm-cloud-setup \
-		--enable-polkit \
-		--enable-polkit-agent \
-		--enable-ppp \
-		--enable-ifupdown \
-		--enable-introspection \
-		--enable-gtk-doc \
-		--enable-concheck \
-		--enable-teamdctl \
-		--enable-json-validation \
-		--enable-bluez5-dun \
-		--enable-vala \
-		--disable-more-warnings \
-		--disable-modify-system \
-		--disable-ovs
+		-Druntime_dir=/run \
+		-Dpppd_plugin_dir=$(PPPD_PLUGIN_DIR) \
+		-Dpppd=/usr/sbin/pppd \
+		-Dresolvconf=/usr/sbin/resolvconf \
+		-Dmodprobe=/usr/sbin/modprobe \
+		-Ddhcpcd=no \
+		-Diptables=/usr/sbin/iptables \
+		-Dip6tables=/usr/sbin/ip6tables \
+		-Dnft=/usr/sbin/nft \
+		-Ddnsmasq=/usr/sbin/dnsmasq \
+		-Dpolkit_agent_helper_1=/usr/lib/policykit-1/polkit-agent-helper-1 \
+		-Dsystemdsystemunitdir=/usr/lib/systemd/system \
+		-Dudev_dir=/usr/lib/udev \
+		-Ddbus_conf_dir=/usr/share/dbus-1/system.d \
+		-Dcrypto=gnutls \
+		-Dsession_tracking=systemd \
+		-Dsuspend_resume=systemd \
+		-Dmodem_manager=true \
+		-Dnmtui=true \
+		-Dnmcli=true \
+		-Dselinux=true \
+		-Dsystemd_journal=true \
+		-Dlibaudit=yes \
+		-Dwext=true \
+		-Dwifi=true \
+		-Diwd=true \
+		-Dppp=true \
+		-Dpolkit=true \
+		-Dintrospection=true \
+		-Ddocs=true \
+		-Dconcheck=true \
+		-Dteamdctl=true \
+		-Dbluez5_dun=true \
+		-Dvapi=true \
+		-Difupdown=true \
+		-Difcfg_rh=false \
+		-Dnm_cloud_setup=false \
+		-Dmodify_system=false \
+		-Dovs=true \
+		-Dqt=false \
+		-Debpf=false \
+		-Dnbft=false \
+		-Dofono=true
 
-execute_before_dh_install:
-	find debian/tmp -name '*.la' -print -delete
+execute_after_dh_auto_install:
+	# Those initrd specific services are not actually used by dracut and
+	# conflict with the main services, so remove them for now.
+	# https://bugs.debian.org/cgi-bin/bugreport.cgi?bug=1117732
+	rm -f debian/tmp/usr/lib/systemd/system/NetworkManager-config-initrd.service
+	rm -f debian/tmp/usr/lib/systemd/system/NetworkManager-wait-online-initrd.service
+	rm -f debian/tmp/usr/lib/systemd/system/NetworkManager-initrd.service
 
 override_dh_makeshlibs:
 	dh_makeshlibs -X/usr/lib/$(DEB_HOST_MULTIARCH)/NetworkManager/ -X/usr/lib/pppd/
@@ -69,3 +76,7 @@ override_dh_installsystemd:
 
 override_dh_ppp:
 	dh_ppp --breaks
+
+override_dh_auto_test:
+	# workaround for slower architectures like hppa, see #1075915
+	dh_auto_test -- --timeout-multiplier 2

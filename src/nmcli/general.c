@@ -28,7 +28,7 @@ static void permission_changed(GObject *gobject, GParamSpec *pspec, NmCli *nmc);
 static NM_UTILS_LOOKUP_STR_DEFINE(nm_state_to_string,
                                   NMState,
                                   NM_UTILS_LOOKUP_DEFAULT(N_("unknown")),
-                                  NM_UTILS_LOOKUP_ITEM(NM_STATE_ASLEEP, N_("asleep")),
+                                  NM_UTILS_LOOKUP_ITEM(NM_STATE_DISABLED, N_("network off")),
                                   NM_UTILS_LOOKUP_ITEM(NM_STATE_CONNECTING, N_("connecting")),
                                   NM_UTILS_LOOKUP_ITEM(NM_STATE_CONNECTED_LOCAL,
                                                        N_("connected (local only)")),
@@ -53,8 +53,8 @@ state_to_color(NMState state)
         return NM_META_COLOR_STATE_CONNECTED_GLOBAL;
     case NM_STATE_DISCONNECTING:
         return NM_META_COLOR_STATE_DISCONNECTING;
-    case NM_STATE_ASLEEP:
-        return NM_META_COLOR_STATE_ASLEEP;
+    case NM_STATE_DISABLED:
+        return NM_META_COLOR_STATE_DISABLED;
     case NM_STATE_DISCONNECTED:
         return NM_META_COLOR_STATE_DISCONNECTED;
     default:
@@ -116,6 +116,7 @@ _metagen_general_status_get_fcn(NMC_META_GENERIC_INFO_GET_FCN_ARGS)
     gboolean            v_bool;
     NMState             state;
     NMConnectivityState connectivity;
+    NMMetered           metered;
 
     switch (info->info_type) {
     case NMC_GENERIC_INFO_TYPE_GENERAL_STATUS_RUNNING:
@@ -170,6 +171,11 @@ _metagen_general_status_get_fcn(NMC_META_GENERIC_INFO_GET_FCN_ARGS)
     case NMC_GENERIC_INFO_TYPE_GENERAL_STATUS_WIMAX:
         /* deprecated fields. Don't return anything. */
         return NULL;
+    case NMC_GENERIC_INFO_TYPE_GENERAL_STATUS_METERED:
+        metered = nm_client_get_metered(nmc->client);
+        NMC_HANDLE_COLOR(NM_META_COLOR_NONE);
+        value = nmc_device_metered_to_string(metered);
+        goto translate_and_out;
     default:
         break;
     }
@@ -206,12 +212,13 @@ static const NmcMetaGenericInfo
         _METAGEN_GENERAL_STATUS(NMC_GENERIC_INFO_TYPE_GENERAL_STATUS_WWAN, "WWAN"),
         _METAGEN_GENERAL_STATUS(NMC_GENERIC_INFO_TYPE_GENERAL_STATUS_WIMAX_HW, "WIMAX-HW"),
         _METAGEN_GENERAL_STATUS(NMC_GENERIC_INFO_TYPE_GENERAL_STATUS_WIMAX, "WIMAX"),
+        _METAGEN_GENERAL_STATUS(NMC_GENERIC_INFO_TYPE_GENERAL_STATUS_METERED, "METERED"),
 };
 #define NMC_FIELDS_NM_STATUS_ALL \
-    "RUNNING,VERSION,STATE,STARTUP,CONNECTIVITY,NETWORKING,WIFI-HW,WIFI,WWAN-HW,WWAN"
+    "RUNNING,VERSION,STATE,STARTUP,CONNECTIVITY,NETWORKING,WIFI-HW,WIFI,WWAN-HW,WWAN,METERED"
 #define NMC_FIELDS_NM_STATUS_SWITCH "NETWORKING,WIFI-HW,WIFI,WWAN-HW,WWAN"
 #define NMC_FIELDS_NM_STATUS_RADIO  "WIFI-HW,WIFI,WWAN-HW,WWAN"
-#define NMC_FIELDS_NM_STATUS_COMMON "STATE,CONNECTIVITY,WIFI-HW,WIFI,WWAN-HW,WWAN"
+#define NMC_FIELDS_NM_STATUS_COMMON "STATE,CONNECTIVITY,WIFI-HW,WIFI,WWAN-HW,WWAN,METERED"
 #define NMC_FIELDS_NM_NETWORKING    "NETWORKING"
 #define NMC_FIELDS_NM_WIFI          "WIFI"
 #define NMC_FIELDS_NM_WWAN          "WWAN"
@@ -493,7 +500,7 @@ show_nm_status(NmCli *nmc, const char *pretty_header_name, const char *print_fld
         fields_str = nmc->required_fields;
 
     if (!nmc_print_table(&nmc->nmc_config,
-                         (gpointer[]){nmc, NULL},
+                         (gpointer[]) {nmc, NULL},
                          NULL,
                          pretty_header_name ?: N_("NetworkManager status"),
                          (const NMMetaAbstractInfo *const *) metagen_general_status,
@@ -726,7 +733,7 @@ show_general_logging(NmCli *nmc)
         fields_str = nmc->required_fields;
 
     if (!nmc_print_table(&nmc->nmc_config,
-                         (gpointer const[]){&d, NULL},
+                         (gpointer const[]) {&d, NULL},
                          NULL,
                          _("NetworkManager logging"),
                          (const NMMetaAbstractInfo *const *) metagen_general_logging,
@@ -926,7 +933,7 @@ do_general_hostname(const NMCCommand *cmd, NmCli *nmc, int argc, const char *con
 
     hostname = *argv;
     if (next_arg(nmc, &argc, &argv, NULL) == 0)
-        nmc_print("Warning: ignoring extra garbage after '%s' hostname\n", hostname);
+        nmc_printerr("Warning: ignoring extra garbage after '%s' hostname\n", hostname);
 
     nmc->should_wait++;
     nm_client_save_hostname_async(nmc->client, hostname, NULL, save_hostname_cb, nmc);
@@ -1411,36 +1418,57 @@ device_overview(NmCli *nmc, NMDevice *device)
 static void
 ac_overview(NmCli *nmc, NMActiveConnection *ac)
 {
-    GString                 *outbuf = g_string_sized_new(80);
-    NMIPConfig              *ip;
-    nm_auto_str_buf NMStrBuf str = NM_STR_BUF_INIT(NM_UTILS_GET_NEXT_REALLOC_SIZE_104, FALSE);
+    nm_auto_str_buf NMStrBuf str = NM_STR_BUF_INIT_A(NM_UTILS_GET_NEXT_REALLOC_SIZE_488, FALSE);
+    const guint              MAX_ADDRESSES = 10;
+    const guint              MAX_ROUTES    = 10;
+    int                      IS_IPv4;
 
     if (nm_active_connection_get_controller(ac)) {
-        g_string_append_printf(outbuf,
-                               "%s %s, ",
-                               _("master"),
-                               nm_device_get_iface(nm_active_connection_get_controller(ac)));
+        nm_str_buf_append_printf(&str,
+                                 "%s %s, ",
+                                 _("controller"),
+                                 nm_device_get_iface(nm_active_connection_get_controller(ac)));
     }
     if (nm_active_connection_get_vpn(ac))
-        g_string_append_printf(outbuf, "%s, ", _("VPN"));
+        nm_str_buf_append_printf(&str, "%s, ", _("VPN"));
     if (nm_active_connection_get_default(ac))
-        g_string_append_printf(outbuf, "%s, ", _("ip4 default"));
+        nm_str_buf_append_printf(&str, "%s, ", _("ip4 default"));
     if (nm_active_connection_get_default6(ac))
-        g_string_append_printf(outbuf, "%s, ", _("ip6 default"));
-    if (outbuf->len >= 2) {
-        g_string_truncate(outbuf, outbuf->len - 2);
-        nmc_print("\t%s\n", outbuf->str);
+        nm_str_buf_append_printf(&str, "%s, ", _("ip6 default"));
+    if (str.len >= 2) {
+        nm_str_buf_set_size(&str, str.len - 2u, TRUE, FALSE);
+        nmc_print("\t%s\n", nm_str_buf_get_str(&str));
     }
 
-    ip = nm_active_connection_get_ip4_config(ac);
-    if (ip) {
+    nm_str_buf_reset(&str);
+
+    for (IS_IPv4 = 1; IS_IPv4 >= 0; IS_IPv4--) {
+        NMIPConfig      *ip;
         const GPtrArray *p;
-        int              i;
+        guint            i;
+
+        ip = IS_IPv4 ? nm_active_connection_get_ip4_config(ac)
+                     : nm_active_connection_get_ip6_config(ac);
+        if (!ip)
+            continue;
 
         p = nm_ip_config_get_addresses(ip);
         for (i = 0; i < p->len; i++) {
             NMIPAddress *a = p->pdata[i];
-            nmc_print("\tinet4 %s/%d\n", nm_ip_address_get_address(a), nm_ip_address_get_prefix(a));
+
+            nmc_print("\tinet%c %s/%d\n",
+                      IS_IPv4 ? '4' : '6',
+                      nm_ip_address_get_address(a),
+                      nm_ip_address_get_prefix(a));
+
+            if (i >= MAX_ADDRESSES - 1u && p->len - i > 2u) {
+                /* Print always at least MAX_ADDRESSES fully.
+                 * If there are MAX_ADDRESSES+1 addresses, print them all fully.
+                 * If there are more addresses, print MAX_ADDRESSES fully, and a
+                 * "more" line. */
+                nmc_print("\tinet%c ... more\n", IS_IPv4 ? '4' : '6');
+                break;
+            }
         }
 
         p = nm_ip_config_get_routes(ip);
@@ -1450,33 +1478,14 @@ ac_overview(NmCli *nmc, NMActiveConnection *ac)
             nm_str_buf_reset(&str);
             _nm_ip_route_to_string(a, &str);
 
-            nmc_print("\troute4 %s\n", nm_str_buf_get_str(&str));
+            nmc_print("\troute%c %s\n", IS_IPv4 ? '4' : '6', nm_str_buf_get_str(&str));
+
+            if (i >= MAX_ROUTES - 1u && p->len - i > 2u) {
+                nmc_print("\troute%c ... more\n", IS_IPv4 ? '4' : '6');
+                break;
+            }
         }
     }
-
-    ip = nm_active_connection_get_ip6_config(ac);
-    if (ip) {
-        const GPtrArray *p;
-        int              i;
-
-        p = nm_ip_config_get_addresses(ip);
-        for (i = 0; i < p->len; i++) {
-            NMIPAddress *a = p->pdata[i];
-            nmc_print("\tinet6 %s/%d\n", nm_ip_address_get_address(a), nm_ip_address_get_prefix(a));
-        }
-
-        p = nm_ip_config_get_routes(ip);
-        for (i = 0; i < p->len; i++) {
-            NMIPRoute *a = p->pdata[i];
-
-            nm_str_buf_reset(&str);
-            _nm_ip_route_to_string(a, &str);
-
-            nmc_print("\troute6 %s\n", nm_str_buf_get_str(&str));
-        }
-    }
-
-    g_string_free(outbuf, TRUE);
 }
 
 void

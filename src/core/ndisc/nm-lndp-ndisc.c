@@ -19,6 +19,7 @@
 #include "libnm-systemd-shared/nm-sd-utils-shared.h"
 #include "nm-l3cfg.h"
 #include "nm-ndisc-private.h"
+#include "nm-core-utils.h"
 
 #define _NMLOG_PREFIX_NAME "ndisc-lndp"
 
@@ -27,6 +28,14 @@
 typedef struct {
     struct ndp *ndp;
     GSource    *event_source;
+
+    struct {
+        NMRateLimit pio_lft;
+        NMRateLimit mtu;
+        NMRateLimit omit_prefix;
+        NMRateLimit omit_dns;
+        NMRateLimit omit_dnssl;
+    } msg_ratelimit;
 } NMLndpNDiscPrivate;
 
 /*****************************************************************************/
@@ -46,6 +55,36 @@ G_DEFINE_TYPE(NMLndpNDisc, nm_lndp_ndisc, NM_TYPE_NDISC)
 
 #define NM_LNDP_NDISC_GET_PRIVATE(self) \
     _NM_GET_PRIVATE(self, NMLndpNDisc, NM_IS_LNDP_NDISC, NMNDisc)
+
+/*****************************************************************************/
+
+/*
+ * If we log a message about an invalid RA packet, don't repeat the same message
+ * at every packet received or sent. Rate limit the message to 6 every 12 hours
+ * per type and per ndisc instance.
+ */
+
+#define LOG_INV_RA_WINDOW (12 * 3600)
+#define LOG_INV_RA_BURST  6
+
+#define _LOG_INVALID_RA(ndisc, rate_limit, ...)                                  \
+    G_STMT_START                                                                 \
+    {                                                                            \
+        NMNDisc     *__ndisc  = (ndisc);                                         \
+        NMRateLimit *__rl     = (rate_limit);                                    \
+        const char  *__ifname = nm_ndisc_get_ifname(__ndisc);                    \
+                                                                                 \
+        if (__ifname && nm_logging_enabled(LOGL_WARN, LOGD_IP6)                  \
+            && nm_rate_limit_check(__rl, LOG_INV_RA_WINDOW, LOG_INV_RA_BURST)) { \
+            nm_log(LOGL_WARN,                                                    \
+                   LOGD_IP6,                                                     \
+                   __ifname,                                                     \
+                   NULL,                                                         \
+                   "ndisc (%s): " _NM_UTILS_MACRO_FIRST(__VA_ARGS__),            \
+                   __ifname _NM_UTILS_MACRO_REST(__VA_ARGS__));                  \
+        }                                                                        \
+    }                                                                            \
+    G_STMT_END
 
 /*****************************************************************************/
 
@@ -113,9 +152,11 @@ static int
 receive_ra(struct ndp *ndp, struct ndp_msg *msg, gpointer user_data)
 {
     NMNDisc             *ndisc   = (NMNDisc *) user_data;
+    NMLndpNDiscPrivate  *priv    = NM_LNDP_NDISC_GET_PRIVATE(ndisc);
     NMNDiscDataInternal *rdata   = ndisc->rdata;
     NMNDiscConfigMap     changed = 0;
-    struct ndp_msgra    *msgra   = ndp_msgra(msg);
+    NMNDiscGateway       gateway;
+    struct ndp_msgra    *msgra = ndp_msgra(msg);
     struct in6_addr      gateway_addr;
     const gint64         now_msec = nm_utils_get_monotonic_timestamp_msec();
     int                  offset;
@@ -161,7 +202,7 @@ receive_ra(struct ndp *ndp, struct ndp_msg *msg, gpointer user_data)
          * let's keep the "most managed" level. */
         G_STATIC_ASSERT_EXPR(NM_NDISC_DHCP_LEVEL_MANAGED > NM_NDISC_DHCP_LEVEL_OTHERCONF);
         G_STATIC_ASSERT_EXPR(NM_NDISC_DHCP_LEVEL_OTHERCONF > NM_NDISC_DHCP_LEVEL_NONE);
-        dhcp_level = MAX(dhcp_level, rdata->public.dhcp_level);
+        dhcp_level = NM_MAX(dhcp_level, rdata->public.dhcp_level);
 
         if (dhcp_level != rdata->public.dhcp_level) {
             rdata->public.dhcp_level = dhcp_level;
@@ -174,23 +215,17 @@ receive_ra(struct ndp *ndp, struct ndp_msg *msg, gpointer user_data)
      * Subsequent router advertisements can represent new default gateways
      * on the network. We should present all of them in router preference
      * order.
-     */
-    {
-        const NMNDiscGateway gateway = {
-            .address     = gateway_addr,
-            .expiry_msec = _nm_ndisc_lifetime_to_expiry(now_msec, ndp_msgra_router_lifetime(msgra)),
-            .preference  = _route_preference_coerce(ndp_msgra_route_preference(msgra)),
-        };
-
-        /* https://tools.ietf.org/html/rfc2461#section-4.2
-         *   > A Lifetime of 0 indicates that the router is not a
-         *   > default router and SHOULD NOT appear on the default
-         *   > router list.
-         * We handle that by tracking a gateway that expires right now. */
-
-        if (nm_ndisc_add_gateway(ndisc, &gateway, now_msec))
-            changed |= NM_NDISC_CONFIG_GATEWAYS;
-    }
+     *
+     * https://tools.ietf.org/html/rfc2461#section-4.2 :
+     * A Lifetime of 0 indicates that the router is not a default router and
+     * SHOULD NOT appear on the default router list.
+     *
+     * We handle that by tracking a gateway that expires right now. */
+    gateway = (NMNDiscGateway) {
+        .address     = gateway_addr,
+        .expiry_msec = _nm_ndisc_lifetime_to_expiry(now_msec, ndp_msgra_router_lifetime(msgra)),
+        .preference  = _route_preference_coerce(ndp_msgra_route_preference(msgra)),
+    };
 
     /* Addresses & Routes */
     ndp_msg_opt_for_each_offset (offset, msg, NDP_MSG_OPT_PREFIX) {
@@ -223,10 +258,26 @@ receive_ra(struct ndp *ndp, struct ndp_msg *msg, gpointer user_data)
 
         /* Address */
         if (r_plen == 64 && ndp_msg_opt_prefix_flag_auto_addr_conf(msg, offset)) {
-            const guint32 valid_time = ndp_msg_opt_prefix_valid_time(msg, offset);
-            const guint32 preferred_time =
-                NM_MIN(ndp_msg_opt_prefix_preferred_time(msg, offset), valid_time);
-            const NMNDiscAddress address = {
+            const guint32  valid_time     = ndp_msg_opt_prefix_valid_time(msg, offset);
+            const guint32  preferred_time = ndp_msg_opt_prefix_preferred_time(msg, offset);
+            NMNDiscAddress address;
+
+            /*
+             * RFC 4862 Section 5.5.3 states:
+             * c)  If the preferred lifetime is greater than the valid lifetime,
+             * silently ignore the Prefix Information option. A node MAY wish to
+             * log a system management error in this case.
+             */
+            if (preferred_time > valid_time) {
+                _LOG_INVALID_RA(
+                    ndisc,
+                    &priv->msg_ratelimit.pio_lft,
+                    "ignoring Prefix Information Option with invalid lifetimes in received IPv6 "
+                    "router advertisement");
+                continue;
+            }
+
+            address = (NMNDiscAddress) {
                 .address               = r_network,
                 .expiry_msec           = _nm_ndisc_lifetime_to_expiry(now_msec, valid_time),
                 .expiry_preferred_msec = _nm_ndisc_lifetime_to_expiry(now_msec, preferred_time),
@@ -240,8 +291,23 @@ receive_ra(struct ndp *ndp, struct ndp_msg *msg, gpointer user_data)
         guint8          plen = ndp_msg_opt_route_prefix_len(msg, offset);
         struct in6_addr network;
 
-        if (plen == 0 || plen > 128)
+        if (plen > 128)
             continue;
+
+        if (plen == 0) {
+            /* https://tools.ietf.org/html/rfc4191#section-3.1 :
+             * When processing a Router Advertisement, a type C host first updates a
+             * ::/0 route based on the Router Lifetime and Default Router Preference
+             * in the Router Advertisement message header. [...] The Router Preference
+             * and Lifetime values in a ::/0 Route Information Option override the
+             * preference and lifetime values in the Router Advertisement header.
+             */
+            gateway.preference =
+                _route_preference_coerce(ndp_msg_opt_route_preference(msg, offset));
+            gateway.expiry_msec =
+                _nm_ndisc_lifetime_to_expiry(now_msec, ndp_msg_opt_route_lifetime(msg, offset));
+            continue;
+        }
 
         nm_ip6_addr_clear_host_address(&network, ndp_msg_opt_route_prefix(msg, offset), plen);
 
@@ -261,6 +327,9 @@ receive_ra(struct ndp *ndp, struct ndp_msg *msg, gpointer user_data)
                 changed |= NM_NDISC_CONFIG_ROUTES;
         }
     }
+
+    if (nm_ndisc_add_gateway(ndisc, &gateway, now_msec))
+        changed |= NM_NDISC_CONFIG_GATEWAYS;
 
     ndp_msg_opt_for_each_offset (offset, msg, NDP_MSG_OPT_RDNSS) {
         struct in6_addr *addr;
@@ -324,7 +393,11 @@ receive_ra(struct ndp *ndp, struct ndp_msg *msg, gpointer user_data)
              * Kernel would set it, but would flush out all IPv6 addresses away
              * from the link, even the link-local, and we wouldn't be able to
              * listen for further RAs that could fix the MTU. */
-            _LOGW("MTU too small for IPv6 ignored: %d", mtu);
+            _LOG_INVALID_RA(ndisc,
+                            &priv->msg_ratelimit.mtu,
+                            "ignoring too small MTU %u in received IPv6 "
+                            "router advertisement",
+                            mtu);
         }
     }
 
@@ -420,8 +493,11 @@ send_ra(NMNDisc *ndisc, GError **error)
 
         prefix = _ndp_msg_add_option(msg, sizeof(*prefix));
         if (!prefix) {
-            /* Maybe we could sent separate RAs, but why bother... */
-            _LOGW("The RA is too big, had to omit some some prefixes.");
+            /* Maybe we could send separate RAs, but why bother... */
+            _LOG_INVALID_RA(
+                ndisc,
+                &priv->msg_ratelimit.omit_prefix,
+                "the outgoing IPv6 router advertisement is too big: omitting some prefixes");
             break;
         }
 
@@ -450,7 +526,10 @@ send_ra(NMNDisc *ndisc, GError **error)
 
         option = _ndp_msg_add_option(msg, len);
         if (!option) {
-            _LOGW("The RA is too big, had to omit DNS information.");
+            _LOG_INVALID_RA(
+                ndisc,
+                &priv->msg_ratelimit.omit_dns,
+                "the outgoing IPv6 router advertisement is too big: omitting DNS information");
             goto dns_servers_done;
         }
 
@@ -528,7 +607,10 @@ dns_servers_done:
         nm_assert(len / 8u >= 2u);
 
         if (len / 8u >= 256u || !(option = _ndp_msg_add_option(msg, len))) {
-            _LOGW("The RA is too big, had to omit DNS search list.");
+            _LOG_INVALID_RA(
+                ndisc,
+                &priv->msg_ratelimit.omit_dnssl,
+                "the outgoing IPv6 router advertisement is too big: omitting DNS search list");
             goto dns_domains_done;
         }
 

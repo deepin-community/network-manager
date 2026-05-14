@@ -10,8 +10,6 @@
 #include "n-acd/src/n-acd.h"
 #include "nm-core-utils.h"
 
-#define ADDR_IPV4LL_PREFIX_LEN 16
-
 #define TIMED_OUT_TIME_FACTOR 5u
 
 /*****************************************************************************/
@@ -193,7 +191,7 @@ _ipv4ll_emit_signal_notify(NML3IPv4LL *self)
     self->notify_on_idle = FALSE;
 
     notify_data.notify_type  = NM_L3_CONFIG_NOTIFY_TYPE_IPV4LL_EVENT;
-    notify_data.ipv4ll_event = (typeof(notify_data.ipv4ll_event)){
+    notify_data.ipv4ll_event = (typeof(notify_data.ipv4ll_event)) {
         .ipv4ll = self,
     };
     _nm_l3cfg_emit_signal_notify(self->l3cfg, &notify_data);
@@ -233,7 +231,7 @@ _registration_update(NML3IPv4LL             *self,
 
     if (!reg) {
         reg  = g_slice_new(NML3IPv4LLRegistration);
-        *reg = (NML3IPv4LLRegistration){
+        *reg = (NML3IPv4LLRegistration) {
             .self         = self,
             .timeout_msec = timeout_msec,
         };
@@ -286,15 +284,6 @@ nm_l3_ipv4ll_register_remove(NML3IPv4LLRegistration *reg)
 /*****************************************************************************/
 
 static gboolean
-_ip4_address_is_link_local(const NMPlatformIP4Address *a)
-{
-    nm_assert(a);
-
-    return nm_ip4_addr_is_link_local(a->address) && a->plen == ADDR_IPV4LL_PREFIX_LEN
-           && a->address == a->peer_address;
-}
-
-static gboolean
 _acd_info_is_good(const NML3AcdAddrInfo *acd_info)
 {
     if (!acd_info)
@@ -333,7 +322,7 @@ _l3cd_config_create(int ifindex, in_addr_t addr, NMDedupMultiIndex *multi_idx)
         NM_PLATFORM_IP4_ADDRESS_INIT(.ifindex      = ifindex,
                                      .address      = addr,
                                      .peer_address = addr,
-                                     .plen         = ADDR_IPV4LL_PREFIX_LEN,
+                                     .plen         = NM_IPV4LL_PREFIXLEN,
                                      .addr_source  = NM_IP_CONFIG_SOURCE_IP4LL));
 
     nm_l3_config_data_add_route_4(l3cd,
@@ -359,7 +348,7 @@ _l3cd_config_get_addr(const NML3ConfigData *l3cd)
     nm_l3_config_data_iter_ip4_address_for_each (&iter, l3cd, &pladdr) {
         const in_addr_t addr = pladdr->address;
 
-        nm_assert(_ip4_address_is_link_local(pladdr));
+        nm_assert(nm_platform_ip4_address_is_link_local(pladdr));
 #if NM_MORE_ASSERTS > 10
         {
             nm_auto_unref_l3cd const NML3ConfigData *l3cd2 = NULL;
@@ -390,23 +379,23 @@ _ipv4ll_addrgen(NML3IPv4LL *self, gboolean generate_new_addr)
     _ASSERT(self);
 
     /* MAC_HASH_KEY is the same as used by systemd. */
-#define MAC_HASH_KEY          \
-    ((const guint8[16]){0xdf, \
-                        0x04, \
-                        0x22, \
-                        0x98, \
-                        0x3f, \
-                        0xad, \
-                        0x14, \
-                        0x52, \
-                        0xf9, \
-                        0x87, \
-                        0x2e, \
-                        0xd1, \
-                        0x9c, \
-                        0x70, \
-                        0xe2, \
-                        0xf2})
+#define MAC_HASH_KEY      \
+    NM_HASH_SEED_16(0xdf, \
+                    0x04, \
+                    0x22, \
+                    0x98, \
+                    0x3f, \
+                    0xad, \
+                    0x14, \
+                    0x52, \
+                    0xf9, \
+                    0x87, \
+                    0x2e, \
+                    0xd1, \
+                    0x9c, \
+                    0x70, \
+                    0xe2, \
+                    0xf2)
 
     if (self->mac_set && (!self->seed_set || !nm_ether_addr_equal(&self->mac, &self->seed_mac))) {
         /* systemd's ipv4ll library by default only hashes the MAC address (as we do here).
@@ -465,23 +454,23 @@ _ipv4ll_addrgen(NML3IPv4LL *self, gboolean generate_new_addr)
 
 gen_addr:
 
-#define PICK_HASH_KEY         \
-    ((const guint8[16]){0x15, \
-                        0xac, \
-                        0x82, \
-                        0xa6, \
-                        0xd6, \
-                        0x3f, \
-                        0x49, \
-                        0x78, \
-                        0x98, \
-                        0x77, \
-                        0x5d, \
-                        0x0c, \
-                        0x69, \
-                        0x02, \
-                        0x94, \
-                        0x0b})
+#define PICK_HASH_KEY     \
+    NM_HASH_SEED_16(0x15, \
+                    0xac, \
+                    0x82, \
+                    0xa6, \
+                    0xd6, \
+                    0x3f, \
+                    0x49, \
+                    0x78, \
+                    0x98, \
+                    0x77, \
+                    0x5d, \
+                    0x0c, \
+                    0x69, \
+                    0x02, \
+                    0x94, \
+                    0x0b)
 
     h = c_siphash_hash(PICK_HASH_KEY, (const guint8 *) &self->seed, sizeof(self->seed));
 
@@ -644,11 +633,11 @@ _ipv4ll_platform_ip4_address_lookup(NML3IPv4LL *self, in_addr_t addr)
     pladdr = nm_platform_ip4_address_get(nm_l3_ipv4ll_get_platform(self),
                                          nm_l3_ipv4ll_get_ifindex(self),
                                          addr,
-                                         ADDR_IPV4LL_PREFIX_LEN,
+                                         NM_IPV4LL_PREFIXLEN,
                                          addr);
 
     nm_assert(!pladdr || pladdr->address == addr);
-    nm_assert(!pladdr || _ip4_address_is_link_local(pladdr));
+    nm_assert(!pladdr || nm_platform_ip4_address_is_link_local(pladdr));
     return pladdr;
 }
 
@@ -677,7 +666,7 @@ _ipv4ll_platform_find_addr(NML3IPv4LL *self, const NML3AcdAddrInfo **out_acd_inf
                                       nm_l3_ipv4ll_get_ifindex(self));
     nm_platform_iter_obj_for_each (&iter, nm_l3_ipv4ll_get_platform(self), &lookup, &obj) {
         addr = NMP_OBJECT_CAST_IP4_ADDRESS(obj);
-        if (!_ip4_address_is_link_local(addr))
+        if (!nm_platform_ip4_address_is_link_local(addr))
             continue;
 
         acd_info = _ipv4ll_l3cfg_get_acd_addr_info(self, addr->address);
@@ -962,7 +951,7 @@ nm_l3_ipv4ll_new(NML3Cfg *l3cfg)
     g_return_val_if_fail(NM_IS_L3CFG(l3cfg), NULL);
 
     self  = g_slice_new(NML3IPv4LL);
-    *self = (NML3IPv4LL){
+    *self = (NML3IPv4LL) {
         .l3cfg                       = g_object_ref(l3cfg),
         .ref_count                   = 1,
         .reg_lst_head                = C_LIST_INIT(self->reg_lst_head),

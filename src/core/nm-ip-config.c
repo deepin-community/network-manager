@@ -16,6 +16,10 @@
 
 /*****************************************************************************/
 
+#define NOTIFY_PLATFORM_RATELIMIT_MSEC 333
+
+/*****************************************************************************/
+
 GType nm_ip4_config_get_type(void);
 GType nm_ip6_config_get_type(void);
 
@@ -68,15 +72,82 @@ _value_set_variant_as(GValue *value, const char *const *strv, guint len)
 /*****************************************************************************/
 
 static void
+_notify_platform_handle(NMIPConfig *self, gint64 now_msec)
+{
+    NMIPConfigPrivate *priv = NM_IP_CONFIG_GET_PRIVATE(self);
+    guint32            obj_type_flags;
+
+    nm_clear_g_source_inst(&priv->notify_platform_timeout_source);
+
+    priv->notify_platform_rlimited_until_msec = now_msec + NOTIFY_PLATFORM_RATELIMIT_MSEC;
+
+    obj_type_flags = nm_steal_int(&priv->notify_platform_obj_type_flags);
+
+    nm_assert(obj_type_flags != 0u);
+
+    _handle_platform_change(self, obj_type_flags, FALSE);
+}
+
+static gboolean
+_notify_platform_cb(gpointer user_data)
+{
+    _notify_platform_handle(user_data, nm_utils_get_monotonic_timestamp_msec());
+    return G_SOURCE_CONTINUE;
+}
+
+static void
+_notify_platform(NMIPConfig *self, guint32 obj_type_flags)
+{
+    const int          addr_family = nm_ip_config_get_addr_family(self);
+    const int          IS_IPv4     = NM_IS_IPv4(addr_family);
+    NMIPConfigPrivate *priv        = NM_IP_CONFIG_GET_PRIVATE(self);
+    gint64             now_msec;
+
+    obj_type_flags &= (nmp_object_type_to_flags(NMP_OBJECT_TYPE_IP_ADDRESS(IS_IPv4))
+                       | nmp_object_type_to_flags(NMP_OBJECT_TYPE_IP_ROUTE(IS_IPv4)));
+
+    if (obj_type_flags == 0u)
+        return;
+
+    priv->notify_platform_obj_type_flags |= obj_type_flags;
+
+    if (priv->notify_platform_timeout_source) {
+        /* We are currently rate limited. Don't bother to check whether
+         * (now_msec < priv->notify_platform_rlimited_until_msec), just always
+         * delegate to the timeout handler. It is scheduled with a lower idle
+         * priority, so we want that additional backoff. */
+        return;
+    }
+
+    now_msec = nm_utils_get_monotonic_timestamp_msec();
+
+    if (now_msec < priv->notify_platform_rlimited_until_msec) {
+        priv->notify_platform_timeout_source = nm_g_source_attach(
+            /* Schedule with a low G_PRIORITY_LOW. */
+            nm_g_timeout_source_new(priv->notify_platform_rlimited_until_msec - now_msec,
+                                    G_PRIORITY_LOW - 10,
+                                    _notify_platform_cb,
+                                    self,
+                                    NULL),
+            NULL);
+        return;
+    }
+
+    _notify_platform_handle(self, now_msec);
+}
+
+/*****************************************************************************/
+
+static void
 _l3cfg_notify_cb(NML3Cfg *l3cfg, const NML3ConfigNotifyData *notify_data, NMIPConfig *self)
 {
     switch (notify_data->notify_type) {
-    case NM_L3_CONFIG_NOTIFY_TYPE_L3CD_CHANGED:
-        if (notify_data->l3cd_changed.commited)
-            _handle_l3cd_changed(self, notify_data->l3cd_changed.l3cd_new);
+    case NM_L3_CONFIG_NOTIFY_TYPE_PRE_COMMIT:
+        if (notify_data->commit.l3cd_changed)
+            _handle_l3cd_changed(self, notify_data->commit.l3cd_new);
         break;
     case NM_L3_CONFIG_NOTIFY_TYPE_PLATFORM_CHANGE_ON_IDLE:
-        _handle_platform_change(self, notify_data->platform_change_on_idle.obj_type_flags, FALSE);
+        _notify_platform(self, notify_data->platform_change_on_idle.obj_type_flags);
         break;
     default:
         break;
@@ -91,6 +162,7 @@ get_property_ip(GObject *object, guint prop_id, GValue *value, GParamSpec *pspec
     NMIPConfig        *self        = NM_IP_CONFIG(object);
     NMIPConfigPrivate *priv        = NM_IP_CONFIG_GET_PRIVATE(self);
     const int          addr_family = nm_ip_config_get_addr_family(self);
+    char             **to_free     = NULL;
     char               sbuf_addr[NM_INET_ADDRSTRLEN];
     const char *const *strv;
     guint              len;
@@ -122,7 +194,20 @@ get_property_ip(GObject *object, guint prop_id, GValue *value, GParamSpec *pspec
         break;
     case PROP_IP_SEARCHES:
         strv = nm_l3_config_data_get_searches(priv->l3cd, addr_family, &len);
+        if (strv) {
+            strv = nm_utils_buf_utf8safe_escape_strv(
+                strv,
+                len,
+                NM_UTILS_STR_UTF8_SAFE_FLAG_ESCAPE_CTRL
+                    | NM_UTILS_STR_UTF8_SAFE_FLAG_ESCAPE_NON_ASCII,
+                &to_free);
+        }
+
         _value_set_variant_as(value, strv, len);
+
+        if (to_free) {
+            g_strfreev(to_free);
+        }
         break;
     case PROP_IP_DNS_PRIORITY:
         v_i = nm_l3_config_data_get_dns_priority_or_default(priv->l3cd, addr_family);
@@ -206,6 +291,8 @@ finalize(GObject *object)
 {
     NMIPConfig        *self = NM_IP_CONFIG(object);
     NMIPConfigPrivate *priv = NM_IP_CONFIG_GET_PRIVATE(self);
+
+    nm_clear_g_source_inst(&priv->notify_platform_timeout_source);
 
     nm_clear_g_signal_handler(priv->l3cfg, &priv->l3cfg_notify_id);
 
@@ -362,22 +449,27 @@ get_property_ip4(GObject *object, guint prop_id, GValue *value, GParamSpec *pspe
             else
                 g_variant_builder_init(&builder, G_VARIANT_TYPE("aa{sv}"));
             for (i = 0; i < len; i++) {
-                in_addr_t a;
+                NMIPAddr a;
 
-                if (!nm_utils_dnsname_parse_assert(AF_INET, strarr[i], NULL, &a, NULL))
-                    continue;
-
-                if (prop_id == PROP_IP4_NAMESERVERS)
+                if (prop_id == PROP_IP4_NAMESERVERS) {
+                    if (!nm_dns_uri_parse_plain(AF_INET, strarr[i], NULL, &a))
+                        continue;
                     g_variant_builder_add(&builder, "u", a);
-                else {
+                } else {
                     GVariantBuilder nested_builder;
+                    char            addrstr[NM_INET_ADDRSTRLEN];
 
-                    nm_inet4_ntop(a, addr_str);
                     g_variant_builder_init(&nested_builder, G_VARIANT_TYPE("a{sv}"));
+                    if (nm_dns_uri_parse_plain(AF_INET, strarr[i], addrstr, NULL)) {
+                        g_variant_builder_add(&nested_builder,
+                                              "{sv}",
+                                              "address",
+                                              g_variant_new_string(addrstr));
+                    }
                     g_variant_builder_add(&nested_builder,
                                           "{sv}",
-                                          "address",
-                                          g_variant_new_string(addr_str));
+                                          "uri",
+                                          g_variant_new_string(strarr[i]));
                     g_variant_builder_add(&builder, "a{sv}", &nested_builder);
                 }
             }
@@ -412,23 +504,31 @@ static const NMDBusInterfaceInfoExtended interface_info_ip4_config = {
     .parent = NM_DEFINE_GDBUS_INTERFACE_INFO_INIT(
         NM_DBUS_INTERFACE_IP4_CONFIG,
         .properties = NM_DEFINE_GDBUS_PROPERTY_INFOS(
-            NM_DEFINE_DBUS_PROPERTY_INFO_EXTENDED_READABLE("Addresses",
-                                                           "aau",
-                                                           NM_IP4_CONFIG_ADDRESSES),
+            NM_DEFINE_DBUS_PROPERTY_INFO_EXTENDED_READABLE(
+                "Addresses",
+                "aau",
+                NM_IP4_CONFIG_ADDRESSES,
+                .annotations = NM_GDBUS_ANNOTATION_INFO_LIST_DEPRECATED(), ),
             NM_DEFINE_DBUS_PROPERTY_INFO_EXTENDED_READABLE("AddressData",
                                                            "aa{sv}",
                                                            NM_IP_CONFIG_ADDRESS_DATA),
             NM_DEFINE_DBUS_PROPERTY_INFO_EXTENDED_READABLE("Gateway", "s", NM_IP_CONFIG_GATEWAY),
-            NM_DEFINE_DBUS_PROPERTY_INFO_EXTENDED_READABLE("Routes", "aau", NM_IP4_CONFIG_ROUTES),
+            NM_DEFINE_DBUS_PROPERTY_INFO_EXTENDED_READABLE(
+                "Routes",
+                "aau",
+                NM_IP4_CONFIG_ROUTES,
+                .annotations = NM_GDBUS_ANNOTATION_INFO_LIST_DEPRECATED(), ),
             NM_DEFINE_DBUS_PROPERTY_INFO_EXTENDED_READABLE("RouteData",
                                                            "aa{sv}",
                                                            NM_IP_CONFIG_ROUTE_DATA),
             NM_DEFINE_DBUS_PROPERTY_INFO_EXTENDED_READABLE("NameserverData",
                                                            "aa{sv}",
                                                            NM_IP4_CONFIG_NAMESERVER_DATA),
-            NM_DEFINE_DBUS_PROPERTY_INFO_EXTENDED_READABLE("Nameservers",
-                                                           "au",
-                                                           NM_IP4_CONFIG_NAMESERVERS),
+            NM_DEFINE_DBUS_PROPERTY_INFO_EXTENDED_READABLE(
+                "Nameservers",
+                "au",
+                NM_IP4_CONFIG_NAMESERVERS,
+                .annotations = NM_GDBUS_ANNOTATION_INFO_LIST_DEPRECATED(), ),
             NM_DEFINE_DBUS_PROPERTY_INFO_EXTENDED_READABLE("Domains", "as", NM_IP_CONFIG_DOMAINS),
             NM_DEFINE_DBUS_PROPERTY_INFO_EXTENDED_READABLE("Searches", "as", NM_IP_CONFIG_SEARCHES),
             NM_DEFINE_DBUS_PROPERTY_INFO_EXTENDED_READABLE("DnsOptions",
@@ -440,9 +540,11 @@ static const NMDBusInterfaceInfoExtended interface_info_ip4_config = {
             NM_DEFINE_DBUS_PROPERTY_INFO_EXTENDED_READABLE("WinsServerData",
                                                            "as",
                                                            NM_IP4_CONFIG_WINS_SERVER_DATA),
-            NM_DEFINE_DBUS_PROPERTY_INFO_EXTENDED_READABLE("WinsServers",
-                                                           "au",
-                                                           NM_IP4_CONFIG_WINS_SERVERS), ), ),
+            NM_DEFINE_DBUS_PROPERTY_INFO_EXTENDED_READABLE(
+                "WinsServers",
+                "au",
+                NM_IP4_CONFIG_WINS_SERVERS,
+                .annotations = NM_GDBUS_ANNOTATION_INFO_LIST_DEPRECATED(), ), ), ),
 };
 
 static void
@@ -541,16 +643,20 @@ static const NMDBusInterfaceInfoExtended interface_info_ip6_config = {
     .parent = NM_DEFINE_GDBUS_INTERFACE_INFO_INIT(
         NM_DBUS_INTERFACE_IP6_CONFIG,
         .properties = NM_DEFINE_GDBUS_PROPERTY_INFOS(
-            NM_DEFINE_DBUS_PROPERTY_INFO_EXTENDED_READABLE("Addresses",
-                                                           "a(ayuay)",
-                                                           NM_IP6_CONFIG_ADDRESSES),
+            NM_DEFINE_DBUS_PROPERTY_INFO_EXTENDED_READABLE(
+                "Addresses",
+                "a(ayuay)",
+                NM_IP6_CONFIG_ADDRESSES,
+                .annotations = NM_GDBUS_ANNOTATION_INFO_LIST_DEPRECATED(), ),
             NM_DEFINE_DBUS_PROPERTY_INFO_EXTENDED_READABLE("AddressData",
                                                            "aa{sv}",
                                                            NM_IP_CONFIG_ADDRESS_DATA),
             NM_DEFINE_DBUS_PROPERTY_INFO_EXTENDED_READABLE("Gateway", "s", NM_IP_CONFIG_GATEWAY),
-            NM_DEFINE_DBUS_PROPERTY_INFO_EXTENDED_READABLE("Routes",
-                                                           "a(ayuayu)",
-                                                           NM_IP6_CONFIG_ROUTES),
+            NM_DEFINE_DBUS_PROPERTY_INFO_EXTENDED_READABLE(
+                "Routes",
+                "a(ayuayu)",
+                NM_IP6_CONFIG_ROUTES,
+                .annotations = NM_GDBUS_ANNOTATION_INFO_LIST_DEPRECATED(), ),
             NM_DEFINE_DBUS_PROPERTY_INFO_EXTENDED_READABLE("RouteData",
                                                            "aa{sv}",
                                                            NM_IP_CONFIG_ROUTE_DATA),
@@ -591,12 +697,13 @@ get_property_ip6(GObject *object, guint prop_id, GValue *value, GParamSpec *pspe
         else {
             g_variant_builder_init(&builder, G_VARIANT_TYPE("aay"));
             for (i = 0; i < len; i++) {
-                struct in6_addr a;
+                NMIPAddr a;
 
-                if (!nm_utils_dnsname_parse_assert(AF_INET6, strarr[i], NULL, &a, NULL))
+                /* TODO: expose the full URI as well */
+                if (!nm_dns_uri_parse_plain(AF_INET6, strarr[i], NULL, &a))
                     continue;
 
-                g_variant_builder_add(&builder, "@ay", nm_g_variant_new_ay_in6addr(&a));
+                g_variant_builder_add(&builder, "@ay", nm_g_variant_new_ay_in6addr(&a.addr6));
             }
             g_value_take_variant(value, g_variant_builder_end(&builder));
         }
@@ -719,7 +826,7 @@ _handle_l3cd_changed(NMIPConfig *self, const NML3ConfigData *l3cd)
     if (v_i != v_i_old)
         changed_params[n_changed_params++] = obj_properties_ip[PROP_IP_DNS_PRIORITY];
 
-    strarr_old = nm_l3_config_data_get_dns_options(l3cd_old, addr_family, &len);
+    strarr_old = nm_l3_config_data_get_dns_options(l3cd_old, addr_family, &len_old);
     strarr     = nm_l3_config_data_get_dns_options(priv->l3cd, addr_family, &len);
     if (!nm_strv_equal_n(strarr, len, strarr_old, len_old))
         changed_params[n_changed_params++] = obj_properties_ip[PROP_IP_DNS_OPTIONS];

@@ -72,7 +72,7 @@ parent_hwaddr_maybe_changed(NMDevice *parent, GParamSpec *pspec, gpointer user_d
     const char   *new_mac;
 
     /* Never touch assumed devices */
-    if (nm_device_sys_iface_state_is_external_or_assume(device))
+    if (nm_device_managed_type_is_external_or_assume(device))
         return;
 
     connection = nm_device_get_applied_connection(device);
@@ -241,7 +241,7 @@ create_and_realize(NMDevice              *device,
     r = nm_platform_link_vlan_add(nm_device_get_platform(device),
                                   iface,
                                   parent_ifindex,
-                                  &((NMPlatformLnkVlan){
+                                  &((NMPlatformLnkVlan) {
                                       .id       = vlan_id,
                                       .flags    = nm_setting_vlan_get_flags(s_vlan),
                                       .protocol = protocol,
@@ -288,16 +288,6 @@ get_generic_capabilities(NMDevice *device)
 {
     /* We assume VLAN interfaces always support carrier detect */
     return NM_DEVICE_CAP_CARRIER_DETECT | NM_DEVICE_CAP_IS_SOFTWARE;
-}
-
-/*****************************************************************************/
-
-static gboolean
-is_available(NMDevice *device, NMDeviceCheckDevAvailableFlags flags)
-{
-    if (!nm_device_parent_get_device(device))
-        return FALSE;
-    return NM_DEVICE_CLASS(nm_device_vlan_parent_class)->is_available(device, flags);
 }
 
 /*****************************************************************************/
@@ -379,8 +369,7 @@ complete_connection(NMDevice            *device,
                               NULL,
                               _("VLAN connection"),
                               NULL,
-                              NULL,
-                              TRUE);
+                              NULL);
 
     s_vlan = nm_connection_get_setting_vlan(connection);
     if (!s_vlan) {
@@ -525,8 +514,16 @@ static const NMDBusInterfaceInfoExtended interface_info_device_vlan = {
     .parent = NM_DEFINE_GDBUS_INTERFACE_INFO_INIT(
         NM_DBUS_INTERFACE_DEVICE_VLAN,
         .properties = NM_DEFINE_GDBUS_PROPERTY_INFOS(
-            NM_DEFINE_DBUS_PROPERTY_INFO_EXTENDED_READABLE("HwAddress", "s", NM_DEVICE_HW_ADDRESS),
-            NM_DEFINE_DBUS_PROPERTY_INFO_EXTENDED_READABLE("Carrier", "b", NM_DEVICE_CARRIER),
+            NM_DEFINE_DBUS_PROPERTY_INFO_EXTENDED_READABLE(
+                "HwAddress",
+                "s",
+                NM_DEVICE_HW_ADDRESS,
+                .annotations = NM_GDBUS_ANNOTATION_INFO_LIST_DEPRECATED(), ),
+            NM_DEFINE_DBUS_PROPERTY_INFO_EXTENDED_READABLE(
+                "Carrier",
+                "b",
+                NM_DEVICE_CARRIER,
+                .annotations = NM_GDBUS_ANNOTATION_INFO_LIST_DEPRECATED(), ),
             NM_DEFINE_DBUS_PROPERTY_INFO_EXTENDED_READABLE("Parent", "o", NM_DEVICE_PARENT),
             NM_DEFINE_DBUS_PROPERTY_INFO_EXTENDED_READABLE("VlanId", "u", NM_DEVICE_VLAN_ID), ), ),
 };
@@ -554,7 +551,6 @@ nm_device_vlan_class_init(NMDeviceVlanClass *klass)
     device_class->act_stage1_prepare_set_hwaddr_ethernet = TRUE;
     device_class->act_stage1_prepare                     = act_stage1_prepare;
     device_class->get_configured_mtu    = nm_device_get_configured_mtu_wired_parent;
-    device_class->is_available          = is_available;
     device_class->parent_changed_notify = parent_changed_notify;
 
     device_class->check_connection_compatible = check_connection_compatible;
@@ -610,43 +606,35 @@ get_connection_parent(NMDeviceFactory *factory, NMConnection *connection)
     g_return_val_if_fail(nm_connection_is_type(connection, NM_SETTING_VLAN_SETTING_NAME), NULL);
 
     s_vlan = nm_connection_get_setting_vlan(connection);
-    g_assert(s_vlan);
-
-    parent = nm_setting_vlan_get_parent(s_vlan);
-    if (parent)
-        return parent;
+    if (s_vlan) {
+        parent = nm_setting_vlan_get_parent(s_vlan);
+        if (parent)
+            return parent;
+    }
 
     /* Try the hardware address from the VLAN connection's hardware setting */
     s_wired = nm_connection_get_setting_wired(connection);
     if (s_wired)
         return nm_setting_wired_get_mac_address(s_wired);
-
-    return NULL;
+    else
+        return NULL;
 }
 
 static char *
 get_connection_iface(NMDeviceFactory *factory, NMConnection *connection, const char *parent_iface)
 {
-    const char    *ifname;
     NMSettingVlan *s_vlan;
 
     g_return_val_if_fail(nm_connection_is_type(connection, NM_SETTING_VLAN_SETTING_NAME), NULL);
 
-    s_vlan = nm_connection_get_setting_vlan(connection);
-    g_assert(s_vlan);
-
     if (!parent_iface)
         return NULL;
 
-    ifname = nm_connection_get_interface_name(connection);
-    if (ifname)
-        return g_strdup(ifname);
-
-    /* If the connection doesn't specify the interface name for the VLAN
-     * device, we create one for it using the VLAN ID and the parent
-     * interface's name.
-     */
-    return nmp_utils_new_vlan_name(parent_iface, nm_setting_vlan_get_id(s_vlan));
+    s_vlan = nm_connection_get_setting_vlan(connection);
+    if (s_vlan)
+        return nmp_utils_new_vlan_name(parent_iface, nm_setting_vlan_get_id(s_vlan));
+    else
+        return NULL;
 }
 
 NM_DEVICE_FACTORY_DEFINE_INTERNAL(

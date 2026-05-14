@@ -404,8 +404,7 @@ complete_connection(NMDevice            *device,
                               preferred,
                               fallback_prefix,
                               NULL,
-                              NULL,
-                              is_dun ? FALSE : TRUE); /* No IPv6 yet for DUN */
+                              NULL);
 
     setting_bdaddr = nm_setting_bluetooth_get_bdaddr(s_bt);
     if (setting_bdaddr) {
@@ -1306,7 +1305,11 @@ static const NMDBusInterfaceInfoExtended interface_info_device_bluetooth = {
     .parent = NM_DEFINE_GDBUS_INTERFACE_INFO_INIT(
         NM_DBUS_INTERFACE_DEVICE_BLUETOOTH,
         .properties = NM_DEFINE_GDBUS_PROPERTY_INFOS(
-            NM_DEFINE_DBUS_PROPERTY_INFO_EXTENDED_READABLE("HwAddress", "s", NM_DEVICE_HW_ADDRESS),
+            NM_DEFINE_DBUS_PROPERTY_INFO_EXTENDED_READABLE(
+                "HwAddress",
+                "s",
+                NM_DEVICE_HW_ADDRESS,
+                .annotations = NM_GDBUS_ANNOTATION_INFO_LIST_DEPRECATED(), ),
             NM_DEFINE_DBUS_PROPERTY_INFO_EXTENDED_READABLE("Name", "s", NM_DEVICE_BT_NAME),
             NM_DEFINE_DBUS_PROPERTY_INFO_EXTENDED_READABLE("BtCapabilities",
                                                            "u",

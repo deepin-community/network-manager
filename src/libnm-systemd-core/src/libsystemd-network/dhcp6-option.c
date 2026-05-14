@@ -17,6 +17,7 @@
 #include "dns-domain.h"
 #include "escape.h"
 #include "memory-util.h"
+#include "network-common.h"
 #include "strv.h"
 #include "unaligned.h"
 
@@ -207,6 +208,7 @@ bool dhcp6_option_can_request(uint16_t option) {
         case SD_DHCP6_OPTION_V6_DOTS_RI:
         case SD_DHCP6_OPTION_V6_DOTS_ADDRESS:
         case SD_DHCP6_OPTION_IPV6_ADDRESS_ANDSF:
+        case SD_DHCP6_OPTION_V6_DNR:
                 return true;
         default:
                 return false;
@@ -526,6 +528,26 @@ int dhcp6_option_parse_status(const uint8_t *data, size_t data_len, char **ret_s
         return status;
 }
 
+/* parse a string from dhcp option field. *ret must be initialized */
+int dhcp6_option_parse_string(const uint8_t *data, size_t data_len, char **ret) {
+        _cleanup_free_ char *string = NULL;
+        int r;
+
+        assert(data || data_len == 0);
+        assert(ret);
+
+        if (data_len <= 0) {
+                *ret = mfree(*ret);
+                return 0;
+        }
+
+        r = make_cstring((const char *) data, data_len, MAKE_CSTRING_REFUSE_TRAILING_NUL, &string);
+        if (r < 0)
+                return r;
+
+        return free_and_replace(*ret, string);
+}
+
 static int dhcp6_option_parse_ia_options(sd_dhcp6_client *client, const uint8_t *buf, size_t buflen) {
         int r;
 
@@ -567,7 +589,7 @@ static int dhcp6_option_parse_ia_options(sd_dhcp6_client *client, const uint8_t 
 
 static int dhcp6_option_parse_ia_address(sd_dhcp6_client *client, DHCP6IA *ia, const uint8_t *data, size_t len) {
         _cleanup_free_ DHCP6Address *a = NULL;
-        uint32_t lt_valid, lt_pref;
+        usec_t lt_valid, lt_pref;
         int r;
 
         assert(ia);
@@ -586,17 +608,18 @@ static int dhcp6_option_parse_ia_address(sd_dhcp6_client *client, DHCP6IA *ia, c
 
         memcpy(&a->iaaddr, data, sizeof(struct iaaddr));
 
-        lt_valid = be32toh(a->iaaddr.lifetime_valid);
-        lt_pref = be32toh(a->iaaddr.lifetime_preferred);
+        lt_valid = be32_sec_to_usec(a->iaaddr.lifetime_valid, /* max_as_infinity = */ true);
+        lt_pref = be32_sec_to_usec(a->iaaddr.lifetime_preferred, /* max_as_infinity = */ true);
 
         if (lt_valid == 0)
                 return log_dhcp6_client_errno(client, SYNTHETIC_ERRNO(EINVAL),
                                               "Received an IA address with zero valid lifetime, ignoring.");
         if (lt_pref > lt_valid)
                 return log_dhcp6_client_errno(client, SYNTHETIC_ERRNO(EINVAL),
-                                              "Received an IA address with preferred lifetime %"PRIu32
-                                              " larger than valid lifetime %"PRIu32", ignoring.",
-                                              lt_pref, lt_valid);
+                                              "Received an IA address with preferred lifetime %s "
+                                              "larger than valid lifetime %s, ignoring.",
+                                              FORMAT_TIMESPAN(lt_pref, USEC_PER_SEC),
+                                              FORMAT_TIMESPAN(lt_valid, USEC_PER_SEC));
 
         if (len > sizeof(struct iaaddr)) {
                 r = dhcp6_option_parse_ia_options(client, data + sizeof(struct iaaddr), len - sizeof(struct iaaddr));
@@ -610,7 +633,7 @@ static int dhcp6_option_parse_ia_address(sd_dhcp6_client *client, DHCP6IA *ia, c
 
 static int dhcp6_option_parse_ia_pdprefix(sd_dhcp6_client *client, DHCP6IA *ia, const uint8_t *data, size_t len) {
         _cleanup_free_ DHCP6Address *a = NULL;
-        uint32_t lt_valid, lt_pref;
+        usec_t lt_valid, lt_pref;
         int r;
 
         assert(ia);
@@ -629,17 +652,18 @@ static int dhcp6_option_parse_ia_pdprefix(sd_dhcp6_client *client, DHCP6IA *ia, 
 
         memcpy(&a->iapdprefix, data, sizeof(struct iapdprefix));
 
-        lt_valid = be32toh(a->iapdprefix.lifetime_valid);
-        lt_pref = be32toh(a->iapdprefix.lifetime_preferred);
+        lt_valid = be32_sec_to_usec(a->iapdprefix.lifetime_valid, /* max_as_infinity = */ true);
+        lt_pref = be32_sec_to_usec(a->iapdprefix.lifetime_preferred, /* max_as_infinity = */ true);
 
         if (lt_valid == 0)
                 return log_dhcp6_client_errno(client, SYNTHETIC_ERRNO(EINVAL),
                                               "Received a PD prefix with zero valid lifetime, ignoring.");
         if (lt_pref > lt_valid)
                 return log_dhcp6_client_errno(client, SYNTHETIC_ERRNO(EINVAL),
-                                              "Received a PD prefix with preferred lifetime %"PRIu32
-                                              " larger than valid lifetime %"PRIu32", ignoring.",
-                                              lt_pref, lt_valid);
+                                              "Received a PD prefix with preferred lifetime %s "
+                                              "larger than valid lifetime %s, ignoring.",
+                                              FORMAT_TIMESPAN(lt_pref, USEC_PER_SEC),
+                                              FORMAT_TIMESPAN(lt_valid, USEC_PER_SEC));
 
         if (len > sizeof(struct iapdprefix)) {
                 r = dhcp6_option_parse_ia_options(client, data + sizeof(struct iapdprefix), len - sizeof(struct iapdprefix));
@@ -660,7 +684,7 @@ int dhcp6_option_parse_ia(
                 DHCP6IA **ret) {
 
         _cleanup_(dhcp6_ia_freep) DHCP6IA *ia = NULL;
-        uint32_t lt_t1, lt_t2;
+        usec_t lt_t1, lt_t2;
         size_t header_len;
         int r;
 
@@ -710,17 +734,18 @@ int dhcp6_option_parse_ia(
                                               "from the one chosen by the client, ignoring.");
 
         /* It is not necessary to check if the lifetime_t2 is zero here, as in that case it will be updated later. */
-        lt_t1 = be32toh(ia->header.lifetime_t1);
-        lt_t2 = be32toh(ia->header.lifetime_t2);
+        lt_t1 = be32_sec_to_usec(ia->header.lifetime_t1, /* max_as_infinity = */ true);
+        lt_t2 = be32_sec_to_usec(ia->header.lifetime_t2, /* max_as_infinity = */ true);
 
         if (lt_t1 > lt_t2)
                 return log_dhcp6_client_errno(client, SYNTHETIC_ERRNO(EINVAL),
-                                              "Received an IA option with T1 %"PRIu32"sec > T2 %"PRIu32"sec, ignoring.",
-                                              lt_t1, lt_t2);
+                                              "Received an IA option with T1 %s > T2 %s, ignoring.",
+                                              FORMAT_TIMESPAN(lt_t1, USEC_PER_SEC),
+                                              FORMAT_TIMESPAN(lt_t2, USEC_PER_SEC));
         if (lt_t1 == 0 && lt_t2 > 0)
                 return log_dhcp6_client_errno(client, SYNTHETIC_ERRNO(EINVAL),
-                                              "Received an IA option with zero T1 and non-zero T2 (%"PRIu32"sec), ignoring.",
-                                              lt_t2);
+                                              "Received an IA option with zero T1 and non-zero T2 (%s), ignoring.",
+                                              FORMAT_TIMESPAN(lt_t2, USEC_PER_SEC));
 
         for (size_t offset = header_len; offset < option_data_len;) {
                 const uint8_t *subdata;
@@ -798,74 +823,6 @@ int dhcp6_option_parse_addresses(
         return 0;
 }
 
-static int parse_domain(const uint8_t **data, size_t *len, char **ret) {
-        _cleanup_free_ char *domain = NULL;
-        const uint8_t *optval;
-        size_t optlen, n = 0;
-        int r;
-
-        assert(data);
-        assert(len);
-        assert(*data || *len == 0);
-        assert(ret);
-
-        optval = *data;
-        optlen = *len;
-
-        if (optlen <= 1)
-                return -ENODATA;
-
-        for (;;) {
-                const char *label;
-                uint8_t c;
-
-                if (optlen == 0)
-                        break;
-
-                c = *optval;
-                optval++;
-                optlen--;
-
-                if (c == 0)
-                        /* End label */
-                        break;
-                if (c > 63)
-                        return -EBADMSG;
-                if (c > optlen)
-                        return -EMSGSIZE;
-
-                /* Literal label */
-                label = (const char*) optval;
-                optval += c;
-                optlen -= c;
-
-                if (!GREEDY_REALLOC(domain, n + (n != 0) + DNS_LABEL_ESCAPED_MAX))
-                        return -ENOMEM;
-
-                if (n != 0)
-                        domain[n++] = '.';
-
-                r = dns_label_escape(label, c, domain + n, DNS_LABEL_ESCAPED_MAX);
-                if (r < 0)
-                        return r;
-
-                n += r;
-        }
-
-        if (n > 0) {
-                if (!GREEDY_REALLOC(domain, n + 1))
-                        return -ENOMEM;
-
-                domain[n] = '\0';
-        }
-
-        *ret = TAKE_PTR(domain);
-        *data = optval;
-        *len = optlen;
-
-        return n;
-}
-
 int dhcp6_option_parse_domainname(const uint8_t *optval, size_t optlen, char **ret) {
         _cleanup_free_ char *domain = NULL;
         int r;
@@ -873,7 +830,7 @@ int dhcp6_option_parse_domainname(const uint8_t *optval, size_t optlen, char **r
         assert(optval || optlen == 0);
         assert(ret);
 
-        r = parse_domain(&optval, &optlen, &domain);
+        r = dns_name_from_wire_format(&optval, &optlen, &domain);
         if (r < 0)
                 return r;
         if (r == 0)
@@ -900,11 +857,11 @@ int dhcp6_option_parse_domainname_list(const uint8_t *optval, size_t optlen, cha
         while (optlen > 0) {
                 _cleanup_free_ char *name = NULL;
 
-                r = parse_domain(&optval, &optlen, &name);
+                r = dns_name_from_wire_format(&optval, &optlen, &name);
                 if (r < 0)
                         return r;
-                if (r == 0)
-                        continue;
+                if (dns_name_is_root(name)) /* root domain */
+                        return -EBADMSG;
 
                 r = strv_consume(&names, TAKE_PTR(name));
                 if (r < 0)

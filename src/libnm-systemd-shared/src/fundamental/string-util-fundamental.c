@@ -35,14 +35,14 @@ sd_char *startswith_no_case(const sd_char *s, const sd_char *prefix) {
         return (sd_char*) s + l;
 }
 
-sd_char* endswith(const sd_char *s, const sd_char *postfix) {
+sd_char* endswith(const sd_char *s, const sd_char *suffix) {
         size_t sl, pl;
 
         assert(s);
-        assert(postfix);
+        assert(suffix);
 
         sl = strlen(s);
-        pl = strlen(postfix);
+        pl = strlen(suffix);
 
         if (pl == 0)
                 return (sd_char*) s + sl;
@@ -50,20 +50,20 @@ sd_char* endswith(const sd_char *s, const sd_char *postfix) {
         if (sl < pl)
                 return NULL;
 
-        if (strcmp(s + sl - pl, postfix) != 0)
+        if (!streq(s + sl - pl, suffix))
                 return NULL;
 
         return (sd_char*) s + sl - pl;
 }
 
-sd_char* endswith_no_case(const sd_char *s, const sd_char *postfix) {
+sd_char* endswith_no_case(const sd_char *s, const sd_char *suffix) {
         size_t sl, pl;
 
         assert(s);
-        assert(postfix);
+        assert(suffix);
 
         sl = strlen(s);
-        pl = strlen(postfix);
+        pl = strlen(suffix);
 
         if (pl == 0)
                 return (sd_char*) s + sl;
@@ -71,7 +71,7 @@ sd_char* endswith_no_case(const sd_char *s, const sd_char *postfix) {
         if (sl < pl)
                 return NULL;
 
-        if (strcasecmp(s + sl - pl, postfix) != 0)
+        if (!strcaseeq(s + sl - pl, suffix))
                 return NULL;
 
         return (sd_char*) s + sl - pl;
@@ -85,7 +85,7 @@ static bool is_valid_version_char(sd_char a) {
 int strverscmp_improved(const sd_char *a, const sd_char *b) {
         /* This function is similar to strverscmp(3), but it treats '-' and '.' as separators.
          *
-         * The logic is based on rpm's rpmvercmp(), but unlike rpmvercmp(), it distiguishes e.g.
+         * The logic is based on rpm's rpmvercmp(), but unlike rpmvercmp(), it distinguishes e.g.
          * '123a' and '123.a', with '123a' being newer.
          *
          * It allows direct comparison of strings which contain both a version and a release; e.g.

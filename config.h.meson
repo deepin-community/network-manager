@@ -4,9 +4,6 @@
 /* Define to path of dhclient binary */
 #mesondefine DHCLIENT_PATH
 
-/* Define to path of dhcpcanon binary */
-#mesondefine DHCPCANON_PATH
-
 /* Define to path of dhcpcd binary */
 #mesondefine DHCPCD_PATH
 
@@ -69,6 +66,9 @@
 
 /* Define to path of iptables binary */
 #mesondefine IPTABLES_PATH
+
+/* Define to path of ip6tables binary */
+#mesondefine IP6TABLES_PATH
 
 /* Define to path of nft binary */
 #mesondefine NFT_PATH
@@ -224,9 +224,6 @@
 /* Define if you have dhclient */
 #mesondefine WITH_DHCLIENT
 
-/* Define if you have dhcpcanon */
-#mesondefine WITH_DHCPCANON
-
 /* Define if you have dhcpcd */
 #mesondefine WITH_DHCPCD
 
@@ -241,6 +238,15 @@
 
 /* Whether we build with OVS plugin */
 #mesondefine WITH_OPENVSWITCH
+
+/* Whether we build with team support */
+#mesondefine WITH_TEAMDCTL
+
+/* Whether we build with Wi-Fi support */
+#mesondefine WITH_WIFI
+
+/* Whether we build with WWAN support */
+#mesondefine WITH_WWAN
 
 /* Define if you have PPP support */
 #mesondefine WITH_PPP
@@ -283,3 +289,8 @@
 /* Define to 1 if you have history support from -lreadline. */
 #mesondefine HAVE_READLINE_HISTORY
 
+/* Define if NBFT support is enabled */
+#mesondefine WITH_NBFT
+
+/* Define to 1 if dlvsym() is available */
+#mesondefine HAVE_DLVSYM

@@ -15,8 +15,10 @@ ifaces = [
   'org.freedesktop.NetworkManager.Device.Bridge',
   'org.freedesktop.NetworkManager.Device.Dummy',
   'org.freedesktop.NetworkManager.Device.Generic',
+  'org.freedesktop.NetworkManager.Device.Hsr',
   'org.freedesktop.NetworkManager.Device.IPTunnel',
   'org.freedesktop.NetworkManager.Device.Infiniband',
+  'org.freedesktop.NetworkManager.Device.Ipvlan',
   'org.freedesktop.NetworkManager.Device.Loopback',
   'org.freedesktop.NetworkManager.Device.Lowpan',
   'org.freedesktop.NetworkManager.Device.Macsec',
@@ -79,14 +81,8 @@ foreach iface: ifaces
   endif
 
   content_files += dbus_iface_xml_path
-
-  # res is an array only since 0.46. Documentation won't work with
-  # older versions
-  if meson.version().version_compare('>= 0.46.0')
-    introspection_files += [ [res[2], dbus_iface_xml_path] ]
-    headers += res[1]
-  endif
-
+  introspection_files += [ [res[2], dbus_iface_xml_path] ]
+  headers += res[1]
 endforeach
 
 install_data(

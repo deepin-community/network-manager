@@ -3,6 +3,8 @@
 #include "libnm-client-aux-extern/nm-default-client.h"
 
 #include "nmcs-provider.h"
+#include "nmcs-provider-aliyun.h"
+#include "nmcs-provider-oci.h"
 
 #include "nm-cloud-setup-utils.h"
 
@@ -95,7 +97,7 @@ nmcs_provider_get_config_result_new(GHashTable *iface_datas)
     g_ptr_array_add(ptrarr, NULL);
 
     result  = g_new(NMCSProviderGetConfigResult, 1);
-    *result = (NMCSProviderGetConfigResult){
+    *result = (NMCSProviderGetConfigResult) {
         .iface_datas   = g_hash_table_ref(iface_datas),
         .n_iface_datas = n_iface_datas,
         .iface_datas_arr =
@@ -185,7 +187,8 @@ nmcs_provider_get_config_iface_data_create(NMCSProviderGetConfigTaskData *get_co
     nm_assert(NMCS_IS_PROVIDER(get_config_data->self));
 
     iface_data  = g_slice_new(NMCSProviderGetConfigIfaceData);
-    *iface_data = (NMCSProviderGetConfigIfaceData){
+    *iface_data = (NMCSProviderGetConfigIfaceData) {
+        .provider        = g_object_ref(get_config_data->self),
         .get_config_data = get_config_data,
         .hwaddr          = g_strdup(hwaddr),
         .iface_idx       = -1,
@@ -198,8 +201,13 @@ nmcs_provider_get_config_iface_data_create(NMCSProviderGetConfigTaskData *get_co
      * Also, knowing the type would allow us to initialize to something other than
      * false/0/NULL/0.0. */
     if (G_OBJECT_TYPE(get_config_data->self) == nmcs_provider_aliyun_get_type()) {
-        iface_data->priv.aliyun = (typeof(iface_data->priv.aliyun)){
+        iface_data->priv.aliyun = (typeof(iface_data->priv.aliyun)) {
             .has_primary_ip_address = FALSE,
+        };
+    } else if (G_OBJECT_TYPE(get_config_data->self) == nmcs_provider_oci_get_type()) {
+        iface_data->priv.oci = (typeof(iface_data->priv.oci)) {
+            .vlan_tag      = 0,
+            .parent_hwaddr = NULL,
         };
     }
 
@@ -218,6 +226,9 @@ _iface_data_free(gpointer data)
     g_free(iface_data->ipv4s_arr);
     nm_g_ptr_array_unref(iface_data->iproutes);
     g_free((char *) iface_data->hwaddr);
+    if (G_OBJECT_TYPE(iface_data->provider) == nmcs_provider_oci_get_type())
+        g_free((char *) iface_data->priv.oci.parent_hwaddr);
+    g_clear_object(&iface_data->provider);
 
     nm_g_slice_free(iface_data);
 }
@@ -293,7 +304,7 @@ nmcs_provider_get_config(NMCSProvider       *self,
     _LOGD("get-config: starting");
 
     get_config_data  = g_slice_new(NMCSProviderGetConfigTaskData);
-    *get_config_data = (NMCSProviderGetConfigTaskData){
+    *get_config_data = (NMCSProviderGetConfigTaskData) {
         /* "self" is kept alive by "task". */
         .self = self,
         .task = nm_g_task_new(self, cancellable, nmcs_provider_get_config, callback, user_data),

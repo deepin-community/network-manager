@@ -1,26 +1,17 @@
 <?xml version='1.0'?> <!--*-nxml-*-->
 <?xml-stylesheet type="text/xsl" href="http://docbook.sourceforge.net/release/xsl/current/xhtml/docbook.xsl"?>
-<!DOCTYPE refentry PUBLIC "-//OASIS//DTD DocBook XML V4.2//EN"
-"http://www.oasis-open.org/docbook/xml/4.2/docbookx.dtd" [
+<!DOCTYPE refentry PUBLIC "-//OASIS//DTD DocBook XML V4.5//EN"
+"http://www.oasis-open.org/docbook/xml/4.5/docbookx.dtd" [
 <!ENTITY % entities SYSTEM "common.ent" >
 %entities;
 ]>
 
 <!--
+  SPDX-License-Identifier: GFDL-1.1-no-invariants-or-later
+
   NetworkManager.conf(5) manual page
 
-  Copyright 2010 - 2016 Red Hat, Inc.
-
-  Permission is granted to copy, distribute and/or modify this document
-  under the terms of the GNU Free Documentation License, Version 1.1
-  or any later version published by the Free Software Foundation;
-  with no Invariant Sections, no Front-Cover Texts, and no Back-Cover
-  Texts. You may obtain a copy of the GNU Free Documentation License
-  from the Free Software Foundation by visiting their Web site or by
-  writing to:
-
-  Free Software Foundation, Inc.,
-  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301, USA.
+  Copyright 2010 - 2023 Red Hat, Inc.
 -->
 
 <refentry id="NetworkManager.conf">
@@ -176,18 +167,14 @@ plugins-=remove-me
       </varlistentry>
       <varlistentry>
         <term><varname>dhcp</varname></term>
-        <listitem><para>This key sets up what DHCP client
-        NetworkManager will use. Allowed values are
-        <literal>dhclient</literal>, <literal>dhcpcd</literal>, and
-        <literal>internal</literal>. The <literal>dhclient</literal>
-        and <literal>dhcpcd</literal> options require the indicated
-        clients to be installed. The <literal>internal</literal>
-        option uses a built-in DHCP client which is not currently as
-        featureful as the external clients.</para>
-        <para>If this key is missing, it defaults to <literal>&NM_CONFIG_DEFAULT_MAIN_DHCP;</literal>.
-        If the chosen plugin is not available, clients are looked for
-        in this order: <literal>dhclient</literal>, <literal>dhcpcd</literal>,
-        <literal>internal</literal>.</para></listitem>
+        <listitem><para>This key sets up what DHCP client NetworkManager will
+        use. Allowed values depend on build configuration; this version of
+        NetworkManager was built with support for the following clients:
+        &NM_DHCP_CLIENTS_ENABLED_TEXT;.</para>
+        <para>The <literal>internal</literal> client is built-in, while other options
+        may require an external DHCP client to be installed.</para>
+        <para>If this key is missing, <literal>&NM_CONFIG_DEFAULT_MAIN_DHCP;</literal>
+        is used with a fallback to other supported clients.</para></listitem>
       </varlistentry>
       <varlistentry>
         <term><varname>no-auto-default</varname></term>
@@ -228,7 +215,7 @@ no-auto-default=*
             if specified (See <xref linkend="ignore-carrier"/>).
             Otherwise, it is a list of matches to specify for which device
             carrier should be ignored. See <xref linkend="device-spec"/> for the
-            syntax how to specify a device. Note that master types like
+            syntax how to specify a device. Note that controller types like
             bond, bridge, and team ignore carrier by default. You can however
             revert that default using the "except:" specifier (or better,
             use the per-device setting instead of the deprecated setting).
@@ -284,8 +271,7 @@ no-auto-default=*
             Set the management mode of the hostname. This parameter will
             affect only the transient hostname. If a valid static hostname is set,
             NetworkManager will skip the update of the hostname despite the value of
-            this option. An hostname empty or equal to 'localhost', 'localhost6',
-            'localhost.localdomain' or 'localhost6.localdomain' is considered invalid.
+            this option. A hostname empty or equal to '(none)' is considered invalid.
           </para>
           <para><literal>default</literal>: NetworkManager will update the
           hostname with the one provided via DHCP or reverse DNS lookup of the
@@ -345,20 +331,24 @@ no-auto-default=*
         <para><literal>systemd-resolved</literal>: NetworkManager will
         push the DNS configuration to systemd-resolved</para>
 
+        <para><literal>dnsconfd</literal>: NetworkManager will
+        push the DNS configuration to dnsconfd</para> and by default set ipvX.routed-dns to
+        yes, so servers are contacted through right interfaces.
+
         <para><literal>none</literal>: NetworkManager will not
         modify resolv.conf. This implies
         <literal>rc-manager</literal>&nbsp;<literal>unmanaged</literal></para>
 
-        <para>Note that the plugins <literal>dnsmasq</literal> and <literal>systemd-resolved</literal>
-        are caching local nameservers.
+        <para>Note that the plugins <literal>dnsmasq</literal>,<literal>systemd-resolved</literal>
+        and <literal>dnsconfd</literal> are caching local nameservers.
         Hence, when NetworkManager writes <filename>&nmrundir;/resolv.conf</filename>
         and <filename>/etc/resolv.conf</filename> (according to <literal>rc-manager</literal>
         setting below), the name server there will be localhost only.
         NetworkManager also writes a file <filename>&nmrundir;/no-stub-resolv.conf</filename>
         that contains the original name servers pushed to the DNS plugin.</para>
 
-        <para>When using <literal>dnsmasq</literal> and <literal>systemd-resolved</literal>,
-        per-connection added dns servers will always be queried using
+        <para>When using <literal>dnsmasq</literal>,<literal>systemd-resolved</literal> and
+        <literal>dnsconfd</literal> per-connection added dns servers will always be queried using
         the device the connection has been activated on.</para>
         </listitem>
       </varlistentry>
@@ -370,7 +360,7 @@ no-auto-default=*
           management mode. This option is about how NetworkManager writes to
           <filename>/etc/resolv.conf</filename>, if at all.
           The default value depends on NetworkManager build
-          options, and this version of NetworkManager was build with a default of
+          options, and this version of NetworkManager was built with a default of
           "<literal>&NM_CONFIG_DEFAULT_MAIN_RC_MANAGER;</literal>".
           Regardless of this setting, NetworkManager will
           always write its version of resolv.conf to its runtime state directory
@@ -470,20 +460,6 @@ no-auto-default=*
       </varlistentry>
 
       <varlistentry>
-        <term><varname>slaves-order</varname></term>
-        <listitem>
-          <para>
-            This key specifies in which order slave connections are
-            auto-activated on boot or when the master activates
-            them. Allowed values are <literal>name</literal> (order
-            connection by interface name, the default), or
-            <literal>index</literal> (order slaves by their kernel
-            index).
-          </para>
-        </listitem>
-      </varlistentry>
-
-      <varlistentry>
         <term><varname>firewall-backend</varname></term>
         <listitem>
           <para>
@@ -515,7 +491,7 @@ no-auto-default=*
             files without preserving their contents.
           </para>
           <para>
-            The path can also be overriden by pointing to a specific
+            The path can also be overridden by pointing to a specific
             existing and writable directory.  On the other hand setting
             this to an empty string or any other value disables the
             profile conversion mechanism.
@@ -657,7 +633,9 @@ level=TRACE
 domains=ALL
 </programlisting>
     and restart the daemon with <command>systemctl restart NetworkManager</command>. Then
-    reproduce the problem. You can find the logs in syslog (for example <command>journalctl</command>).
+    reproduce the problem. You can find the logs in syslog (for example
+    <command>journalctl</command>, or <command>journalctl -u NetworkManager</command>
+    to show only logs from NetworkManager).
     </para>
 
     <para>
@@ -845,6 +823,11 @@ domains=ALL
       to use the default from <literal>NetworkManager.conf</literal>.
     </para>
     <para>
+      Note that while nmcli supports various aliases and convenience features for configuring
+      properties, the settings in this section do not. For example, enum values usually only
+      can be configured via their numeric magic number.
+    </para>
+    <para>
       Example:
 <programlisting>
 [connection]
@@ -856,7 +839,7 @@ ipv6.ip6-privacy=0
     <para>
       Not all properties can be overwritten, only the following
       properties are supported to have their default values configured
-      (see <link linkend='nm-settings'><citerefentry><refentrytitle>nm-settings</refentrytitle><manvolnum>5</manvolnum></citerefentry></link> for details).
+      (see <link linkend='nm-settings-nmcli'><citerefentry><refentrytitle>nm-settings-nmcli</refentrytitle><manvolnum>5</manvolnum></citerefentry></link> for details).
     </para>
     <para>
       <!-- The following comment is used by check-config-options.sh, don't remove it. -->
@@ -874,7 +857,20 @@ ipv6.ip6-privacy=0
           </para></listitem>
         </varlistentry>
         <varlistentry>
+          <term><varname>connection.autoconnect-ports</varname></term>
+        </varlistentry>
+        <varlistentry>
           <term><varname>connection.autoconnect-slaves</varname></term>
+          <listitem><para>This is deprecated, please use "connection.autoconnect-ports" instead.
+          </para></listitem>
+        </varlistentry>
+        <varlistentry>
+          <term><varname>connection.down-on-poweroff</varname></term>
+          <listitem><para>Whether the connection will be brought down before the system is powered off.</para></listitem>
+        </varlistentry>
+        <varlistentry>
+          <term><varname>connection.ip-ping-addresses-require-all</varname></term>
+          <listitem><para>Whether it is sufficient for any ping check to succeed among the list of target addresses, or if all ping checks must succeed for the entire list of target addresses.</para></listitem>
         </varlistentry>
         <varlistentry>
           <term><varname>connection.mud-url</varname></term>
@@ -889,15 +885,25 @@ ipv6.ip6-privacy=0
         </varlistentry>
         <varlistentry>
           <term><varname>connection.mdns</varname></term>
-          <listitem><para>If unspecified, the ultimate default values depends on the DNS plugin. With systemd-resolved the default currently is "no" (0) and for all other plugins also "no" (0).</para></listitem>
+          <listitem><para>
+            Currently only the systemd-resolve DNS plugin supports this setting.
+            If the setting is unspecified both in the profile and in the global
+            default here, then the default is determined by systemd-resolved.
+            See <literal>MulticastDNS=</literal> in
+            <citerefentry><refentrytitle>resolved.conf</refentrytitle><manvolnum>5</manvolnum></citerefentry>.
+          </para></listitem>
         </varlistentry>
         <varlistentry>
           <term><varname>connection.mptcp-flags</varname></term>
-          <listitem><para>If unspecified, the fallback is 0x22 (<literal>"enabled,subflow"</literal>). Note that if sysctl <literal>/proc/sys/net/mptcp/enabled</literal> is disabled, NetworkManager will still not configure endpoints.</para></listitem>
+          <listitem><para>If unspecified, the fallback is 0x122 (<literal>"enabled,subflow,laminar"</literal>). Note that if sysctl <literal>/proc/sys/net/mptcp/enabled</literal> is disabled, NetworkManager will still not configure endpoints.</para></listitem>
         </varlistentry>
         <varlistentry>
           <term><varname>connection.dns-over-tls</varname></term>
-          <listitem><para>If unspecified, the ultimate default values depends on the DNS plugin. With systemd-resolved the default currently is global setting and for all other plugins "no" (0).</para></listitem>
+          <listitem><para>If unspecified, the ultimate default values depends on the DNS plugin. With systemd-resolved the default currently is its global setting and for all other plugins "no" (0).</para></listitem>
+        </varlistentry>
+        <varlistentry>
+          <term><varname>connection.dnssec</varname></term>
+          <listitem><para>If unspecified, the ultimate default values depends on the DNS plugin. With systemd-resolved the default currently is its global setting and for all other plugins "no" (0).</para></listitem>
         </varlistentry>
         <varlistentry>
           <term><varname>connection.stable-id</varname></term>
@@ -940,18 +946,40 @@ ipv6.ip6-privacy=0
           <listitem><para>If configured explicitly to 0, the MTU is not reconfigured during device activation unless it is required due to IPv6 constraints. If left unspecified, a DHCP/IPv6 SLAAC provided value is used or a default of 1500.</para></listitem>
         </varlistentry>
         <varlistentry>
+          <term><varname>ipv4.forwarding</varname></term>
+          <listitem><para>Whether to configure IPv4 sysctl interface-specific forwarding. When enabled, the interface will act as a router to forward the IPv4 packet from one interface to another. If left unspecified, "auto" is used, so NetworkManager sets the IPv4 forwarding if any shared connection is active, or it will use the kernel default value otherwise. The "ipv4.forwarding" property is ignored when "ipv4.method" is set to "shared", because forwarding is always enabled in this case. The accepted values are: 0: disabled, 1: enabled, 2: auto, 3: ignored (leave the forwarding unchanged).</para></listitem>
+        </varlistentry>
+        <varlistentry>
+          <term><varname>ipv4.routed-dns</varname></term>
+        </varlistentry>
+        <varlistentry>
           <term><varname>ipv4.dad-timeout</varname></term>
         </varlistentry>
         <varlistentry>
           <term><varname>ipv4.dhcp-client-id</varname></term>
         </varlistentry>
         <varlistentry>
+          <term><varname>ipv4.dhcp-dscp</varname></term>
+        </varlistentry>
+        <varlistentry>
           <term><varname>ipv4.dhcp-iaid</varname></term>
           <listitem><para>If left unspecified, it defaults to "ifname".</para></listitem>
         </varlistentry>
         <varlistentry>
+          <term><varname>ipv4.dhcp-ipv6-only-preferred</varname></term>
+          <listitem><para>If left unspecified, the "IPv6-only preferred" DHCPv4 option is disabled.</para></listitem>
+        </varlistentry>
+        <varlistentry>
           <term><varname>ipv4.dhcp-hostname-flags</varname></term>
           <listitem><para>If left unspecified, the value 3 (fqdn-encoded,fqdn-serv-update) is used.</para></listitem>
+        </varlistentry>
+        <varlistentry>
+          <term><varname>ipv4.dhcp-send-hostname</varname></term>
+          <listitem><para>Whether a hostname is sent to the DHCP server when acquiring a lease. When the property is not specified in the connection, the global value from NetworkManager configuration is looked up. If the global value is not set, the value from ipv4.dhcp-send-hostname-deprecated, which defaults to true, is used for backwards compatibility. In the future this will change and, in absence of a global default, it will always fallback to true.</para></listitem>
+        </varlistentry>
+        <varlistentry>
+          <term><varname>ipv4.dhcp-send-release</varname></term>
+          <listitem><para>Whether the DHCP client will send RELEASE message when bringing the connection down.</para></listitem>
         </varlistentry>
         <varlistentry>
           <term><varname>ipv4.dhcp-timeout</varname></term>
@@ -985,6 +1013,9 @@ ipv6.ip6-privacy=0
           </para></listitem>
         </varlistentry>
         <varlistentry>
+          <term><varname>ipv6.routed-dns</varname></term>
+        </varlistentry>
+        <varlistentry>
           <term><varname>ipv6.addr-gen-mode</varname></term>
           <listitem><para>If the per-profile setting is either "default" or "default-or-eui64", the
             global default is used. If the default is unspecified, the fallback value is either "stable-privacy"
@@ -1007,6 +1038,14 @@ ipv6.ip6-privacy=0
           <listitem><para>If left unspecified, the value 1 (fqdn-serv-update) is used.</para></listitem>
         </varlistentry>
         <varlistentry>
+          <term><varname>ipv6.dhcp-send-hostname</varname></term>
+          <listitem><para>Whether a hostname is sent to the DHCP server when acquiring a lease. When the property is not specified in the connection, the global value from NetworkManager configuration is looked up. If the global value is not set, the value from ipv6.dhcp-send-hostname-deprecated, which defaults to true, is used for backwards compatibility. In the future this will change and, in absence of a global default, it will always fallback to true.</para></listitem>
+        </varlistentry>
+        <varlistentry>
+          <term><varname>ipv6.dhcp-send-release</varname></term>
+          <listitem><para>Whether the DHCP client will send RELEASE message when bringing the connection down.</para></listitem>
+        </varlistentry>
+        <varlistentry>
           <term><varname>ipv6.dhcp-timeout</varname></term>
           <listitem><para>If left unspecified, the default value for
            the interface type is used.</para></listitem>
@@ -1020,6 +1059,18 @@ ipv6.ip6-privacy=0
           <term><varname>ipv6.ip6-privacy</varname></term>
           <listitem><para>If <literal>ipv6.ip6-privacy</literal> is unset, use the content of
             "/proc/sys/net/ipv6/conf/default/use_tempaddr" as last fallback.
+          </para></listitem>
+        </varlistentry>
+        <varlistentry>
+          <term><varname>ipv6.temp-valid-lifetime</varname></term>
+          <listitem><para>If <literal>ipv6.temp-valid-lifetime</literal> is unset, use the
+            content of "/proc/sys/net/ipv6/conf/default/temp_valid_lft" as last fallback.
+          </para></listitem>
+        </varlistentry>
+        <varlistentry>
+          <term><varname>ipv6.temp-preferred-lifetime</varname></term>
+          <listitem><para>If <literal>ipv6.temp-preferred-lifetime</literal> is unset, use
+            the content of "/proc/sys/net/ipv6/conf/default/temp_prefered_lft" as last fallback.
           </para></listitem>
         </varlistentry>
         <varlistentry>
@@ -1040,8 +1091,17 @@ ipv6.ip6-privacy=0
           <listitem><para>If configured explicitly to 0, the MTU is not reconfigured during device activation unless it is required due to IPv6 constraints. If left unspecified, a DHCP/IPv6 SLAAC provided value is used or the MTU is left unspecified on activation.</para></listitem>
         </varlistentry>
         <varlistentry>
+          <term><varname>macsec.offload</varname></term>
+        </varlistentry>
+        <varlistentry>
           <term><varname>sriov.autoprobe-drivers</varname></term>
           <listitem><para>If left unspecified, drivers are autoprobed when the SR-IOV VF gets created.</para></listitem>
+        </varlistentry>
+        <varlistentry>
+          <term><varname>sriov.preserve-on-down</varname></term>
+          <listitem><para>Set to 0 or 1 to select whether the SR-IOV parameters are
+          preserved when the connection is deactivated. If left unspecified, default
+          to 0 (parameters are not preserved). </para></listitem>
         </varlistentry>
         <varlistentry>
           <term><varname>vpn.timeout</varname></term>
@@ -1105,7 +1165,7 @@ ipv6.ip6-privacy=0
 <programlisting>
 [connection]
 ipv6.ip6-privacy=0
-connection.autoconnect-slaves=1
+connection.autoconnect-ports=1
 vpn.timeout=120
 
 [connection-wifi-wlan0]
@@ -1328,7 +1388,7 @@ managed=1
               scanning. This defaults to <literal>yes</literal> in which case
               a random, locally-administered MAC address will be used.
               The setting <literal>wifi.scan-generate-mac-address-mask</literal>
-              allows to influence the generated MAC address to use certain vendor
+              can be used to influence the generated MAC address to use certain vendor
               OUIs.
               If disabled, the MAC address during scanning is left unchanged to
               whatever is configured.
@@ -1352,8 +1412,8 @@ managed=1
           <listitem>
             <para>
               Like the per-connection settings <literal>ethernet.generate-mac-address-mask</literal>
-              and <literal>wifi.generate-mac-address-mask</literal>, this allows to configure the
-              generated MAC addresses during scanning. See <citerefentry><refentrytitle>nm-settings</refentrytitle><manvolnum>5</manvolnum></citerefentry>
+              and <literal>wifi.generate-mac-address-mask</literal>, this can be used to configure the
+              generated MAC addresses during scanning. See <citerefentry><refentrytitle>nm-settings-nmcli</refentrytitle><manvolnum>5</manvolnum></citerefentry>
               for details.
             </para>
           </listitem>
@@ -1461,11 +1521,17 @@ managed=1
           default is 300 seconds.</para></listitem>
         </varlistentry>
         <varlistentry>
+          <term><varname>timeout</varname></term>
+          <listitem><para>Specified in seconds; controls how long
+          to wait for a response before connectivity is marked as
+          limited.  If missing, the default is 20 seconds.</para></listitem>
+        </varlistentry>
+        <varlistentry>
           <term><varname>response</varname></term>
           <listitem><para>If set, controls what body content
           NetworkManager checks for when requesting the URI for
           connectivity checking.  Note that this only compares
-          that the HTTP response starts with the specifid text,
+          that the HTTP response starts with the specified text,
           it does not compare the exact string. This behavior
           might change in the future, so avoid relying on it.
           If missing, the response defaults to "NetworkManager is online".
@@ -1478,8 +1544,12 @@ managed=1
 
   <refsect1>
     <title><literal>global-dns</literal> section</title>
-    <para>This section specifies DNS settings that are applied
-    globally, in addition to connection-specific ones.</para>
+    <para>This section specifies DNS settings that are applied globally. They
+    override the equivalent options defined in individual connections, making
+    them to be ignored. If a [global-dns-domain-*] section is defined, but this
+    section isn't, an empty [global-dns] section is assumed, thus overwriting
+    connection specific configurations too.
+    </para>
     <para>
       <variablelist>
         <varlistentry>
@@ -1498,6 +1568,29 @@ managed=1
            </para>
           </listitem>
         </varlistentry>
+        <varlistentry>
+          <term><varname>resolve-mode</varname></term>
+          <listitem>
+            <para>
+             String indicating how DNS servers retrieved from global configuration and connections
+             should be used. <literal>backup</literal> - Indicates that they can be freely merged
+             and used for the same purposes. <literal>prefer</literal> - Forbids DNS servers
+             retrieved from connections to be used for general queries that are not subdomains of
+             domains set by connection. <literal>exclusive</literal> - Forbids use of connection
+             DNS servers for any query. Currently relevant only for Dnsconfd plugin.
+           </para>
+          </listitem>
+        </varlistentry>
+        <varlistentry>
+          <term><varname>certification-authority</varname></term>
+          <listitem>
+            <para>
+             String specifying absolute path to bundle of CA certificates that must be used for
+             validation of certificates presented by DNS servers when encrypted DNS is used.
+             Currently relevant only for Dnsconfd plugin.
+           </para>
+          </listitem>
+        </varlistentry>
       </variablelist>
     </para>
   </refsect1>
@@ -1505,7 +1598,7 @@ managed=1
   <refsect1>
     <title><literal>global-dns-domain</literal> sections</title>
     <para>Sections with a name starting with the "global-dns-domain-"
-    prefix allow to define global DNS configuration for specific
+    prefix allow one to define global DNS configuration for specific
     domains.  The part of section name after "global-dns-domain-"
     specifies the domain name a section applies to (for example, a
     section could be named "global-dns-domain-foobar.com").  More
@@ -1516,6 +1609,10 @@ managed=1
     default domain "*". When the global DNS domains are valid, the
     name servers and domains defined globally override the ones from
     active connections.
+
+    If any global DNS domain is defined but a [global-dns] section isn't,
+    an empty [global-dns] section is assumed, thus overwriting its
+    connection specific configurations too.
     </para>
     <para>
       <variablelist>
@@ -1523,8 +1620,24 @@ managed=1
           <term><varname>servers</varname></term>
           <listitem>
             <para>
-             A list of addresses of DNS servers to be used for the given domain.
-           </para>
+             A list of addresses of DNS servers to be used for the
+             given domain. Each server can be specified either as a
+             plain IP address or with a URI syntax. When it is
+             specified as an URI, the following forms are supported:
+            </para>
+            <para>
+             <simplelist type="horiz" columns="1">
+               <member>dns+udp://<varname>ADDRESS</varname>[:<varname>PORT</varname>]                 : DNS</member>
+               <member>dns+tls://<varname>ADDRESS</varname>[:<varname>PORT</varname>][#<varname>SERVERNAME]</varname>    : DNS over TLS</member>
+             </simplelist>
+            </para>
+            <para>
+              <varname>ADDRESS</varname> is an IPv4 or IPv6
+              address. When it is IPv6, it must be enclosed in square
+              brackets ('[' and ']'). When it is a IPv6 link-local
+              address, the address should be followed by a percent
+              sign ('%') and an interface name.
+            </para>
           </listitem>
         </varlistentry>
         <varlistentry>
@@ -1656,7 +1769,7 @@ enable=nm-version-min:1.3,nm-version-min:1.2.6,nm-version-min:1.0.16
             private keys in plain text, so it will be made readable only to
             root, and the plugin will ignore files that are readable or
             writable by any user or group other than root. See "Secret flag types"
-            in <link linkend='nm-settings'><citerefentry><refentrytitle>nm-settings</refentrytitle><manvolnum>5</manvolnum></citerefentry></link>
+            in <link linkend='nm-settings-nmcli'><citerefentry><refentrytitle>nm-settings-nmcli</refentrytitle><manvolnum>5</manvolnum></citerefentry></link>
             for how to avoid storing passwords in plain text.
           </para>
           <para>
@@ -1841,7 +1954,7 @@ interface-name:vboxnet*,except:interface-name:vboxnet2
           <literal>"uuid:83037490-1d17-4986-a397-01f1db3a7fc2"</literal></para></listitem>
         </varlistentry>
         <varlistentry>
-          <term>id=ID</term>
+          <term>id:ID</term>
           <listitem><para>Match the connection by name.</para></listitem>
         </varlistentry>
         <varlistentry>
@@ -1881,7 +1994,7 @@ interface-name:vboxnet*,except:interface-name:vboxnet2
       <link linkend='nmcli'><citerefentry><refentrytitle>nmcli</refentrytitle><manvolnum>1</manvolnum></citerefentry></link>,
       <link linkend='nmcli-examples'><citerefentry><refentrytitle>nmcli-examples</refentrytitle><manvolnum>7</manvolnum></citerefentry></link>,
       <link linkend='nm-online'><citerefentry><refentrytitle>nm-online</refentrytitle><manvolnum>1</manvolnum></citerefentry></link>,
-      <link linkend='nm-settings'><citerefentry><refentrytitle>nm-settings</refentrytitle><manvolnum>5</manvolnum></citerefentry></link>,
+      <link linkend='nm-settings-nmcli'><citerefentry><refentrytitle>nm-settings-nmcli</refentrytitle><manvolnum>5</manvolnum></citerefentry></link>,
       <citerefentry><refentrytitle>nm-applet</refentrytitle><manvolnum>1</manvolnum></citerefentry>,
       <citerefentry><refentrytitle>nm-connection-editor</refentrytitle><manvolnum>1</manvolnum></citerefentry>
     </para>

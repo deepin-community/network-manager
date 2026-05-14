@@ -138,14 +138,6 @@ link_changed(NMDevice *device, const NMPlatformLink *pllink)
 }
 
 static gboolean
-is_available(NMDevice *device, NMDeviceCheckDevAvailableFlags flags)
-{
-    if (!nm_device_parent_get_device(device))
-        return FALSE;
-    return NM_DEVICE_CLASS(nm_device_6lowpan_parent_class)->is_available(device, flags);
-}
-
-static gboolean
 complete_connection(NMDevice            *device,
                     NMConnection        *connection,
                     const char          *specific_object,
@@ -161,8 +153,7 @@ complete_connection(NMDevice            *device,
                               NULL,
                               _("6LOWPAN connection"),
                               NULL,
-                              NULL,
-                              TRUE);
+                              NULL);
 
     s_6lowpan = NM_SETTING_6LOWPAN(nm_connection_get_setting(connection, NM_TYPE_SETTING_6LOWPAN));
     if (!s_6lowpan) {
@@ -212,7 +203,11 @@ static const NMDBusInterfaceInfoExtended interface_info_device_6lowpan = {
     .parent = NM_DEFINE_GDBUS_INTERFACE_INFO_INIT(
         NM_DBUS_INTERFACE_DEVICE_6LOWPAN,
         .properties = NM_DEFINE_GDBUS_PROPERTY_INFOS(
-            NM_DEFINE_DBUS_PROPERTY_INFO_EXTENDED_READABLE("HwAddress", "s", NM_DEVICE_HW_ADDRESS),
+            NM_DEFINE_DBUS_PROPERTY_INFO_EXTENDED_READABLE(
+                "HwAddress",
+                "s",
+                NM_DEVICE_HW_ADDRESS,
+                .annotations = NM_GDBUS_ANNOTATION_INFO_LIST_DEPRECATED(), ),
             NM_DEFINE_DBUS_PROPERTY_INFO_EXTENDED_READABLE("Parent", "o", NM_DEVICE_PARENT), ), ),
 };
 
@@ -234,7 +229,6 @@ nm_device_6lowpan_class_init(NMDevice6LowpanClass *klass)
     device_class->get_generic_capabilities               = get_generic_capabilities;
     device_class->get_configured_mtu                     = nm_device_get_configured_mtu_for_wired;
     device_class->link_changed                           = link_changed;
-    device_class->is_available                           = is_available;
     device_class->parent_changed_notify                  = parent_changed_notify;
     device_class->update_connection                      = update_connection;
 }
@@ -272,27 +266,10 @@ get_connection_parent(NMDeviceFactory *factory, NMConnection *connection)
     g_return_val_if_fail(nm_connection_is_type(connection, NM_SETTING_6LOWPAN_SETTING_NAME), NULL);
 
     s_6lowpan = NM_SETTING_6LOWPAN(nm_connection_get_setting(connection, NM_TYPE_SETTING_6LOWPAN));
-    g_assert(s_6lowpan);
-
-    return nm_setting_6lowpan_get_parent(s_6lowpan);
-}
-
-static char *
-get_connection_iface(NMDeviceFactory *factory, NMConnection *connection, const char *parent_iface)
-{
-    NMSetting6Lowpan *s_6lowpan;
-    const char       *ifname;
-
-    g_return_val_if_fail(nm_connection_is_type(connection, NM_SETTING_6LOWPAN_SETTING_NAME), NULL);
-
-    s_6lowpan = NM_SETTING_6LOWPAN(nm_connection_get_setting(connection, NM_TYPE_SETTING_6LOWPAN));
-    g_assert(s_6lowpan);
-
-    if (!parent_iface)
+    if (s_6lowpan)
+        return nm_setting_6lowpan_get_parent(s_6lowpan);
+    else
         return NULL;
-
-    ifname = nm_connection_get_interface_name(connection);
-    return g_strdup(ifname);
 }
 
 NM_DEVICE_FACTORY_DEFINE_INTERNAL(
@@ -302,5 +279,4 @@ NM_DEVICE_FACTORY_DEFINE_INTERNAL(
     NM_DEVICE_FACTORY_DECLARE_LINK_TYPES(NM_LINK_TYPE_6LOWPAN)
         NM_DEVICE_FACTORY_DECLARE_SETTING_TYPES(NM_SETTING_6LOWPAN_SETTING_NAME),
     factory_class->create_device         = create_device;
-    factory_class->get_connection_parent = get_connection_parent;
-    factory_class->get_connection_iface  = get_connection_iface;);
+    factory_class->get_connection_parent = get_connection_parent;);

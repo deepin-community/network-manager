@@ -89,7 +89,7 @@ _nm_connection_get_private_from_qdata(NMConnection *connection)
     priv = g_object_get_qdata((GObject *) connection, key);
     if (G_UNLIKELY(!priv)) {
         priv  = g_slice_new(NMConnectionPrivate);
-        *priv = (NMConnectionPrivate){
+        *priv = (NMConnectionPrivate) {
             .self = connection,
         };
         g_object_set_qdata_full((GObject *) connection, key, priv, _nm_connection_private_free);
@@ -908,7 +908,7 @@ _nm_setting_connection_verify_secondaries(GArray *secondaries, GError **error)
      * Now, when we find any invalid/non-normalized values, we reject/normalize
      * them. We also filter out duplicates. */
 
-    strv = nm_strvarray_get_strv_non_empty(secondaries, NULL);
+    strv = nm_strvarray_get_strv_notempty(secondaries, NULL);
 
     for (i = 0; i < len; i++) {
         const char *uuid = strv[i];
@@ -959,6 +959,40 @@ out:
     return FALSE;
 }
 
+gboolean
+_nm_setting_connection_verify_no_duplicate_addresses(GArray *addresses, GError **error)
+{
+    guint i, j;
+
+    if (addresses->len <= 1) {
+        return TRUE;
+    } else {
+        for (i = 0; i < addresses->len - 1; i++) {
+            for (j = i + 1; j < addresses->len; j++) {
+                if (nm_streq0(nm_g_array_index(addresses, const char *, i),
+                              nm_g_array_index(addresses, const char *, j)))
+                    return FALSE;
+            }
+        }
+    }
+
+    return TRUE;
+}
+
+int
+_get_ip_address_family(const char *ip_address)
+{
+    struct in_addr  ipv4_addr;
+    struct in6_addr ipv6_addr;
+
+    if (inet_pton(AF_INET, ip_address, &ipv4_addr))
+        return AF_INET;
+    else if (inet_pton(AF_INET6, ip_address, &ipv6_addr))
+        return AF_INET6;
+    else
+        return -1;
+}
+
 static gboolean
 _normalize_connection_secondaries(NMConnection *self)
 {
@@ -977,7 +1011,7 @@ _normalize_connection_secondaries(NMConnection *self)
     if (_nm_setting_connection_verify_secondaries(secondaries, NULL))
         return FALSE;
 
-    strv = nm_strvarray_get_strv_non_empty_dup(secondaries, NULL);
+    strv = nm_strvarray_get_strv_notempty_dup(secondaries, NULL);
     for (i = 0, j = 0; strv[i]; i++) {
         gs_free char *s = g_steal_pointer(&strv[i]);
         char          uuid_normalized[37];
@@ -986,7 +1020,7 @@ _normalize_connection_secondaries(NMConnection *self)
         if (!nm_uuid_is_valid_nm(s, &uuid_is_normalized, uuid_normalized))
             continue;
 
-        if (nm_strv_find_first(strv, j, uuid_is_normalized ? uuid_normalized : s) >= 0)
+        if (nm_strv_contains(strv, j, uuid_is_normalized ? uuid_normalized : s))
             continue;
 
         strv[j++] = uuid_is_normalized ? g_strdup(uuid_normalized) : g_steal_pointer(&s);
@@ -994,6 +1028,48 @@ _normalize_connection_secondaries(NMConnection *self)
     strv[j] = NULL;
 
     g_object_set(s_con, NM_SETTING_CONNECTION_SECONDARIES, strv, NULL);
+    return TRUE;
+}
+
+static gboolean
+_normalize_connection_ip_ping_addresses(NMConnection *self)
+{
+    NMSettingConnection *s_con = nm_connection_get_setting_connection(self);
+    GArray              *addresses;
+    gs_strfreev char   **strv = NULL;
+    guint                i, j, k;
+
+    nm_assert(s_con);
+
+    addresses = _nm_setting_connection_get_ip_ping_addresses(s_con);
+    if (nm_g_array_len(addresses) == 0)
+        return FALSE;
+
+    if (_nm_setting_connection_verify_no_duplicate_addresses(addresses, NULL))
+        return FALSE;
+
+    strv = nm_strvarray_get_strv_notempty_dup(addresses, NULL);
+
+    for (i = 0, j = 0; strv[i]; i++) {
+        gboolean found = FALSE;
+
+        for (k = 0; k < j; k++) {
+            if (nm_streq0(strv[i], strv[k])) {
+                found = TRUE;
+                break;
+            }
+        }
+
+        if (found) {
+            continue;
+        }
+
+        strv[j++] = strv[i];
+    }
+    strv[j] = NULL;
+
+    g_object_set(s_con, NM_SETTING_CONNECTION_IP_PING_ADDRESSES, strv, NULL);
+
     return TRUE;
 }
 
@@ -1047,11 +1123,11 @@ _nm_connection_detect_bluetooth_type(NMConnection *self)
 }
 
 const char *
-_nm_connection_detect_slave_type(NMConnection *connection, NMSetting **out_s_port)
+_nm_connection_detect_port_type(NMConnection *connection, NMSetting **out_s_port)
 {
-    NMConnectionPrivate *priv       = NM_CONNECTION_GET_PRIVATE(connection);
-    const char          *slave_type = NULL;
-    NMSetting           *s_port     = NULL;
+    NMConnectionPrivate *priv      = NM_CONNECTION_GET_PRIVATE(connection);
+    const char          *port_type = NULL;
+    NMSetting           *s_port    = NULL;
     int                  i;
     static const struct {
         NMMetaSettingType meta_type;
@@ -1070,40 +1146,40 @@ _nm_connection_detect_slave_type(NMConnection *connection, NMSetting **out_s_por
         if (!setting)
             continue;
 
-        if (slave_type) {
-            /* there are more then one matching port types, cannot detect the slave type. */
-            slave_type = NULL;
-            s_port     = NULL;
+        if (port_type) {
+            /* there are more then one matching port types, cannot detect the port type. */
+            port_type = NULL;
+            s_port    = NULL;
             break;
         }
-        slave_type = infos[i].controller_type_name;
-        s_port     = setting;
+        port_type = infos[i].controller_type_name;
+        s_port    = setting;
     }
 
     if (out_s_port)
         *out_s_port = s_port;
-    return slave_type;
+    return port_type;
 }
 
 static gboolean
-_normalize_connection_slave_type(NMConnection *self)
+_normalize_connection_port_type(NMConnection *self)
 {
     NMSettingConnection *s_con = nm_connection_get_setting_connection(self);
-    const char          *slave_type, *port_type;
+    const char          *port_type, *port_setting_type;
 
     if (!s_con)
         return FALSE;
-    if (!nm_setting_connection_get_master(s_con))
+    if (!nm_setting_connection_get_controller(s_con))
         return FALSE;
 
-    slave_type = nm_setting_connection_get_slave_type(s_con);
-    if (slave_type) {
-        if (_nm_setting_slave_type_is_valid(slave_type, &port_type) && port_type) {
+    port_type = nm_setting_connection_get_port_type(s_con);
+    if (port_type) {
+        if (_nm_setting_port_type_is_valid(port_type, &port_setting_type) && port_setting_type) {
             NMSetting *s_port;
 
-            s_port = nm_connection_get_setting_by_name(self, port_type);
+            s_port = nm_connection_get_setting_by_name(self, port_setting_type);
             if (!s_port) {
-                GType p_type = nm_setting_lookup_type(port_type);
+                GType p_type = nm_setting_lookup_type(port_setting_type);
 
                 g_return_val_if_fail(p_type, FALSE);
                 nm_connection_add_setting(self, g_object_new(p_type, NULL));
@@ -1111,8 +1187,8 @@ _normalize_connection_slave_type(NMConnection *self)
             }
         }
     } else {
-        if ((slave_type = _nm_connection_detect_slave_type(self, NULL))) {
-            g_object_set(s_con, NM_SETTING_CONNECTION_SLAVE_TYPE, slave_type, NULL);
+        if ((port_type = _nm_connection_detect_port_type(self, NULL))) {
+            g_object_set(s_con, NM_SETTING_CONNECTION_PORT_TYPE, port_type, NULL);
             return TRUE;
         }
     }
@@ -1172,10 +1248,10 @@ _supports_addr_family(NMConnection *self, int family)
     if (strcmp(connection_type, NM_SETTING_6LOWPAN_SETTING_NAME) == 0)
         return family == AF_INET6 || family == AF_UNSPEC;
     if ((s_con = nm_connection_get_setting_connection(self))
-        && (nm_streq0(nm_setting_connection_get_slave_type(s_con), NM_SETTING_VRF_SETTING_NAME)))
+        && (nm_streq0(nm_setting_connection_get_port_type(s_con), NM_SETTING_VRF_SETTING_NAME)))
         return TRUE;
 
-    return !nm_setting_connection_get_master(nm_connection_get_setting_connection(self));
+    return !nm_setting_connection_get_controller(nm_connection_get_setting_connection(self));
 }
 
 static gboolean
@@ -1186,6 +1262,7 @@ _normalize_ip_config(NMConnection *self, GHashTable *parameters)
     NMSetting         *setting;
     gboolean           changed = FALSE;
     guint              num, i;
+    int                dhcp_send_hostname_v2;
 
     s_ip4   = nm_connection_get_setting_ip4_config(self);
     s_ip6   = nm_connection_get_setting_ip6_config(self);
@@ -1239,6 +1316,16 @@ _normalize_ip_config(NMConnection *self, GHashTable *parameters)
                              NM_SETTING_IP4_CONFIG_METHOD_SHARED)) {
                 for (i = num - 1; i > 0; i--)
                     nm_setting_ip_config_remove_address(s_ip4, i);
+                changed = TRUE;
+            }
+
+            dhcp_send_hostname_v2 = nm_setting_ip_config_get_dhcp_send_hostname_v2(s_ip4);
+            if (dhcp_send_hostname_v2 != NM_TERNARY_DEFAULT
+                && dhcp_send_hostname_v2 != nm_setting_ip_config_get_dhcp_send_hostname(s_ip4)) {
+                g_object_set(s_ip4,
+                             NM_SETTING_IP_CONFIG_DHCP_SEND_HOSTNAME,
+                             dhcp_send_hostname_v2,
+                             NULL);
                 changed = TRUE;
             }
         }
@@ -1313,6 +1400,16 @@ _normalize_ip_config(NMConnection *self, GHashTable *parameters)
                              NM_SETTING_IP6_CONFIG_METHOD_DISABLED)
                 && !nm_setting_ip_config_get_may_fail(s_ip6)) {
                 g_object_set(s_ip6, NM_SETTING_IP_CONFIG_MAY_FAIL, TRUE, NULL);
+                changed = TRUE;
+            }
+
+            dhcp_send_hostname_v2 = nm_setting_ip_config_get_dhcp_send_hostname_v2(s_ip6);
+            if (dhcp_send_hostname_v2 != NM_TERNARY_DEFAULT
+                && dhcp_send_hostname_v2 != nm_setting_ip_config_get_dhcp_send_hostname(s_ip6)) {
+                g_object_set(s_ip6,
+                             NM_SETTING_IP_CONFIG_DHCP_SEND_HOSTNAME,
+                             dhcp_send_hostname_v2,
+                             NULL);
                 changed = TRUE;
             }
         }
@@ -1430,52 +1527,42 @@ again:
 }
 
 static gboolean
-_normalize_wireless_mac_address_randomization(NMConnection *self)
+_normalize_wireless_mac_address_randomization(NMSettingWireless *s_wifi)
 {
-    NMSettingWireless        *s_wifi = nm_connection_get_setting_wireless(self);
+    const char               *desired_cloned_mac_address;
     const char               *cloned_mac_address;
+    NMSettingMacRandomization desired_mac_address_randomization;
     NMSettingMacRandomization mac_address_randomization;
+    gboolean                  changed = FALSE;
 
-    if (!s_wifi)
-        return FALSE;
+    _nm_setting_wireless_normalize_mac_address_randomization(s_wifi,
+                                                             &desired_cloned_mac_address,
+                                                             &desired_mac_address_randomization);
 
     mac_address_randomization = nm_setting_wireless_get_mac_address_randomization(s_wifi);
-    if (!NM_IN_SET(mac_address_randomization,
-                   NM_SETTING_MAC_RANDOMIZATION_DEFAULT,
-                   NM_SETTING_MAC_RANDOMIZATION_NEVER,
-                   NM_SETTING_MAC_RANDOMIZATION_ALWAYS))
-        return FALSE;
+    cloned_mac_address        = nm_setting_wireless_get_cloned_mac_address(s_wifi);
 
-    cloned_mac_address = nm_setting_wireless_get_cloned_mac_address(s_wifi);
-    if (cloned_mac_address) {
-        if (nm_streq(cloned_mac_address, "random")) {
-            if (mac_address_randomization == NM_SETTING_MAC_RANDOMIZATION_ALWAYS)
-                return FALSE;
-            mac_address_randomization = NM_SETTING_MAC_RANDOMIZATION_ALWAYS;
-        } else if (nm_streq(cloned_mac_address, "permanent")) {
-            if (mac_address_randomization == NM_SETTING_MAC_RANDOMIZATION_NEVER)
-                return FALSE;
-            mac_address_randomization = NM_SETTING_MAC_RANDOMIZATION_NEVER;
-        } else {
-            if (mac_address_randomization == NM_SETTING_MAC_RANDOMIZATION_DEFAULT)
-                return FALSE;
-            mac_address_randomization = NM_SETTING_MAC_RANDOMIZATION_DEFAULT;
-        }
-        g_object_set(s_wifi,
-                     NM_SETTING_WIRELESS_MAC_ADDRESS_RANDOMIZATION,
-                     mac_address_randomization,
-                     NULL);
-        return TRUE;
-    }
-    if (mac_address_randomization != NM_SETTING_MAC_RANDOMIZATION_DEFAULT) {
+    /* Note that "mac_address_randomization" is possibly the string owned by
+     * "s_wifi".  We must be careful that modifying "s_wifi" might invalidate
+     * the string. */
+
+    if (!nm_streq0(cloned_mac_address, desired_cloned_mac_address)) {
         g_object_set(s_wifi,
                      NM_SETTING_WIRELESS_CLONED_MAC_ADDRESS,
-                     mac_address_randomization == NM_SETTING_MAC_RANDOMIZATION_ALWAYS ? "random"
-                                                                                      : "permanent",
+                     desired_cloned_mac_address,
                      NULL);
-        return TRUE;
+        changed = TRUE;
     }
-    return FALSE;
+
+    if (mac_address_randomization != desired_mac_address_randomization) {
+        g_object_set(s_wifi,
+                     NM_SETTING_WIRELESS_MAC_ADDRESS_RANDOMIZATION,
+                     (guint) desired_mac_address_randomization,
+                     NULL);
+        changed = TRUE;
+    }
+
+    return changed;
 }
 
 static gboolean
@@ -1496,6 +1583,9 @@ _normalize_wireless(NMConnection *self)
         g_object_set(s_wifi, NM_SETTING_WIRELESS_TX_POWER, 0u, NULL);
         changed = TRUE;
     }
+
+    if (_normalize_wireless_mac_address_randomization(s_wifi))
+        changed = TRUE;
 
     return changed;
 }
@@ -1769,23 +1859,23 @@ _normalize_required_settings(NMConnection *self)
 }
 
 static gboolean
-_normalize_invalid_slave_port_settings(NMConnection *self)
+_normalize_invalid_port_port_settings(NMConnection *self)
 {
     NMSettingConnection *s_con = nm_connection_get_setting_connection(self);
-    const char          *slave_type;
+    const char          *port_type;
     gboolean             changed = FALSE;
 
-    slave_type = nm_setting_connection_get_slave_type(s_con);
+    port_type = nm_setting_connection_get_port_type(s_con);
 
-    if (!nm_streq0(slave_type, NM_SETTING_BRIDGE_SETTING_NAME)
+    if (!nm_streq0(port_type, NM_SETTING_BRIDGE_SETTING_NAME)
         && _nm_connection_remove_setting(self, NM_TYPE_SETTING_BRIDGE_PORT))
         changed = TRUE;
 
-    if (!nm_streq0(slave_type, NM_SETTING_BOND_SETTING_NAME)
+    if (!nm_streq0(port_type, NM_SETTING_BOND_SETTING_NAME)
         && _nm_connection_remove_setting(self, NM_TYPE_SETTING_BOND_PORT))
         changed = TRUE;
 
-    if (!nm_streq0(slave_type, NM_SETTING_TEAM_SETTING_NAME)
+    if (!nm_streq0(port_type, NM_SETTING_TEAM_SETTING_NAME)
         && _nm_connection_remove_setting(self, NM_TYPE_SETTING_TEAM_PORT))
         changed = TRUE;
 
@@ -1897,10 +1987,10 @@ _nm_connection_verify(NMConnection *connection, GError **error)
                 g_set_error_literal(&normalizable_error,
                                     NM_CONNECTION_ERROR,
                                     NM_CONNECTION_ERROR_MISSING_SETTING,
-                                    _("setting is required for non-slave connections"));
+                                    _("setting is required for non-port connections"));
                 g_prefix_error(&normalizable_error, "%s: ", NM_SETTING_IP4_CONFIG_SETTING_NAME);
 
-                /* having a master without IP config was not a verify() error, accept
+                /* having a controller without IP config was not a verify() error, accept
                  * it for backward compatibility. */
                 normalizable_error_type = NM_SETTING_VERIFY_NORMALIZABLE;
             }
@@ -1910,9 +2000,9 @@ _nm_connection_verify(NMConnection *connection, GError **error)
                 g_set_error_literal(&normalizable_error,
                                     NM_CONNECTION_ERROR,
                                     NM_CONNECTION_ERROR_INVALID_SETTING,
-                                    _("setting not allowed in slave connection"));
+                                    _("setting not allowed in port connection"));
                 g_prefix_error(&normalizable_error, "%s: ", NM_SETTING_IP4_CONFIG_SETTING_NAME);
-                /* having a slave with IP config *was* and is a verify() error. */
+                /* having a port with IP config *was* and is a verify() error. */
                 normalizable_error_type = NM_SETTING_VERIFY_NORMALIZABLE_ERROR;
             }
         }
@@ -1922,10 +2012,10 @@ _nm_connection_verify(NMConnection *connection, GError **error)
                 g_set_error_literal(&normalizable_error,
                                     NM_CONNECTION_ERROR,
                                     NM_CONNECTION_ERROR_MISSING_SETTING,
-                                    _("setting is required for non-slave connections"));
+                                    _("setting is required for non-port connections"));
                 g_prefix_error(&normalizable_error, "%s: ", NM_SETTING_IP6_CONFIG_SETTING_NAME);
 
-                /* having a master without IP config was not a verify() error, accept
+                /* having a controller without IP config was not a verify() error, accept
                  * it for backward compatibility. */
                 normalizable_error_type = NM_SETTING_VERIFY_NORMALIZABLE;
             }
@@ -1935,9 +2025,9 @@ _nm_connection_verify(NMConnection *connection, GError **error)
                 g_set_error_literal(&normalizable_error,
                                     NM_CONNECTION_ERROR,
                                     NM_CONNECTION_ERROR_INVALID_SETTING,
-                                    _("setting not allowed in slave connection"));
+                                    _("setting not allowed in port connection"));
                 g_prefix_error(&normalizable_error, "%s: ", NM_SETTING_IP6_CONFIG_SETTING_NAME);
-                /* having a slave with IP config *was* and is a verify() error. */
+                /* having a port with IP config *was* and is a verify() error. */
                 normalizable_error_type = NM_SETTING_VERIFY_NORMALIZABLE_ERROR;
             }
         }
@@ -1947,10 +2037,10 @@ _nm_connection_verify(NMConnection *connection, GError **error)
                 g_set_error_literal(&normalizable_error,
                                     NM_CONNECTION_ERROR,
                                     NM_CONNECTION_ERROR_MISSING_SETTING,
-                                    _("setting is required for non-slave connections"));
+                                    _("setting is required for non-port connections"));
                 g_prefix_error(&normalizable_error, "%s: ", NM_SETTING_PROXY_SETTING_NAME);
 
-                /* having a master without proxy config was not a verify() error, accept
+                /* having a controller without proxy config was not a verify() error, accept
                  * it for backward compatibility. */
                 normalizable_error_type = NM_SETTING_VERIFY_NORMALIZABLE;
             }
@@ -1960,9 +2050,9 @@ _nm_connection_verify(NMConnection *connection, GError **error)
                 g_set_error_literal(&normalizable_error,
                                     NM_CONNECTION_ERROR,
                                     NM_CONNECTION_ERROR_INVALID_SETTING,
-                                    _("setting not allowed in slave connection"));
+                                    _("setting not allowed in port connection"));
                 g_prefix_error(&normalizable_error, "%s: ", NM_SETTING_PROXY_SETTING_NAME);
-                /* having a slave with proxy config *was* and is a verify() error. */
+                /* having a port with proxy config *was* and is a verify() error. */
                 normalizable_error_type = NM_SETTING_VERIFY_NORMALIZABLE_ERROR;
             }
         }
@@ -2033,17 +2123,17 @@ _connection_normalize(NMConnection *connection,
 
     was_modified |= _normalize_connection_uuid(connection);
     was_modified |= _normalize_connection_type(connection);
-    was_modified |= _normalize_connection_slave_type(connection);
+    was_modified |= _normalize_connection_port_type(connection);
     was_modified |= _normalize_connection_secondaries(connection);
+    was_modified |= _normalize_connection_ip_ping_addresses(connection);
     was_modified |= _normalize_connection(connection);
     was_modified |= _normalize_required_settings(connection);
-    was_modified |= _normalize_invalid_slave_port_settings(connection);
+    was_modified |= _normalize_invalid_port_port_settings(connection);
     was_modified |= _normalize_ip_config(connection, parameters);
     was_modified |= _normalize_ethernet_link_neg(connection);
     was_modified |= _normalize_infiniband(connection);
     was_modified |= _normalize_bond_mode(connection);
     was_modified |= _normalize_bond_options(connection);
-    was_modified |= _normalize_wireless_mac_address_randomization(connection);
     was_modified |= _normalize_wireless(connection);
     was_modified |= _normalize_macsec(connection);
     was_modified |= _normalize_team_config(connection);
@@ -3182,7 +3272,9 @@ nm_connection_is_virtual(NMConnection *connection)
                      NM_SETTING_BOND_SETTING_NAME,
                      NM_SETTING_BRIDGE_SETTING_NAME,
                      NM_SETTING_DUMMY_SETTING_NAME,
+                     NM_SETTING_HSR_SETTING_NAME,
                      NM_SETTING_IP_TUNNEL_SETTING_NAME,
+                     NM_SETTING_IPVLAN_SETTING_NAME,
                      NM_SETTING_MACSEC_SETTING_NAME,
                      NM_SETTING_MACVLAN_SETTING_NAME,
                      NM_SETTING_OVS_BRIDGE_SETTING_NAME,
@@ -3212,6 +3304,13 @@ nm_connection_is_virtual(NMConnection *connection)
 
         s_pppoe = nm_connection_get_setting_pppoe(connection);
         return !!nm_setting_pppoe_get_parent(s_pppoe);
+    }
+
+    if (nm_streq(type, NM_SETTING_GENERIC_SETTING_NAME)) {
+        NMSettingGeneric *s_generic;
+
+        s_generic = nm_connection_get_setting_generic(connection);
+        return !!nm_setting_generic_get_device_handler(s_generic);
     }
 
     return FALSE;
@@ -3258,6 +3357,10 @@ nm_connection_get_virtual_device_description(NMConnection *connection)
         display_type = _("WireGuard");
     else if (nm_streq(type, NM_SETTING_TUN_SETTING_NAME))
         display_type = _("TUN/TAP");
+    else if (nm_streq(type, NM_SETTING_VETH_SETTING_NAME))
+        display_type = _("Veth");
+    else if (nm_streq(type, NM_SETTING_LOOPBACK_SETTING_NAME))
+        display_type = _("Loopback");
 
     if (!iface || !display_type)
         return NULL;

@@ -6,7 +6,7 @@
 #ifndef __NM_UTILS_PRIVATE_H__
 #define __NM_UTILS_PRIVATE_H__
 
-#if !((NETWORKMANAGER_COMPILATION) &NM_NETWORKMANAGER_COMPILATION_WITH_LIBNM_CORE_PRIVATE)
+#if !((NETWORKMANAGER_COMPILATION) & NM_NETWORKMANAGER_COMPILATION_WITH_LIBNM_CORE_PRIVATE)
 #error Cannot use this header.
 #endif
 
@@ -14,7 +14,7 @@
 #include "nm-setting-ip-config.h"
 
 #define NM_VARIANT_ATTRIBUTE_SPEC_DEFINE(_name, _type, ...) \
-    (&((const NMVariantAttributeSpec){.name = _name, .type = _type, __VA_ARGS__}))
+    (&((const NMVariantAttributeSpec) {.name = _name, .type = _type, __VA_ARGS__}))
 
 gboolean _nm_utils_string_slist_validate(GSList *list, const char **valid_values);
 

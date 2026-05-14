@@ -11,7 +11,7 @@
  *
  * This uses the NMVpnEditorPluginVT and allows a user (nm-applet)
  * to directly communicate with a VPN plugin using API that is newer
- * then the current libnm version. That is, it allows to call to a VPN
+ * then the current libnm version. That is, it allows a user to call to a VPN
  * plugin bypassing libnm. */
 
 #include <NetworkManager.h>
@@ -103,7 +103,7 @@ nm_vpn_editor_plugin_get_service_add_details(NMVpnEditorPlugin *plugin, const ch
     if (vt.fcn_get_service_add_details)
         details = vt.fcn_get_service_add_details(plugin, service_name);
     if (!details)
-        return g_new0(char *, 1);
+        return nm_strv_empty_new();
     return details;
 }
 

@@ -273,6 +273,18 @@ NMClientPermissionResult nm_client_permission_result_from_string(const char *nm)
 const char              *nm_client_permission_result_to_string(NMClientPermissionResult permission);
 
 gboolean nm_utils_validate_dhcp4_vendor_class_id(const char *vci, GError **error);
+gboolean nm_utils_validate_dhcp_dscp(const char *dscp, GError **error);
+
+/*****************************************************************************/
+
+#define NM_MIN_FINITE_LEASE_TIME 120
+#define NM_MAX_FINITE_LEASE_TIME (3600 * 24 * 365)
+#define NM_INFINITE_LEASE_TIME   "infinity"
+
+gboolean nm_utils_validate_shared_dhcp_range(const char *shared_dhcp_range,
+                                             GPtrArray  *addresses,
+                                             GError    **error);
+gboolean nm_utils_validate_shared_dhcp_lease_time(int shared_dhcp_lease_time, GError **error);
 
 /*****************************************************************************/
 
@@ -288,44 +300,42 @@ gpointer _nm_connection_new_setting(NMConnection *connection, GType gtype);
 
 /*****************************************************************************/
 
-#define _NM_MPTCP_FLAGS_ALL                                                              \
-    ((NMMptcpFlags) (NM_MPTCP_FLAGS_DISABLED | NM_MPTCP_FLAGS_ENABLED                    \
-                     | NM_MPTCP_FLAGS_ALSO_WITHOUT_SYSCTL                                \
-                     | NM_MPTCP_FLAGS_ALSO_WITHOUT_DEFAULT_ROUTE | NM_MPTCP_FLAGS_SIGNAL \
-                     | NM_MPTCP_FLAGS_SUBFLOW | NM_MPTCP_FLAGS_BACKUP | NM_MPTCP_FLAGS_FULLMESH))
+#define _NM_MPTCP_FLAGS_ALL                                                                     \
+    ((NMMptcpFlags) (NM_MPTCP_FLAGS_DISABLED | NM_MPTCP_FLAGS_ENABLED                           \
+                     | NM_MPTCP_FLAGS_ALSO_WITHOUT_SYSCTL                                       \
+                     | NM_MPTCP_FLAGS_ALSO_WITHOUT_DEFAULT_ROUTE | NM_MPTCP_FLAGS_SIGNAL        \
+                     | NM_MPTCP_FLAGS_SUBFLOW | NM_MPTCP_FLAGS_BACKUP | NM_MPTCP_FLAGS_FULLMESH \
+                     | NM_MPTCP_FLAGS_LAMINAR))
 
-#define _NM_MPTCP_FLAGS_DEFAULT ((NMMptcpFlags) (NM_MPTCP_FLAGS_ENABLED | NM_MPTCP_FLAGS_SUBFLOW))
+#define _NM_MPTCP_FLAGS_DEFAULT \
+    ((NMMptcpFlags) (NM_MPTCP_FLAGS_ENABLED | NM_MPTCP_FLAGS_SUBFLOW | NM_MPTCP_FLAGS_LAMINAR))
 
 NMMptcpFlags nm_mptcp_flags_normalize(NMMptcpFlags flags);
 
 /*****************************************************************************/
 
-gboolean nm_utils_dnsname_parse(int                          addr_family,
-                                const char                  *dns,
-                                int                         *out_addr_family,
-                                gpointer /* (NMIPAddr **) */ out_addr,
-                                const char                 **out_servername);
+typedef enum {
+    NM_DNS_URI_SCHEME_UNKNOWN,
+    NM_DNS_URI_SCHEME_NONE,
+    NM_DNS_URI_SCHEME_UDP,
+    NM_DNS_URI_SCHEME_TLS,
+} NMDnsUriScheme;
 
-#define nm_utils_dnsname_parse_assert(addr_family, dns, out_addr_family, out_addr, out_servername) \
-    ({                                                                                             \
-        gboolean _good;                                                                            \
-                                                                                                   \
-        _good = nm_utils_dnsname_parse((addr_family),                                              \
-                                       (dns),                                                      \
-                                       (out_addr_family),                                          \
-                                       (out_addr),                                                 \
-                                       (out_servername));                                          \
-        nm_assert(_good);                                                                          \
-        _good;                                                                                     \
-    })
+#define NM_DNS_PORT_UNDEFINED 0
 
-const char *nm_utils_dnsname_construct(int                                    addr_family,
-                                       gconstpointer /* (const NMIPAddr *) */ addr,
-                                       const char                            *server_name,
-                                       char                                  *result,
-                                       gsize                                  result_len);
+typedef struct {
+    NMIPAddr       addr;
+    const char    *servername;
+    char           interface[NM_IFNAMSIZ];
+    NMDnsUriScheme scheme;
+    int            addr_family;
+    guint16        port;
+} NMDnsServer;
 
-const char *nm_utils_dnsname_normalize(int addr_family, const char *dns, char **out_free);
+gboolean nm_dns_uri_parse(int addr_family, const char *str, NMDnsServer *out_dns, GError **error);
+gboolean
+nm_dns_uri_parse_plain(int addr_family, const char *str, char *out_addrstr, NMIPAddr *out_addr);
+const char *nm_dns_uri_normalize(int addr_family, const char *str, char **out_free);
 
 /*****************************************************************************/
 

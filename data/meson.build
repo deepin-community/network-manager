@@ -9,23 +9,27 @@ configure_file(
 
 if install_systemdunitdir
   services = [
-    'NetworkManager-dispatcher.service.in',
-    'NetworkManager.service.in',
-    'nm-priv-helper.service.in',
+    'NetworkManager-dispatcher.service',
+    'NetworkManager.service',
+    'nm-priv-helper.service',
+    'NetworkManager-wait-online.service',
+    'NetworkManager-config-initrd.service',
+    'NetworkManager-initrd.service',
+    'NetworkManager-wait-online-initrd.service',
   ]
-
-  if have_systemd_200
-    services += ['NetworkManager-wait-online.service.in']
-  else
-    services += ['NetworkManager-wait-online-systemd-pre200.service.in']
-  endif
 
   foreach service: services
     configure_file(
-      input: service,
-      output: '@BASENAME@',
+      input: service + '.in',
+      output: service,
       install_dir: systemd_systemdsystemunitdir,
       configuration: data_conf,
+    )
+
+    test(
+      'check-' + service,
+      find_program(join_paths(source_root, 'src/tests/check-systemd-unit.sh')),
+      args: [ join_paths(meson.current_build_dir(), service) ],
     )
   endforeach
 

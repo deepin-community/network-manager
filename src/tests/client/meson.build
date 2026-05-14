@@ -6,12 +6,9 @@ test(
   args: [
     build_root,
     source_root,
-    python.path(),
+    python_path,
     '--',
     'TestNmcli',
-  ],
-  env: [
-    'LIBTOOL=',
   ],
   timeout: 120,
 )
@@ -23,12 +20,9 @@ if enable_nm_cloud_setup
     args: [
       build_root,
       source_root,
-      python.path(),
+      python_path,
       '--',
       'TestNmCloudSetup',
-    ],
-    env: [
-      'LIBTOOL=',
     ],
     timeout: 120,
   )

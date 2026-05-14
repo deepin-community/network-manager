@@ -799,29 +799,29 @@ static void
 test_bond_compare(void)
 {
     test_bond_compare_options(TRUE,
-                              ((const char *[]){"mode", "balance-rr", "miimon", "1", NULL}),
-                              ((const char *[]){"mode", "balance-rr", "miimon", "1", NULL}));
+                              ((const char *[]) {"mode", "balance-rr", "miimon", "1", NULL}),
+                              ((const char *[]) {"mode", "balance-rr", "miimon", "1", NULL}));
     test_bond_compare_options(FALSE,
-                              ((const char *[]){"mode", "balance-rr", "miimon", "1", NULL}),
-                              ((const char *[]){"mode", "balance-rr", "miimon", "2", NULL}));
+                              ((const char *[]) {"mode", "balance-rr", "miimon", "1", NULL}),
+                              ((const char *[]) {"mode", "balance-rr", "miimon", "2", NULL}));
 
     test_bond_compare_options(FALSE,
-                              ((const char *[]){"miimon", "1", NULL}),
-                              ((const char *[]){"miimon", "1", "updelay", "0", NULL}));
+                              ((const char *[]) {"miimon", "1", NULL}),
+                              ((const char *[]) {"miimon", "1", "updelay", "0", NULL}));
 
     test_bond_compare_options(FALSE,
-                              ((const char *[]){"num_grat_arp", "2", NULL}),
-                              ((const char *[]){"num_grat_arp", "1", NULL}));
+                              ((const char *[]) {"num_grat_arp", "2", NULL}),
+                              ((const char *[]) {"num_grat_arp", "1", NULL}));
     test_bond_compare_options(FALSE,
-                              ((const char *[]){"num_grat_arp", "3", NULL}),
-                              ((const char *[]){"num_unsol_na", "3", NULL}));
+                              ((const char *[]) {"num_grat_arp", "3", NULL}),
+                              ((const char *[]) {"num_unsol_na", "3", NULL}));
     test_bond_compare_options(FALSE,
-                              ((const char *[]){"num_grat_arp", "4", NULL}),
-                              ((const char *[]){"num_unsol_na", "4", "num_grat_arp", "4", NULL}));
+                              ((const char *[]) {"num_grat_arp", "4", NULL}),
+                              ((const char *[]) {"num_unsol_na", "4", "num_grat_arp", "4", NULL}));
 
     test_bond_compare_options(FALSE,
-                              ((const char *[]){"mode", "balance-rr", "miimon", "100", NULL}),
-                              ((const char *[]){"mode", "balance-rr", NULL}));
+                              ((const char *[]) {"mode", "balance-rr", "miimon", "100", NULL}),
+                              ((const char *[]) {"mode", "balance-rr", NULL}));
 }
 
 static void
@@ -856,20 +856,25 @@ static void
 test_bond_normalize(void)
 {
     test_bond_normalize_options(
-        ((const char *[]){"mode", "802.3ad", "ad_actor_system", "00:02:03:04:05:06", NULL}),
-        ((const char *[]){"mode", "802.3ad", "ad_actor_system", "00:02:03:04:05:06", NULL}));
-    test_bond_normalize_options(((const char *[]){"mode", "1", "miimon", "1", NULL}),
-                                ((const char *[]){"mode", "active-backup", "miimon", "1", NULL}));
+        ((const char *[]) {"mode", "802.3ad", "ad_actor_system", "00:02:03:04:05:06", NULL}),
+        ((const char *[]) {"mode", "802.3ad", "ad_actor_system", "00:02:03:04:05:06", NULL}));
+    test_bond_normalize_options(((const char *[]) {"mode", "1", "miimon", "1", NULL}),
+                                ((const char *[]) {"mode", "active-backup", "miimon", "1", NULL}));
     test_bond_normalize_options(
-        ((const char *[]){"mode", "balance-alb", "tlb_dynamic_lb", "1", NULL}),
-        ((const char *[]){"mode", "balance-alb", "tlb_dynamic_lb", "1", NULL}));
+        ((const char *[]) {"mode", "balance-alb", "tlb_dynamic_lb", "1", NULL}),
+        ((const char *[]) {"mode", "balance-alb", "tlb_dynamic_lb", "1", NULL}));
     test_bond_normalize_options(
-        ((const char *[]){"mode", "balance-tlb", "tlb_dynamic_lb", "1", NULL}),
-        ((const char *[]){"mode", "balance-tlb", "tlb_dynamic_lb", "1", NULL}));
+        ((const char *[]) {"mode", "balance-tlb", "tlb_dynamic_lb", "1", NULL}),
+        ((const char *[]) {"mode", "balance-tlb", "tlb_dynamic_lb", "1", NULL}));
     test_bond_normalize_options(
-        ((const char
-              *[]){"mode", "balance-rr", "ad_actor_sys_prio", "4", "packets_per_slave", "3", NULL}),
-        ((const char *[]){"mode", "balance-rr", "packets_per_slave", "3", NULL}));
+        ((const char *[]) {"mode",
+                           "balance-rr",
+                           "ad_actor_sys_prio",
+                           "4",
+                           "packets_per_slave",
+                           "3",
+                           NULL}),
+        ((const char *[]) {"mode", "balance-rr", "packets_per_slave", "3", NULL}));
 }
 
 /*****************************************************************************/
@@ -2303,6 +2308,158 @@ test_ethtool_pause(void)
     g_assert_true(out_value);
 }
 
+static void
+test_ethtool_eee(void)
+{
+    gs_unref_object NMConnection   *con     = NULL;
+    gs_unref_object NMConnection   *con2    = NULL;
+    gs_unref_object NMConnection   *con3    = NULL;
+    gs_unref_variant GVariant      *variant = NULL;
+    gs_free_error GError           *error   = NULL;
+    nm_auto_unref_keyfile GKeyFile *keyfile = NULL;
+    NMSettingConnection            *s_con;
+    NMSettingEthtool               *s_ethtool;
+    NMSettingEthtool               *s_ethtool2;
+    NMSettingEthtool               *s_ethtool3;
+    gboolean                        out_value;
+
+    con =
+        nmtst_create_minimal_connection("ethtool-eee", NULL, NM_SETTING_WIRED_SETTING_NAME, &s_con);
+    s_ethtool = NM_SETTING_ETHTOOL(nm_setting_ethtool_new());
+    nm_connection_add_setting(con, NM_SETTING(s_ethtool));
+
+    nm_setting_option_set_boolean(NM_SETTING(s_ethtool), NM_ETHTOOL_OPTNAME_EEE_ENABLED, FALSE);
+
+    g_assert_true(nm_setting_option_get_boolean(NM_SETTING(s_ethtool),
+                                                NM_ETHTOOL_OPTNAME_EEE_ENABLED,
+                                                &out_value));
+    g_assert_true(!out_value);
+
+    nmtst_connection_normalize(con);
+
+    variant = nm_connection_to_dbus(con, NM_CONNECTION_SERIALIZE_ALL);
+
+    con2 = nm_simple_connection_new_from_dbus(variant, &error);
+    nmtst_assert_success(con2, error);
+
+    s_ethtool2 = NM_SETTING_ETHTOOL(nm_connection_get_setting(con2, NM_TYPE_SETTING_ETHTOOL));
+
+    g_assert_true(nm_setting_option_get_boolean(NM_SETTING(s_ethtool2),
+                                                NM_ETHTOOL_OPTNAME_EEE_ENABLED,
+                                                &out_value));
+    g_assert_true(!out_value);
+
+    nmtst_assert_connection_verifies_without_normalization(con2);
+
+    nmtst_assert_connection_equals(con, FALSE, con2, FALSE);
+
+    con2 = nm_simple_connection_new_from_dbus(variant, &error);
+    nmtst_assert_success(con2, error);
+
+    keyfile = nm_keyfile_write(con, NM_KEYFILE_HANDLER_FLAGS_NONE, NULL, NULL, &error);
+    nmtst_assert_success(keyfile, error);
+
+    con3 = nm_keyfile_read(keyfile,
+                           "/ignored/current/working/directory/for/loading/relative/paths",
+                           NM_KEYFILE_HANDLER_FLAGS_NONE,
+                           NULL,
+                           NULL,
+                           &error);
+    nmtst_assert_success(con3, error);
+
+    nm_keyfile_read_ensure_id(con3, "unused-because-already-has-id");
+    nm_keyfile_read_ensure_uuid(con3, "unused-because-already-has-uuid");
+
+    nmtst_connection_normalize(con3);
+
+    nmtst_assert_connection_equals(con, FALSE, con3, FALSE);
+
+    s_ethtool3 = NM_SETTING_ETHTOOL(nm_connection_get_setting(con3, NM_TYPE_SETTING_ETHTOOL));
+
+    g_assert_true(nm_setting_option_get_boolean(NM_SETTING(s_ethtool3),
+                                                NM_ETHTOOL_OPTNAME_EEE_ENABLED,
+                                                &out_value));
+    g_assert_true(!out_value);
+}
+/*****************************************************************************/
+
+static void
+test_ethtool_fec(void)
+{
+    gs_unref_object NMConnection   *con     = NULL;
+    gs_unref_object NMConnection   *con2    = NULL;
+    gs_unref_object NMConnection   *con3    = NULL;
+    gs_unref_variant GVariant      *variant = NULL;
+    gs_free_error GError           *error   = NULL;
+    nm_auto_unref_keyfile GKeyFile *keyfile = NULL;
+    NMSettingConnection            *s_con;
+    NMSettingEthtool               *s_ethtool;
+    NMSettingEthtool               *s_ethtool2;
+    NMSettingEthtool               *s_ethtool3;
+    guint32                         out_value;
+    guint32                         expected_fec_mode =
+        NM_SETTING_ETHTOOL_FEC_MODE_AUTO | NM_SETTING_ETHTOOL_FEC_MODE_BASER;
+
+    con =
+        nmtst_create_minimal_connection("ethtool-fec", NULL, NM_SETTING_WIRED_SETTING_NAME, &s_con);
+    s_ethtool = NM_SETTING_ETHTOOL(nm_setting_ethtool_new());
+    nm_connection_add_setting(con, NM_SETTING(s_ethtool));
+
+    nm_setting_option_set_uint32(NM_SETTING(s_ethtool),
+                                 NM_ETHTOOL_OPTNAME_FEC_MODE,
+                                 expected_fec_mode);
+
+    g_assert_true(nm_setting_option_get_uint32(NM_SETTING(s_ethtool),
+                                               NM_ETHTOOL_OPTNAME_FEC_MODE,
+                                               &out_value));
+    g_assert_true(out_value == expected_fec_mode);
+
+    nmtst_connection_normalize(con);
+
+    variant = nm_connection_to_dbus(con, NM_CONNECTION_SERIALIZE_ALL);
+
+    con2 = nm_simple_connection_new_from_dbus(variant, &error);
+    nmtst_assert_success(con2, error);
+
+    s_ethtool2 = NM_SETTING_ETHTOOL(nm_connection_get_setting(con2, NM_TYPE_SETTING_ETHTOOL));
+
+    g_assert_true(nm_setting_option_get_uint32(NM_SETTING(s_ethtool2),
+                                               NM_ETHTOOL_OPTNAME_FEC_MODE,
+                                               &out_value));
+    g_assert_true(out_value == expected_fec_mode);
+
+    nmtst_assert_connection_verifies_without_normalization(con2);
+
+    nmtst_assert_connection_equals(con, FALSE, con2, FALSE);
+
+    con2 = nm_simple_connection_new_from_dbus(variant, &error);
+    nmtst_assert_success(con2, error);
+
+    keyfile = nm_keyfile_write(con, NM_KEYFILE_HANDLER_FLAGS_NONE, NULL, NULL, &error);
+    nmtst_assert_success(keyfile, error);
+
+    con3 = nm_keyfile_read(keyfile,
+                           "/ignored/current/working/directory/for/loading/relative/paths",
+                           NM_KEYFILE_HANDLER_FLAGS_NONE,
+                           NULL,
+                           NULL,
+                           &error);
+    nmtst_assert_success(con3, error);
+
+    nm_keyfile_read_ensure_id(con3, "unused-because-already-has-id");
+    nm_keyfile_read_ensure_uuid(con3, "unused-because-already-has-uuid");
+
+    nmtst_connection_normalize(con3);
+
+    nmtst_assert_connection_equals(con, FALSE, con3, FALSE);
+
+    s_ethtool3 = NM_SETTING_ETHTOOL(nm_connection_get_setting(con3, NM_TYPE_SETTING_ETHTOOL));
+
+    g_assert_true(nm_setting_option_get_uint32(NM_SETTING(s_ethtool3),
+                                               NM_ETHTOOL_OPTNAME_FEC_MODE,
+                                               &out_value));
+    g_assert_true(out_value == expected_fec_mode);
+}
 /*****************************************************************************/
 
 static void
@@ -4492,7 +4649,7 @@ test_setting_metadata(void)
             GArray                   *property_types_data;
             guint                     prop_idx_val;
             gboolean                  can_set_including_default = FALSE;
-            gboolean                  can_have_direct_hook      = FALSE;
+            gboolean                  can_have_direct_data      = FALSE;
             int                       n_special_options;
 
             g_assert(sip->name);
@@ -4589,21 +4746,35 @@ test_setting_metadata(void)
 
                 can_set_including_default = TRUE;
             } else if (sip->property_type->direct_type == NM_VALUE_TYPE_ENUM) {
-                const GParamSpecEnum *pspec;
+                nm_auto_unref_gtypeclass GEnumClass *enum_class = NULL;
+                int                                  default_value;
 
-                g_assert(sip->property_type == &nm_sett_info_propert_type_direct_enum);
+                g_assert(_nm_setting_property_is_valid_direct_enum(sip));
+                g_assert(G_TYPE_IS_ENUM(sip->direct_data.enum_gtype));
                 g_assert(g_variant_type_equal(sip->property_type->dbus_type, "i"));
-                g_assert(sip->property_type->to_dbus_fcn
-                         == _nm_setting_property_to_dbus_fcn_direct);
                 g_assert(sip->param_spec);
-                g_assert(g_type_is_a(sip->param_spec->value_type, G_TYPE_ENUM));
-                g_assert(sip->param_spec->value_type != G_TYPE_ENUM);
 
-                pspec = NM_G_PARAM_SPEC_CAST_ENUM(sip->param_spec);
-                g_assert(G_TYPE_FROM_CLASS(pspec->enum_class) == sip->param_spec->value_type);
-                g_assert(g_enum_get_value(pspec->enum_class, pspec->default_value));
+                if (G_TYPE_IS_ENUM(sip->param_spec->value_type)) {
+                    const GParamSpecEnum *pspec = NM_G_PARAM_SPEC_CAST_ENUM(sip->param_spec);
+
+                    g_assert(sip->param_spec->value_type != G_TYPE_ENUM);
+                    g_assert(G_TYPE_FROM_CLASS(pspec->enum_class) == sip->param_spec->value_type);
+                    g_assert(sip->param_spec->value_type == sip->direct_data.enum_gtype);
+
+                    default_value = pspec->default_value;
+                } else if (sip->param_spec->value_type == G_TYPE_INT) {
+                    const GParamSpecInt *pspec = NM_G_PARAM_SPEC_CAST_INT(sip->param_spec);
+
+                    default_value = pspec->default_value;
+                } else {
+                    g_assert_not_reached();
+                }
+
+                enum_class = g_type_class_ref(sip->direct_data.enum_gtype);
+                g_assert(g_enum_get_value(enum_class, default_value));
 
                 can_set_including_default = TRUE;
+                can_have_direct_data      = TRUE;
             } else if (sip->property_type->direct_type == NM_VALUE_TYPE_FLAGS) {
                 const GParamSpecFlags *pspec;
 
@@ -4633,9 +4804,7 @@ test_setting_metadata(void)
                                        INFINIBAND_ALEN));
                 } else {
                     g_assert(g_variant_type_equal(sip->property_type->dbus_type, "s"));
-                    g_assert(sip->property_type->to_dbus_fcn
-                             == _nm_setting_property_to_dbus_fcn_direct);
-                    can_have_direct_hook = TRUE;
+                    can_have_direct_data = TRUE;
                 }
                 g_assert(sip->param_spec);
                 g_assert(sip->param_spec->value_type == G_TYPE_STRING);
@@ -4647,8 +4816,10 @@ test_setting_metadata(void)
                 g_assert(sip->param_spec->value_type == G_TYPE_BYTES);
             } else if (sip->property_type->direct_type == NM_VALUE_TYPE_STRV) {
                 g_assert(g_variant_type_equal(sip->property_type->dbus_type, "as"));
-                g_assert(sip->property_type->to_dbus_fcn
-                         == _nm_setting_property_to_dbus_fcn_direct);
+                g_assert(NM_IN_SET(sip->property_type->to_dbus_fcn,
+                                   _nm_setting_property_to_dbus_fcn_direct,
+                                   _nm_setting_wireless_mac_denylist_to_dbus,
+                                   _nm_setting_wired_mac_denylist_to_dbus));
                 g_assert(sip->param_spec);
                 g_assert(sip->param_spec->value_type == G_TYPE_STRV);
             } else
@@ -4663,6 +4834,11 @@ test_setting_metadata(void)
                 g_assert(sip->param_spec);
                 g_assert(!NM_FLAGS_HAS(sip->param_spec->flags, NM_SETTING_PARAM_SECRET));
             }
+            if (sip->direct_strv_preserve_empty)
+                g_assert(sip->property_type->direct_type == NM_VALUE_TYPE_STRV);
+            if (sip->direct_string_allow_empty) {
+                g_assert(sip->property_type->direct_type == NM_VALUE_TYPE_STRING);
+            }
 
             if (sip->direct_set_string_mac_address_len != 0) {
                 g_assert(NM_IN_SET(sip->property_type,
@@ -4671,8 +4847,26 @@ test_setting_metadata(void)
                 g_assert(sip->property_type->direct_type == NM_VALUE_TYPE_STRING);
             }
 
-            if (!can_have_direct_hook)
-                g_assert(!sip->direct_hook.set_string_fcn);
+            if (!can_have_direct_data)
+                g_assert(!sip->direct_data.set_string);
+
+            if (sip->property_type->direct_type == NM_VALUE_TYPE_NONE)
+                g_assert(!sip->direct_also_notify);
+            else {
+                if (sip->direct_also_notify) {
+                    guint prop_idx2;
+                    guint cnt = 0;
+
+                    for (prop_idx2 = 0; prop_idx2 < sis->property_infos_len; prop_idx2++) {
+                        const NMSettInfoProperty *sip2 = &sis->property_infos[prop_idx2];
+
+                        if (sip2->param_spec == sip->direct_also_notify)
+                            cnt++;
+                    }
+                    g_assert_cmpint(cnt, ==, 1u);
+                    g_assert(sip->param_spec != sip->direct_also_notify);
+                }
+            }
 
             n_special_options = (sip->direct_set_string_mac_address_len != 0)
                                 + (!!sip->direct_set_string_strip)
@@ -4749,14 +4943,6 @@ check_done:;
 
             if (sip->property_type->from_dbus_fcn == _nm_setting_property_from_dbus_fcn_gprop)
                 g_assert(sip->param_spec);
-            if (sip->property_type->from_dbus_fcn) {
-                if (sip->property_type->direct_type != NM_VALUE_TYPE_NONE) {
-                    g_assert(NM_IN_SET(sip->property_type->from_dbus_fcn,
-                                       _nm_setting_property_from_dbus_fcn_direct_ip_config_gateway,
-                                       _nm_setting_property_from_dbus_fcn_direct_mac_address,
-                                       _nm_setting_property_from_dbus_fcn_direct));
-                }
-            }
 
             g_assert(sip->property_type->from_dbus_is_full
                      == NM_IN_SET(sip->property_type->from_dbus_fcn,
@@ -4773,9 +4959,6 @@ check_done:;
             } else if (sip->property_type->compare_fcn == _nm_setting_property_compare_fcn_direct) {
                 g_assert(sip->param_spec);
                 g_assert(sip->property_type->direct_type != NM_VALUE_TYPE_NONE);
-                g_assert(NM_IN_SET(sip->property_type->to_dbus_fcn,
-                                   _nm_setting_property_to_dbus_fcn_direct,
-                                   _nm_setting_property_to_dbus_fcn_direct_mac_address));
             } else if (sip->property_type->compare_fcn == _nm_setting_property_compare_fcn_ignore) {
                 if (NM_IN_SET(sip->property_type,
                               &nm_sett_info_propert_type_deprecated_ignore_i,
@@ -4808,6 +4991,17 @@ check_done:;
             }
             prop_idx_val = _PROP_IDX_PACK(meta_type, prop_idx);
             g_array_append_val(property_types_data, prop_idx_val);
+
+            if (sip->param_spec) {
+                /* All "direct" properties use G_PARAM_EXPLICIT_NOTIFY.
+                 *
+                 * Warning: this is potentially dangerous, because implementations MUST remember
+                 * to notify the property change in set_property(). Optimally, the property uses
+                 * _nm_setting_property_set_property_direct(), which takes care of that.
+                 */
+                if (sip->property_type->direct_type != NM_VALUE_TYPE_NONE)
+                    g_assert(NM_FLAGS_HAS(sip->param_spec->flags, G_PARAM_EXPLICIT_NOTIFY));
+            }
 
             if (sip->param_spec) {
                 nm_auto_unset_gvalue GValue val = G_VALUE_INIT;
@@ -4998,6 +5192,50 @@ check_done:;
 /*****************************************************************************/
 
 static void
+test_setting_connection_empty_address_and_route(void)
+{
+    NMSettingIPConfig            *s_ip4;
+    NMIPRoute                    *route;
+    NMIPAddress                  *addr;
+    gs_unref_object NMConnection *con   = NULL;
+    gs_free_error GError         *error = NULL;
+    gboolean                      success;
+
+    /* IP4 setting */
+    con   = nmtst_create_minimal_connection("wired", NULL, NM_SETTING_WIRED_SETTING_NAME, NULL);
+    s_ip4 = (NMSettingIPConfig *) nm_setting_ip4_config_new();
+    nm_connection_add_setting(con, NM_SETTING(s_ip4));
+    g_object_set(s_ip4, NM_SETTING_IP_CONFIG_METHOD, NM_SETTING_IP4_CONFIG_METHOD_MANUAL, NULL);
+    g_assert(s_ip4 != NULL);
+    g_assert(NM_IS_SETTING_IP4_CONFIG(s_ip4));
+    success = nm_setting_verify((NMSetting *) s_ip4, con, &error);
+    nmtst_assert_no_success(success, error);
+    nm_clear_error(&error);
+
+    route = nm_ip_route_new(AF_INET, "192.168.12.0", 24, NULL, 0, NULL);
+    nm_setting_ip_config_add_route(s_ip4, route);
+    success = nm_setting_verify((NMSetting *) s_ip4, con, &error);
+    nmtst_assert_success(success, error);
+    nm_clear_error(&error);
+
+    nm_setting_ip_config_clear_routes(s_ip4);
+    addr = nm_ip_address_new(AF_INET, "1.1.1.3", 24, NULL);
+    nm_setting_ip_config_add_address(s_ip4, addr);
+    success = nm_setting_verify((NMSetting *) s_ip4, con, &error);
+    nmtst_assert_success(success, error);
+    nm_clear_error(&error);
+
+    nm_setting_ip_config_add_route(s_ip4, route);
+    success = nm_setting_verify((NMSetting *) s_ip4, con, &error);
+    nmtst_assert_success(success, error);
+    nm_ip_address_unref(addr);
+    nm_ip_route_unref(route);
+    nm_clear_error(&error);
+}
+
+/*****************************************************************************/
+
+static void
 test_setting_connection_secondaries_verify(void)
 {
     gs_unref_object NMConnection *con = NULL;
@@ -5035,44 +5273,42 @@ test_setting_connection_secondaries_verify(void)
 
         g_object_set(s_con, NM_SETTING_CONNECTION_SECONDARIES, arr->pdata, NULL);
 
-#define _assert_secondaries(s_con, expected)                                                   \
-    G_STMT_START                                                                               \
-    {                                                                                          \
-        NMSettingConnection *const _s_con    = (s_con);                                        \
-        const char *const         *_expected = (expected);                                     \
-        GArray                    *_secondaries;                                               \
-        const guint                _expected_len = NM_PTRARRAY_LEN(_expected);                 \
-        gs_strfreev char         **_sec_strv     = NULL;                                       \
-        guint                      _i;                                                         \
-                                                                                               \
-        g_assert(_expected);                                                                   \
-                                                                                               \
-        if (nmtst_get_rand_bool()) {                                                           \
-            _secondaries = _nm_setting_connection_get_secondaries(_s_con);                     \
-            g_assert_cmpint(_expected_len, ==, nm_g_array_len(_secondaries));                  \
-            g_assert((_expected_len == 0) == (!_secondaries));                                 \
-            g_assert(nm_strv_equal(_expected,                                                  \
-                                   _secondaries ? nm_strvarray_get_strv(&_secondaries, NULL)   \
-                                                : NM_PTRARRAY_EMPTY(const char *)));           \
-        }                                                                                      \
-                                                                                               \
-        if (nmtst_get_rand_bool()) {                                                           \
-            g_object_get(_s_con, NM_SETTING_CONNECTION_SECONDARIES, &_sec_strv, NULL);         \
-            g_assert_cmpint(_expected_len, ==, NM_PTRARRAY_LEN(_sec_strv));                    \
-            g_assert((_expected_len == 0) == (!_sec_strv));                                    \
-            g_assert(nm_strv_equal(_expected, _sec_strv ?: NM_STRV_EMPTY()));                  \
-        }                                                                                      \
-                                                                                               \
-        g_assert_cmpint(nm_setting_connection_get_num_secondaries(_s_con), ==, _expected_len); \
-        if (nmtst_get_rand_bool()) {                                                           \
-            for (_i = 0; _i < _expected_len; _i++) {                                           \
-                g_assert_cmpstr(nm_setting_connection_get_secondary(_s_con, _i),               \
-                                ==,                                                            \
-                                _expected[_i]);                                                \
-            }                                                                                  \
-            g_assert_null(nm_setting_connection_get_secondary(_s_con, _expected_len));         \
-        }                                                                                      \
-    }                                                                                          \
+#define _assert_secondaries(s_con, expected)                                                       \
+    G_STMT_START                                                                                   \
+    {                                                                                              \
+        NMSettingConnection *const _s_con    = (s_con);                                            \
+        const char *const         *_expected = (expected);                                         \
+        GArray                    *_secondaries;                                                   \
+        const guint                _expected_len = NM_PTRARRAY_LEN(_expected);                     \
+        gs_strfreev char         **_sec_strv     = NULL;                                           \
+        guint                      _i;                                                             \
+                                                                                                   \
+        g_assert(_expected);                                                                       \
+                                                                                                   \
+        if (nmtst_get_rand_bool()) {                                                               \
+            _secondaries = _nm_setting_connection_get_secondaries(_s_con);                         \
+            g_assert_cmpint(_expected_len, ==, nm_g_array_len(_secondaries));                      \
+            g_assert((_expected_len == 0) == (!_secondaries));                                     \
+            g_assert(nm_strv_equal(_expected, nm_strvarray_get_strv_notnull(_secondaries, NULL))); \
+        }                                                                                          \
+                                                                                                   \
+        if (nmtst_get_rand_bool()) {                                                               \
+            g_object_get(_s_con, NM_SETTING_CONNECTION_SECONDARIES, &_sec_strv, NULL);             \
+            g_assert_cmpint(_expected_len, ==, NM_PTRARRAY_LEN(_sec_strv));                        \
+            g_assert((_expected_len == 0) == (!_sec_strv));                                        \
+            g_assert(nm_strv_equal(_expected, _sec_strv ?: NM_STRV_EMPTY()));                      \
+        }                                                                                          \
+                                                                                                   \
+        g_assert_cmpint(nm_setting_connection_get_num_secondaries(_s_con), ==, _expected_len);     \
+        if (nmtst_get_rand_bool()) {                                                               \
+            for (_i = 0; _i < _expected_len; _i++) {                                               \
+                g_assert_cmpstr(nm_setting_connection_get_secondary(_s_con, _i),                   \
+                                ==,                                                                \
+                                _expected[_i]);                                                    \
+            }                                                                                      \
+            g_assert_null(nm_setting_connection_get_secondary(_s_con, _expected_len));             \
+        }                                                                                          \
+    }                                                                                              \
     G_STMT_END
 
         _assert_secondaries(s_con, (const char *const *) arr->pdata);
@@ -5224,6 +5460,44 @@ test_settings_dns(void)
     }
 }
 
+static void
+_assert_dns_searches(gboolean valid, ...)
+{
+    NMConnection      *con;
+    NMSettingIPConfig *ip4, *ip6;
+    const char        *dns_search;
+    va_list            args;
+
+    con = nmtst_create_minimal_connection("test-dns-search",
+                                          NULL,
+                                          NM_SETTING_WIRED_SETTING_NAME,
+                                          NULL);
+    nmtst_connection_normalize(con);
+    ip4 = nm_connection_get_setting_ip4_config(con);
+    ip6 = nm_connection_get_setting_ip6_config(con);
+
+    va_start(args, valid);
+    while ((dns_search = va_arg(args, const char *))) {
+        nm_setting_ip_config_add_dns_search(ip4, dns_search);
+        nm_setting_ip_config_add_dns_search(ip6, dns_search);
+    }
+    va_end(args);
+
+    g_assert(valid == nm_setting_verify((NMSetting *) ip4, con, NULL));
+    g_assert(valid == nm_setting_verify((NMSetting *) ip6, con, NULL));
+}
+
+static void
+test_settings_dns_search_domains(void)
+{
+    _assert_dns_searches(TRUE, "example.com", NULL);
+    _assert_dns_searches(TRUE, "sub.example.com", NULL);
+    _assert_dns_searches(TRUE, "example.com", "sub.example.com", NULL);
+    _assert_dns_searches(FALSE, "example.com,sub.example.com", NULL);
+    _assert_dns_searches(FALSE, "example.com;sub.example.com", NULL);
+    _assert_dns_searches(FALSE, "example.com sub.example.com", NULL);
+}
+
 /*****************************************************************************/
 
 static void
@@ -5286,6 +5560,223 @@ test_bond_meta(void)
 
 /*****************************************************************************/
 
+static void
+check_wg_setting_str(NMSetting  *s_wg,
+                     const char *exp_all,
+                     const char *exp_nonsec,
+                     const char *exp_sec)
+{
+    gs_unref_variant GVariant *dict_all    = NULL;
+    gs_unref_variant GVariant *dict_nonsec = NULL;
+    gs_unref_variant GVariant *dict_sec    = NULL;
+    gs_free char              *str_all     = NULL;
+    gs_free char              *str_nonsec  = NULL;
+    gs_free char              *str_sec     = NULL;
+
+    dict_all    = _nm_setting_to_dbus(s_wg, NULL, NM_CONNECTION_SERIALIZE_ALL, NULL);
+    dict_nonsec = _nm_setting_to_dbus(s_wg, NULL, NM_CONNECTION_SERIALIZE_WITH_NON_SECRET, NULL);
+    dict_sec    = _nm_setting_to_dbus(s_wg, NULL, NM_CONNECTION_SERIALIZE_ONLY_SECRETS, NULL);
+
+    str_all    = g_variant_print(dict_all, TRUE);
+    str_nonsec = g_variant_print(dict_nonsec, TRUE);
+    str_sec    = g_variant_print(dict_sec, TRUE);
+
+    g_assert_cmpstr(exp_all, ==, str_all);
+    g_assert_cmpstr(exp_nonsec, ==, str_nonsec);
+    g_assert_cmpstr(exp_sec, ==, str_sec);
+}
+
+static void
+test_wireguard_to_dbus(void)
+{
+    gs_unref_object NMSetting            *s_wg              = NULL;
+    nm_auto_unref_wgpeer NMWireGuardPeer *peer1             = NULL;
+    nm_auto_unref_wgpeer NMWireGuardPeer *peer2             = NULL;
+    gs_unref_variant GVariant            *dict_all          = NULL;
+    gs_unref_variant GVariant            *dict_non_secret   = NULL;
+    gs_unref_variant GVariant            *dict_only_secrets = NULL;
+    gs_free char                         *dict_str          = NULL;
+    const char *test_private_key   = "cFoJbK9bSrYrQrjFQGgqsWTO4IUIX0+rsaqNeCw2IWM=";
+    const char *test_public_key1   = "OMhgSum5+NamArI/LTp1mCZQD+CbzZxtOuvDC/RaGWU=";
+    const char *test_public_key2   = "2S7mA0vEMethVGG0qBm4T5EXbcQ2WYHOuP14Seb7jEM=";
+    const char *test_preshared_key = "yFGq76ej4lNI0pLLu36L0DgJMxWs4HmH5qNDNOt8AmM=";
+
+    /* Test case 1: Minimal WireGuard setting without peers or private key */
+    s_wg = nm_setting_wireguard_new();
+    g_object_set(s_wg,
+                 NM_SETTING_WIREGUARD_LISTEN_PORT,
+                 51820U,
+                 NM_SETTING_WIREGUARD_FWMARK,
+                 42U,
+                 NULL);
+
+    check_wg_setting_str(s_wg,
+                         /* clang-format off */
+                         /* all */
+                         "{'fwmark': <uint32 42>, 'listen-port': <uint32 51820>}",
+                         /* non secrets */
+                         "{'fwmark': <uint32 42>, 'listen-port': <uint32 51820>}",
+                         /* secrets */
+                         "@a{sv} {}"
+                         /* clang-format on */
+    );
+    g_clear_object(&s_wg);
+
+    /* Test case 2: WireGuard setting with private key, no peers */
+    s_wg = nm_setting_wireguard_new();
+    g_object_set(s_wg,
+                 NM_SETTING_WIREGUARD_PRIVATE_KEY,
+                 test_private_key,
+                 NM_SETTING_WIREGUARD_PRIVATE_KEY_FLAGS,
+                 NM_SETTING_SECRET_FLAG_NONE,
+                 NM_SETTING_WIREGUARD_LISTEN_PORT,
+                 51820U,
+                 NM_SETTING_WIREGUARD_FWMARK,
+                 42U,
+                 NULL);
+
+    check_wg_setting_str(s_wg,
+                         /* clang-format off */
+                         /* all */
+                         "{"
+                             "'fwmark': <uint32 42>, "
+                             "'listen-port': <uint32 51820>, "
+                             "'private-key': <'cFoJbK9bSrYrQrjFQGgqsWTO4IUIX0+rsaqNeCw2IWM='>"
+                         "}",
+                         /* non secrets */
+                         "{"
+                             "'fwmark': <uint32 42>, "
+                             "'listen-port': <uint32 51820>"
+                         "}",
+                         /* secrets */
+                         "{"
+                             "'private-key': <'cFoJbK9bSrYrQrjFQGgqsWTO4IUIX0+rsaqNeCw2IWM='>"
+                         "}"
+                         /* clang-format on */
+    );
+    g_clear_object(&s_wg);
+
+    /* Test case 3: WireGuard setting with peers (no PSK) */
+    s_wg = nm_setting_wireguard_new();
+    g_object_set(s_wg,
+                 NM_SETTING_WIREGUARD_PRIVATE_KEY,
+                 test_private_key,
+                 NM_SETTING_WIREGUARD_PRIVATE_KEY_FLAGS,
+                 NM_SETTING_SECRET_FLAG_NONE,
+                 NM_SETTING_WIREGUARD_LISTEN_PORT,
+                 51820U,
+                 NULL);
+    peer1 = nm_wireguard_peer_new();
+    nm_wireguard_peer_set_public_key(peer1, test_public_key1, FALSE);
+    nm_wireguard_peer_set_endpoint(peer1, "192.168.1.1:51820", FALSE);
+    nm_wireguard_peer_append_allowed_ip(peer1, "10.0.0.0/8", FALSE);
+    nm_setting_wireguard_append_peer(NM_SETTING_WIREGUARD(s_wg), peer1);
+
+    check_wg_setting_str(s_wg,
+                         /* clang-format off */
+                         /* all */
+                         "{"
+                             "'listen-port': <uint32 51820>, "
+                             "'peers': <[{"
+                                 "'public-key': <'OMhgSum5+NamArI/LTp1mCZQD+CbzZxtOuvDC/RaGWU='>, "
+                                 "'endpoint': <'192.168.1.1:51820'>, "
+                                 "'allowed-ips': <['10.0.0.0/8']>"
+                             "}]>, "
+                             "'private-key': <'cFoJbK9bSrYrQrjFQGgqsWTO4IUIX0+rsaqNeCw2IWM='>"
+                         "}",
+                         /* non secrets */
+                         "{"
+                             "'listen-port': <uint32 51820>, "
+                             "'peers': <[{"
+                                 "'public-key': <'OMhgSum5+NamArI/LTp1mCZQD+CbzZxtOuvDC/RaGWU='>, "
+                                 "'endpoint': <'192.168.1.1:51820'>, "
+                                 "'allowed-ips': <['10.0.0.0/8']>"
+                             "}]>"
+                         "}",
+                         /* secrets */
+                         "{"
+                             "'private-key': <'cFoJbK9bSrYrQrjFQGgqsWTO4IUIX0+rsaqNeCw2IWM='>"
+                         "}"
+                         /* clang-format on */
+    );
+    g_clear_object(&s_wg);
+    nm_clear_pointer(&peer1, nm_wireguard_peer_unref);
+
+    /* Test case 4: WireGuard setting with peers, one has PSK */
+    s_wg = nm_setting_wireguard_new();
+    g_object_set(s_wg,
+                 NM_SETTING_WIREGUARD_PRIVATE_KEY,
+                 test_private_key,
+                 NM_SETTING_WIREGUARD_PRIVATE_KEY_FLAGS,
+                 NM_SETTING_SECRET_FLAG_NONE,
+                 NM_SETTING_WIREGUARD_LISTEN_PORT,
+                 51820U,
+                 NULL);
+
+    /* Peer without PSK */
+    peer1 = nm_wireguard_peer_new();
+    nm_wireguard_peer_set_public_key(peer1, test_public_key1, FALSE);
+    nm_wireguard_peer_set_endpoint(peer1, "192.168.1.1:51820", FALSE);
+    nm_wireguard_peer_append_allowed_ip(peer1, "10.0.0.0/8", FALSE);
+    nm_setting_wireguard_append_peer(NM_SETTING_WIREGUARD(s_wg), peer1);
+
+    /* Peer with PSK */
+    peer2 = nm_wireguard_peer_new();
+    nm_wireguard_peer_set_public_key(peer2, test_public_key2, FALSE);
+    nm_wireguard_peer_set_endpoint(peer2, "192.168.2.1:51820", FALSE);
+    nm_wireguard_peer_append_allowed_ip(peer2, "172.16.0.0/12", FALSE);
+    nm_wireguard_peer_set_preshared_key(peer2, test_preshared_key, FALSE);
+    nm_wireguard_peer_set_preshared_key_flags(peer2, NM_SETTING_SECRET_FLAG_NONE);
+    nm_setting_wireguard_append_peer(NM_SETTING_WIREGUARD(s_wg), peer2);
+
+    check_wg_setting_str(s_wg,
+                         /* clang-format off */
+                         /* all */
+                         "{"
+                             "'listen-port': <uint32 51820>, "
+                             "'peers': <[{"
+                                 "'public-key': <'OMhgSum5+NamArI/LTp1mCZQD+CbzZxtOuvDC/RaGWU='>, "
+                                 "'endpoint': <'192.168.1.1:51820'>, "
+                                 "'allowed-ips': <['10.0.0.0/8']>"
+                             "}, {"
+                                 "'public-key': <'2S7mA0vEMethVGG0qBm4T5EXbcQ2WYHOuP14Seb7jEM='>, "
+                                 "'endpoint': <'192.168.2.1:51820'>, "
+                                 "'preshared-key': <'yFGq76ej4lNI0pLLu36L0DgJMxWs4HmH5qNDNOt8AmM='>, "
+                                 "'preshared-key-flags': <uint32 0>, "
+                                 "'allowed-ips': <['172.16.0.0/12']>"
+                             "}]>, "
+                             "'private-key': <'cFoJbK9bSrYrQrjFQGgqsWTO4IUIX0+rsaqNeCw2IWM='>"
+                         "}",
+                         /* non secrets */
+                         "{"
+                             "'listen-port': <uint32 51820>, "
+                             "'peers': <[{"
+                                 "'public-key': <'OMhgSum5+NamArI/LTp1mCZQD+CbzZxtOuvDC/RaGWU='>, "
+                                 "'endpoint': <'192.168.1.1:51820'>, "
+                                 "'allowed-ips': <['10.0.0.0/8']>"
+                             "}, {"
+                                 "'public-key': <'2S7mA0vEMethVGG0qBm4T5EXbcQ2WYHOuP14Seb7jEM='>, "
+                                 "'endpoint': <'192.168.2.1:51820'>, "
+                                 "'preshared-key-flags': <uint32 0>, "
+                                 "'allowed-ips': <['172.16.0.0/12']>"
+                             "}]>"
+                         "}",
+                         /* secrets */
+                         "{"
+                             "'peers': <[{"
+                                 "'public-key': <'2S7mA0vEMethVGG0qBm4T5EXbcQ2WYHOuP14Seb7jEM='>, "
+                                 "'preshared-key': <'yFGq76ej4lNI0pLLu36L0DgJMxWs4HmH5qNDNOt8AmM='>"
+                             "}]>, "
+                         "'private-key': <'cFoJbK9bSrYrQrjFQGgqsWTO4IUIX0+rsaqNeCw2IWM='>}"
+                         /* clang-format on */
+    );
+    g_clear_object(&s_wg);
+    nm_clear_pointer(&peer1, nm_wireguard_peer_unref);
+    nm_clear_pointer(&peer2, nm_wireguard_peer_unref);
+}
+
+/*****************************************************************************/
+
 NMTST_DEFINE();
 
 int
@@ -5307,6 +5798,8 @@ main(int argc, char **argv)
                          test_8021x);
     g_test_add_data_func("/libnm/setting-8021x/pkcs12", "test-cert.p12, test", test_8021x);
 
+    g_test_add_func("/libnm/settings/test_setting_connection_empty_address_and_route",
+                    test_setting_connection_empty_address_and_route);
     g_test_add_func("/libnm/settings/test_setting_connection_secondaries_verify",
                     test_setting_connection_secondaries_verify);
 
@@ -5326,10 +5819,13 @@ main(int argc, char **argv)
     g_test_add_func("/libnm/settings/ethtool/coalesce", test_ethtool_coalesce);
     g_test_add_func("/libnm/settings/ethtool/ring", test_ethtool_ring);
     g_test_add_func("/libnm/settings/ethtool/pause", test_ethtool_pause);
+    g_test_add_func("/libnm/settings/ethtool/eee", test_ethtool_eee);
+    g_test_add_func("/libnm/settings/ethtool/fec", test_ethtool_fec);
 
     g_test_add_func("/libnm/settings/6lowpan/1", test_6lowpan_1);
 
     g_test_add_func("/libnm/settings/dns", test_settings_dns);
+    g_test_add_func("/libnm/settings/dns_search_domain", test_settings_dns_search_domains);
 
     g_test_add_func("/libnm/settings/sriov/vf", test_sriov_vf);
     g_test_add_func("/libnm/settings/sriov/vf-dup", test_sriov_vf_dup);
@@ -5408,6 +5904,8 @@ main(int argc, char **argv)
     g_test_add_func("/libnm/test_setting_metadata", test_setting_metadata);
 
     g_test_add_func("/libnm/test_bond_meta", test_bond_meta);
+
+    g_test_add_func("/libnm/test_wireguard_to_dbus", test_wireguard_to_dbus);
 
     return g_test_run();
 }

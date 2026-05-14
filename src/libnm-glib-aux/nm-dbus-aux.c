@@ -382,7 +382,7 @@ nm_dbus_call(GBusType            bus_type,
     CallAsyncInfo *info;
 
     info  = g_new(CallAsyncInfo, 1);
-    *info = (CallAsyncInfo){
+    *info = (CallAsyncInfo) {
         .bus_name       = g_strdup(bus_name),
         .object_path    = g_strdup(object_path),
         .interface_name = g_strdup(interface_name),
@@ -459,7 +459,7 @@ _bus_get_cb(GObject *source, GAsyncResult *result, gpointer user_data)
  *
  * This calls g_bus_get(), but iterates the current (thread-default) GMainContext
  * until the response is ready. As such, it's similar to g_bus_get_sync(),
- * but it allows to cancel the operation (without having multiple threads).
+ * but it allows one to cancel the operation (without having multiple threads).
  *
  * Returns: (transfer full): the new #GDBusConnection or %NULL on error.
  */

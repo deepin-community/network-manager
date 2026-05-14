@@ -58,10 +58,11 @@ void nm_device_activate_schedule_stage3_ip_config(NMDevice *device, gboolean do_
 
 void nm_device_recheck_available_connections(NMDevice *device);
 
-void
-nm_device_master_check_slave_physical_port(NMDevice *self, NMDevice *slave, NMLogDomain log_domain);
+void nm_device_controller_check_port_physical_port(NMDevice   *self,
+                                                   NMDevice   *port,
+                                                   NMLogDomain log_domain);
 
-void nm_device_master_release_slaves_all(NMDevice *self);
+void nm_device_controller_release_ports_all(NMDevice *self);
 
 void nm_device_set_carrier(NMDevice *self, gboolean carrier);
 
@@ -113,9 +114,6 @@ gboolean nm_device_sysctl_ip_conf_set(NMDevice   *self,
                                       const char *value);
 
 NML3ConfigData *nm_device_create_l3_config_data(NMDevice *self, NMIPConfigSource source);
-
-const NML3ConfigData *nm_device_create_l3_config_data_from_connection(NMDevice     *self,
-                                                                      NMConnection *connection);
 
 void nm_device_ip_method_dhcp4_start(NMDevice *self);
 
@@ -177,5 +175,7 @@ void nm_device_auth_request(NMDevice                      *self,
                             gpointer                       user_data);
 
 void nm_device_link_properties_set(NMDevice *self, gboolean reapply);
+
+GHashTable *nm_device_get_private_files(NMDevice *self);
 
 #endif /* NM_DEVICE_PRIVATE_H */

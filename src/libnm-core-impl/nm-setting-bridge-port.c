@@ -45,20 +45,18 @@ typedef struct {
  * Bridge Port Settings
  */
 struct _NMSettingBridgePort {
-    NMSetting parent;
-    /* In the past, this struct was public API. Preserve ABI! */
+    NMSetting                  parent;
+    NMSettingBridgePortPrivate _priv;
 };
 
 struct _NMSettingBridgePortClass {
     NMSettingClass parent;
-    /* In the past, this struct was public API. Preserve ABI! */
-    gpointer padding[4];
 };
 
 G_DEFINE_TYPE(NMSettingBridgePort, nm_setting_bridge_port, NM_TYPE_SETTING)
 
 #define NM_SETTING_BRIDGE_PORT_GET_PRIVATE(o) \
-    (G_TYPE_INSTANCE_GET_PRIVATE((o), NM_TYPE_SETTING_BRIDGE_PORT, NMSettingBridgePortPrivate))
+    _NM_GET_PRIVATE(o, NMSettingBridgePort, NM_IS_SETTING_BRIDGE_PORT, NMSetting)
 
 /*****************************************************************************/
 
@@ -318,7 +316,7 @@ verify(NMSetting *setting, NMConnection *connection, GError **error)
 
     if (connection) {
         NMSettingConnection *s_con;
-        const char          *slave_type;
+        const char          *port_type;
 
         s_con = nm_connection_get_setting_connection(connection);
         if (!s_con) {
@@ -330,20 +328,20 @@ verify(NMSetting *setting, NMConnection *connection, GError **error)
             return FALSE;
         }
 
-        slave_type = nm_setting_connection_get_slave_type(s_con);
-        if (slave_type && strcmp(slave_type, NM_SETTING_BRIDGE_SETTING_NAME)) {
+        port_type = nm_setting_connection_get_port_type(s_con);
+        if (port_type && strcmp(port_type, NM_SETTING_BRIDGE_SETTING_NAME)) {
             g_set_error(error,
                         NM_CONNECTION_ERROR,
                         NM_CONNECTION_ERROR_INVALID_PROPERTY,
-                        _("A connection with a '%s' setting must have the slave-type set to '%s'. "
+                        _("A connection with a '%s' setting must have the port-type set to '%s'. "
                           "Instead it is '%s'"),
                         NM_SETTING_BRIDGE_PORT_SETTING_NAME,
                         NM_SETTING_BRIDGE_SETTING_NAME,
-                        slave_type);
+                        port_type);
             g_prefix_error(error,
                            "%s.%s: ",
                            NM_SETTING_CONNECTION_SETTING_NAME,
-                           NM_SETTING_CONNECTION_SLAVE_TYPE);
+                           NM_SETTING_CONNECTION_PORT_TYPE);
             return FALSE;
         }
     }
@@ -454,8 +452,6 @@ nm_setting_bridge_port_class_init(NMSettingBridgePortClass *klass)
     GObjectClass   *object_class        = G_OBJECT_CLASS(klass);
     NMSettingClass *setting_class       = NM_SETTING_CLASS(klass);
     GArray         *properties_override = _nm_sett_info_property_override_create_array();
-
-    g_type_class_add_private(klass, sizeof(NMSettingBridgePortPrivate));
 
     object_class->get_property = get_property;
     object_class->set_property = set_property;
@@ -579,5 +575,5 @@ nm_setting_bridge_port_class_init(NMSettingBridgePortClass *klass)
                              NM_META_SETTING_TYPE_BRIDGE_PORT,
                              NULL,
                              properties_override,
-                             NM_SETT_INFO_PRIVATE_OFFSET_FROM_CLASS);
+                             G_STRUCT_OFFSET(NMSettingBridgePort, _priv));
 }

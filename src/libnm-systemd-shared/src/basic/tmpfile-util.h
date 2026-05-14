@@ -18,6 +18,8 @@ static inline int fopen_temporary_child(const char *path, FILE **ret_file, char 
 int mkostemp_safe(char *pattern);
 int fmkostemp_safe(char *pattern, const char *mode, FILE**_f);
 
+void unlink_tempfilep(char (*p)[]);
+
 int tempfn_xxxxxx(const char *p, const char *extra, char **ret);
 int tempfn_random(const char *p, const char *extra, char **ret);
 int tempfn_random_child(const char *p, const char *extra, char **ret);
@@ -28,7 +30,6 @@ static inline int open_tmpfile_linkable(const char *target, int flags, char **re
         return open_tmpfile_linkable_at(AT_FDCWD, target, flags, ret_path);
 }
 int fopen_tmpfile_linkable(const char *target, int flags, char **ret_path, FILE **ret_file);
-
 
 typedef enum LinkTmpfileFlags {
         LINK_TMPFILE_REPLACE = 1 << 0,

@@ -17,6 +17,7 @@
 
 #include "NetworkManagerUtils.h"
 #include "devices/nm-device.h"
+#include "devices/nm-device-factory.h"
 #include "dns/nm-dns-manager.h"
 #include "nm-act-request.h"
 #include "nm-auth-utils.h"
@@ -46,6 +47,10 @@ NM_GOBJECT_PROPERTIES_DEFINE(NMPolicy,
                              PROP_DEFAULT_IP6_AC,
                              PROP_ACTIVATING_IP4_AC,
                              PROP_ACTIVATING_IP6_AC, );
+
+#define HOSTNAME_RETRY_INTERVAL_MIN        30U
+#define HOSTNAME_RETRY_INTERVAL_MAX        (60U * 60 * 12) /* 12 hours */
+#define HOSTNAME_RETRY_INTERVAL_MULTIPLIER 8U
 
 typedef struct {
     NMManager          *manager;
@@ -78,14 +83,21 @@ typedef struct {
     char                *orig_hostname;     /* hostname at NM start time */
     char                *cur_hostname;      /* hostname we want to assign */
     char                *cur_hostname_full; /* similar to @last_hostname, but before shortening */
-    char *
-        last_hostname; /* last hostname NM set (to detect if someone else changed it in the meanwhile) */
+    char                *last_hostname;     /* last hostname NM set (to detect if someone else
+                                             * changed it in the meanwhile) */
+    struct {
+        GSource *source;
+        guint    interval_sec;
+        gboolean do_restart; /* when something changes, set this to TRUE so that the next retry
+                              * will restart from the lowest timeout. */
+    } hostname_retry;
 
     bool changing_hostname : 1; /* hostname set operation in progress */
     bool dhcp_hostname : 1;     /* current hostname was set from dhcp */
     bool updating_dns : 1;
 
     GArray *ip6_prefix_delegations; /* pool of ip6 prefixes delegated to all devices */
+
 } NMPolicyPrivate;
 
 struct _NMPolicy {
@@ -134,25 +146,24 @@ _PRIV_TO_SELF(NMPolicyPrivate *priv)
 
 /*****************************************************************************/
 
-static void      update_system_hostname(NMPolicy *self, const char *msg);
-static void      nm_policy_device_recheck_auto_activate_all_schedule(NMPolicy *self);
+static void update_system_hostname(NMPolicy *self, const char *msg, gboolean reset_retry_interval);
+static void nm_policy_device_recheck_auto_activate_all_schedule(NMPolicy *self);
 static NMDevice *get_default_device(NMPolicy *self, int addr_family);
+static gboolean  hostname_retry_cb(gpointer user_data);
 
 /*****************************************************************************/
 
 typedef struct {
     NMPlatformIP6Address prefix;
-    NMDevice            *device;      /* The requesting ("uplink") device */
-    guint64              next_subnet; /* Cache of the next subnet number to be
-                                       * assigned from this prefix */
-    GHashTable          *subnets;     /* ifindex -> NMPlatformIP6Address */
+    NMDevice            *device;                   /* The requesting ("uplink") device */
+    GHashTable          *map_subnet_id_to_ifindex; /* (guint64 *) subnet_id -> int ifindex */
+    GHashTable          *map_ifindex_to_subnet; /* int ifindex -> (NMPlatformIP6Address *) prefix */
 } IP6PrefixDelegation;
 
 static void
-_clear_ip6_subnet(gpointer key, gpointer value, gpointer user_data)
+clear_ip6_subnet(int ifindex, NMPlatformIP6Address *subnet)
 {
-    NMPlatformIP6Address *subnet = value;
-    NMDevice *device = nm_manager_get_device_by_ifindex(NM_MANAGER_GET, GPOINTER_TO_INT(key));
+    NMDevice *device = nm_manager_get_device_by_ifindex(NM_MANAGER_GET, ifindex);
 
     if (device) {
         /* We can not remove a subnet we already started announcing.
@@ -161,6 +172,12 @@ _clear_ip6_subnet(gpointer key, gpointer value, gpointer user_data)
         nm_device_use_ip6_subnet(device, subnet);
     }
     g_slice_free(NMPlatformIP6Address, subnet);
+}
+
+static void
+clear_ip6_subnet_entry(gpointer key, gpointer value, gpointer user_data)
+{
+    clear_ip6_subnet(GPOINTER_TO_INT(key), value);
 }
 
 static void
@@ -174,8 +191,9 @@ clear_ip6_prefix_delegation(gpointer data)
           nm_inet6_ntop(&delegation->prefix.address, sbuf),
           delegation->prefix.plen);
 
-    g_hash_table_foreach(delegation->subnets, _clear_ip6_subnet, NULL);
-    g_hash_table_destroy(delegation->subnets);
+    g_hash_table_foreach(delegation->map_ifindex_to_subnet, clear_ip6_subnet_entry, NULL);
+    g_hash_table_destroy(delegation->map_ifindex_to_subnet);
+    g_hash_table_destroy(delegation->map_subnet_id_to_ifindex);
 }
 
 static void
@@ -202,46 +220,112 @@ expire_ip6_delegations(NMPolicy *self)
 static gboolean
 ip6_subnet_from_delegation(IP6PrefixDelegation *delegation, NMDevice *device)
 {
-    NMPlatformIP6Address *subnet;
-    int                   ifindex = nm_device_get_ifindex(device);
-    char                  sbuf[NM_INET_ADDRSTRLEN];
+    NMPlatformIP6Address      *subnet;
+    int                        ifindex = nm_device_get_ifindex(device);
+    char                       sbuf[NM_INET_ADDRSTRLEN];
+    NMSettingPrefixDelegation *s_pd;
+    gint64                     wanted_subnet_id = -1;
+    guint64                    num_subnets;
+    guint64                    old_subnet_id;
 
-    subnet = g_hash_table_lookup(delegation->subnets, GINT_TO_POINTER(ifindex));
-    if (!subnet) {
-        /* Check for out-of-prefixes condition. */
-        if (delegation->next_subnet >= (1 << (64 - delegation->prefix.plen))) {
-            _LOGD(LOGD_IP6,
-                  "ipv6-pd: no more prefixes in %s/%d",
-                  nm_inet6_ntop(&delegation->prefix.address, sbuf),
-                  delegation->prefix.plen);
-            return FALSE;
-        }
+    nm_assert(delegation->prefix.plen > 0 && delegation->prefix.plen <= 64);
 
-        /* Allocate a new subnet. */
-        subnet = g_slice_new0(NMPlatformIP6Address);
-        g_hash_table_insert(delegation->subnets, GINT_TO_POINTER(ifindex), subnet);
-
-        subnet->plen = 64;
-        subnet->address.s6_addr32[0] =
-            delegation->prefix.address.s6_addr32[0] | htonl(delegation->next_subnet >> 32);
-        subnet->address.s6_addr32[1] =
-            delegation->prefix.address.s6_addr32[1] | htonl(delegation->next_subnet);
-
-        /* Out subnet pool management is pretty unsophisticated. We only add
-         * the subnets and index them by ifindex. That keeps the implementation
-         * simple and the dead entries make it easy to reuse the same subnet on
-         * subsequent activations. On the other hand they may waste the subnet
-         * space. */
-        delegation->next_subnet++;
+    s_pd = nm_device_get_applied_setting(device, NM_TYPE_SETTING_PREFIX_DELEGATION);
+    if (s_pd) {
+        wanted_subnet_id = nm_setting_prefix_delegation_get_subnet_id(s_pd);
     }
 
+    /* Try to use the cached subnet assigned to the interface */
+    subnet = g_hash_table_lookup(delegation->map_ifindex_to_subnet, GINT_TO_POINTER(ifindex));
+    if (subnet) {
+        old_subnet_id = nm_ip6_addr_get_subnet_id(&subnet->address, delegation->prefix.plen);
+        if (wanted_subnet_id != -1 && wanted_subnet_id != old_subnet_id) {
+            /* The device had a subnet assigned before, but now wants a
+             * different subnet-id. Release the old subnet and continue below
+             * to get a new one. */
+            clear_ip6_subnet(ifindex, subnet);
+            subnet = NULL;
+            g_hash_table_remove(delegation->map_ifindex_to_subnet, GINT_TO_POINTER(ifindex));
+            g_hash_table_remove(delegation->map_subnet_id_to_ifindex, &old_subnet_id);
+        } else {
+            goto subnet_found;
+        }
+    }
+
+    /* Check for out-of-prefixes condition */
+    num_subnets = 1 << (64 - delegation->prefix.plen);
+    if (nm_g_hash_table_size(delegation->map_subnet_id_to_ifindex) >= num_subnets) {
+        _LOGD(LOGD_IP6,
+              "ipv6-pd: no more prefixes in %s/%u",
+              nm_inet6_ntop(&delegation->prefix.address, sbuf),
+              delegation->prefix.plen);
+        return FALSE;
+    }
+
+    /* Try to honor the "prefix-delegation.subnet-id" property */
+    if (wanted_subnet_id >= 0) {
+        gpointer  value;
+        NMDevice *other_device;
+
+        if (g_hash_table_lookup_extended(delegation->map_subnet_id_to_ifindex,
+                                         &wanted_subnet_id,
+                                         NULL,
+                                         &value)) {
+            other_device = nm_manager_get_device_by_ifindex(NM_MANAGER_GET, GPOINTER_TO_INT(value));
+            _LOGW(LOGD_IP6,
+                  "ipv6-pd: subnet-id 0x%" G_GINT64_MODIFIER
+                  "x wanted by device %s is already in use by "
+                  "device %s (ifindex %d)",
+                  (guint64) wanted_subnet_id,
+                  nm_device_get_iface(device),
+                  other_device ? nm_device_get_ip_iface(other_device) : NULL,
+                  GPOINTER_TO_INT(value));
+            wanted_subnet_id = -1;
+        }
+    }
+
+    /* If we don't have a subnet-id yet, find the first one available */
+    if (wanted_subnet_id < 0) {
+        guint64 i;
+
+        for (i = 0; i < num_subnets; i++) {
+            if (!g_hash_table_lookup_extended(delegation->map_subnet_id_to_ifindex,
+                                              &i,
+                                              NULL,
+                                              NULL)) {
+                wanted_subnet_id = (gint64) i;
+                break;
+            }
+        }
+
+        if (wanted_subnet_id < 0) {
+            /* We already verified that there are available subnets, this should not happen */
+            return nm_assert_unreachable_val(FALSE);
+        }
+    }
+
+    /* Allocate a new subnet */
+    subnet = g_slice_new0(NMPlatformIP6Address);
+    g_hash_table_insert(delegation->map_ifindex_to_subnet, GINT_TO_POINTER(ifindex), subnet);
+    g_hash_table_insert(delegation->map_subnet_id_to_ifindex,
+                        nm_memdup(&wanted_subnet_id, sizeof(guint64)),
+                        GINT_TO_POINTER(ifindex));
+
+    subnet->plen = 64;
+    subnet->address.s6_addr32[0] =
+        delegation->prefix.address.s6_addr32[0] | htonl(wanted_subnet_id >> 32);
+    subnet->address.s6_addr32[1] =
+        delegation->prefix.address.s6_addr32[1] | htonl(wanted_subnet_id);
+
+subnet_found:
     subnet->timestamp = delegation->prefix.timestamp;
     subnet->lifetime  = delegation->prefix.lifetime;
     subnet->preferred = delegation->prefix.preferred;
 
     _LOGD(LOGD_IP6,
-          "ipv6-pd: %s allocated from a /%d prefix on %s",
+          "ipv6-pd: %s/64 (subnet-id 0x%" G_GINT64_MODIFIER "x) allocated from a /%d prefix on %s",
           nm_inet6_ntop(&subnet->address, sbuf),
+          (guint64) wanted_subnet_id,
           delegation->prefix.plen,
           nm_device_get_iface(device));
 
@@ -332,8 +416,9 @@ device_ip6_prefix_delegated(NMDevice                   *device,
     if (i == priv->ip6_prefix_delegations->len) {
         /* Allocate a delegation for new prefix. */
         delegation = nm_g_array_append_new(priv->ip6_prefix_delegations, IP6PrefixDelegation);
-        delegation->subnets     = g_hash_table_new(nm_direct_hash, NULL);
-        delegation->next_subnet = 0;
+        delegation->map_subnet_id_to_ifindex =
+            g_hash_table_new_full(nm_puint64_hash, nm_puint64_equal, g_free, NULL);
+        delegation->map_ifindex_to_subnet = g_hash_table_new(nm_direct_hash, NULL);
     }
 
     delegation->device = device;
@@ -416,7 +501,7 @@ get_best_active_connection(NMPolicy *self, int addr_family, gboolean fully_activ
         if (state <= NM_DEVICE_STATE_DISCONNECTED || state >= NM_DEVICE_STATE_DEACTIVATING)
             continue;
 
-        if (nm_device_sys_iface_state_is_external(device))
+        if (nm_device_managed_type_is_external(device))
             continue;
 
         r = nm_device_get_best_default_route(device, addr_family);
@@ -469,7 +554,7 @@ any_devices_active(NMPolicy *self)
         state = nm_device_get_state(device);
         if (state <= NM_DEVICE_STATE_DISCONNECTED || state >= NM_DEVICE_STATE_DEACTIVATING)
             continue;
-        if (nm_device_sys_iface_state_is_external(device))
+        if (nm_device_managed_type_is_external(device))
             continue;
         return TRUE;
     }
@@ -557,7 +642,56 @@ _get_hostname(NMPolicy *self)
 }
 
 static void
-_set_hostname(NMPolicy *self, const char *new_hostname, const char *msg)
+hostname_retry_schedule(NMPolicy *self)
+{
+    NMPolicyPrivate *priv = NM_POLICY_GET_PRIVATE(self);
+
+    if (priv->hostname_retry.source && !priv->hostname_retry.do_restart)
+        return;
+
+    nm_clear_g_source_inst(&priv->hostname_retry.source);
+
+    if (priv->hostname_retry.do_restart)
+        priv->hostname_retry.interval_sec = 0;
+
+    priv->hostname_retry.interval_sec *= HOSTNAME_RETRY_INTERVAL_MULTIPLIER;
+    priv->hostname_retry.interval_sec = NM_CLAMP(priv->hostname_retry.interval_sec,
+                                                 HOSTNAME_RETRY_INTERVAL_MIN,
+                                                 HOSTNAME_RETRY_INTERVAL_MAX);
+
+    _LOGT(LOGD_DNS,
+          "hostname-retry: schedule in %u seconds%s",
+          priv->hostname_retry.interval_sec,
+          priv->hostname_retry.do_restart ? " (restarted)" : "");
+    priv->hostname_retry.source =
+        nm_g_timeout_add_seconds_source(priv->hostname_retry.interval_sec, hostname_retry_cb, self);
+
+    priv->hostname_retry.do_restart = FALSE;
+}
+
+static gboolean
+hostname_retry_cb(gpointer user_data)
+{
+    NMPolicy        *self = NM_POLICY(user_data);
+    NMPolicyPrivate *priv = NM_POLICY_GET_PRIVATE(self);
+    const CList     *tmp_lst;
+    NMDevice        *device;
+
+    _LOGT(LOGD_DNS, "hostname-retry: timeout");
+
+    nm_clear_g_source_inst(&priv->hostname_retry.source);
+
+    /* Clear any cached DNS results before retrying */
+    nm_manager_for_each_device (priv->manager, device, tmp_lst) {
+        nm_device_clear_dns_lookup_data(device, "hostname retry timeout");
+    }
+    update_system_hostname(self, "hostname retry timeout", FALSE);
+
+    return G_SOURCE_CONTINUE;
+}
+
+static void
+_set_hostname(NMPolicy *self, const char *new_hostname, const char *msg, gboolean do_retry)
 {
     NMPolicyPrivate *priv         = NM_POLICY_GET_PRIVATE(self);
     gs_free char    *old_hostname = NULL;
@@ -609,6 +743,15 @@ _set_hostname(NMPolicy *self, const char *new_hostname, const char *msg)
                                     priv->cur_hostname_full,
                                     !any_devices_active(self));
         priv->updating_dns = FALSE;
+    }
+
+    if (!do_retry) {
+        _LOGT(LOGD_DNS, "hostname-retry: clear");
+        nm_clear_g_source_inst(&priv->hostname_retry.source);
+        priv->hostname_retry.interval_sec = 0;
+        priv->hostname_retry.do_restart   = FALSE;
+    } else if (!priv->hostname_retry.source) {
+        hostname_retry_schedule(self);
     }
 
     /* Finally, set kernel hostname */
@@ -738,7 +881,7 @@ build_device_hostname_infos(NMPolicy *self)
         if (!device)
             continue;
 
-        if (nm_device_sys_iface_state_is_external(device))
+        if (nm_device_managed_type_is_external(device))
             continue;
 
         only_from_default =
@@ -753,7 +896,7 @@ build_device_hostname_infos(NMPolicy *self)
                 array = g_array_sized_new(FALSE, FALSE, sizeof(DeviceHostnameInfo), 4);
 
             info  = nm_g_array_append_new(array, DeviceHostnameInfo);
-            *info = (DeviceHostnameInfo){
+            *info = (DeviceHostnameInfo) {
                 .device   = device,
                 .priority = device_get_hostname_priority(device),
                 .from_dhcp =
@@ -796,7 +939,7 @@ device_dns_lookup_done(NMDevice *device, gpointer user_data)
 
     g_signal_handlers_disconnect_by_func(device, device_dns_lookup_done, self);
 
-    update_system_hostname(self, "lookup finished");
+    update_system_hostname(self, "lookup finished", FALSE);
 }
 
 static void
@@ -809,12 +952,28 @@ device_carrier_changed(NMDevice *device, GParamSpec *pspec, gpointer user_data)
     if (nm_device_has_carrier(device)) {
         g_signal_handlers_disconnect_by_func(device, device_carrier_changed, priv);
         msg = g_strdup_printf("device '%s' got carrier", nm_device_get_iface(device));
-        update_system_hostname(self, msg);
+        update_system_hostname(self, msg, TRUE);
     }
 }
 
+/*
+ * This function evaluates different sources (static configuration, DHCP, DNS, ...)
+ * to set the system hostname.
+ *
+ * When the function needs to perform a blocking action like a DNS resolution, it
+ * subscribes to a signal for the completion event, registering a callback that
+ * invokes this function again. In the new invocation, any previous DNS result is
+ * cached and doesn't need a new resolution.
+ *
+ * In case no hostname is found when after sources have been evaluated, it schedules
+ * a timer to retry later with an interval that is increased at each attempt. When
+ * this function is called after something changed (for example, carrier went up, a
+ * new address was added), @reset_retry_interval should be set to TRUE so that the
+ * next retry will use the smallest interval. In this way, it can quickly adapt to
+ * temporary misconfigurations at boot or when the network environment changes.
+ */
 static void
-update_system_hostname(NMPolicy *self, const char *msg)
+update_system_hostname(NMPolicy *self, const char *msg, gboolean reset_retry_interval)
 {
     NMPolicyPrivate       *priv = NM_POLICY_GET_PRIVATE(self);
     const char            *configured_hostname;
@@ -828,6 +987,9 @@ update_system_hostname(NMPolicy *self, const char *msg)
     int                    addr_family;
 
     g_return_if_fail(self != NULL);
+
+    if (reset_retry_interval)
+        priv->hostname_retry.do_restart = TRUE;
 
     if (priv->hostname_mode == NM_POLICY_HOSTNAME_MODE_NONE) {
         _LOGT(LOGD_DNS, "set-hostname: hostname is unmanaged");
@@ -870,8 +1032,8 @@ update_system_hostname(NMPolicy *self, const char *msg)
 
     /* Try a persistent hostname first */
     configured_hostname = nm_hostname_manager_get_static_hostname(priv->hostname_manager);
-    if (configured_hostname && nm_utils_is_specific_hostname(configured_hostname)) {
-        _set_hostname(self, configured_hostname, "from system configuration");
+    if (configured_hostname && nm_utils_is_not_empty_hostname(configured_hostname)) {
+        _set_hostname(self, configured_hostname, "from system configuration", FALSE);
         priv->dhcp_hostname = FALSE;
         return;
     }
@@ -908,7 +1070,10 @@ update_system_hostname(NMPolicy *self, const char *msg)
                 if (dhcp_hostname && dhcp_hostname[0]) {
                     p = nm_str_skip_leading_spaces(dhcp_hostname);
                     if (p[0]) {
-                        _set_hostname(self, p, info->IS_IPv4 ? "from DHCPv4" : "from DHCPv6");
+                        _set_hostname(self,
+                                      p,
+                                      info->IS_IPv4 ? "from DHCPv4" : "from DHCPv6",
+                                      FALSE);
                         priv->dhcp_hostname = TRUE;
                         return;
                     }
@@ -936,7 +1101,7 @@ update_system_hostname(NMPolicy *self, const char *msg)
                                      priv);
                 }
                 if (result) {
-                    _set_hostname(self, result, "from address lookup");
+                    _set_hostname(self, result, "from address lookup", FALSE);
                     return;
                 }
                 if (wait) {
@@ -951,8 +1116,10 @@ update_system_hostname(NMPolicy *self, const char *msg)
     }
 
     /* If an hostname was set outside NetworkManager keep it */
-    if (external_hostname)
+    if (external_hostname) {
+        hostname_retry_schedule(self);
         return;
+    }
 
     if (priv->hostname_mode == NM_POLICY_HOSTNAME_MODE_DHCP) {
         /* In dhcp hostname-mode, the hostname is updated only if it comes from
@@ -961,7 +1128,7 @@ update_system_hostname(NMPolicy *self, const char *msg)
          * so reset the hostname to the previous value
          */
         if (priv->dhcp_hostname) {
-            _set_hostname(self, priv->orig_hostname, "reset dhcp hostname");
+            _set_hostname(self, priv->orig_hostname, "reset dhcp hostname", TRUE);
             priv->dhcp_hostname = FALSE;
         }
         return;
@@ -973,11 +1140,11 @@ update_system_hostname(NMPolicy *self, const char *msg)
      * set externally to NM
      */
     if (priv->orig_hostname) {
-        _set_hostname(self, priv->orig_hostname, "from system startup");
+        _set_hostname(self, priv->orig_hostname, "from system startup", TRUE);
         return;
     }
 
-    _set_hostname(self, NULL, "no hostname found");
+    _set_hostname(self, NULL, "no hostname found", TRUE);
 }
 
 static void
@@ -1212,7 +1379,7 @@ update_ip_dns(NMPolicy *self, int addr_family, NMDevice *changed_device)
         /* Tell the DNS manager this config is preferred by re-adding it with
          * a different IP config type.
          */
-        if (device && nm_device_sys_iface_state_is_external(device))
+        if (device && nm_device_managed_type_is_external(device))
             ip_config_type = NM_DNS_IP_CONFIG_TYPE_REMOVED;
         else if (vpn || (device && nm_device_is_vpn(device)))
             ip_config_type = NM_DNS_IP_CONFIG_TYPE_VPN;
@@ -1254,7 +1421,7 @@ update_routing_and_dns(NMPolicy *self, gboolean force_update, NMDevice *changed_
     update_ip6_routing(self, force_update);
 
     /* Update the system hostname */
-    update_system_hostname(self, "routing and dns");
+    update_system_hostname(self, "routing and dns", FALSE);
 
     nm_dns_manager_end_updates(priv->dns_manager, __func__);
 }
@@ -1352,7 +1519,7 @@ _auto_activate_device(NMPolicy *self, NMDevice *device)
     // deactivate the device and activate the new connection instead of just
     // bailing if the device is already active
     if (nm_device_get_act_request(device)) {
-        if (nm_device_sys_iface_state_is_external(device)
+        if (nm_device_managed_type_is_external(device)
             && nm_device_get_allow_autoconnect_on_external(device)) {
             /* this is an external activation, and we allow autoconnecting on
              * top of that.
@@ -1571,7 +1738,7 @@ _static_hostname_changed_cb(NMHostnameManager *hostname_manager,
     NMPolicyPrivate *priv = user_data;
     NMPolicy        *self = _PRIV_TO_SELF(priv);
 
-    update_system_hostname(self, "hostname changed");
+    update_system_hostname(self, "hostname changed", FALSE);
 }
 
 void
@@ -1678,7 +1845,7 @@ nm_policy_device_recheck_auto_activate_schedule(NMPolicy *self, NMDevice *device
 
     priv = NM_POLICY_GET_PRIVATE(self);
 
-    if (nm_manager_get_state(priv->manager) == NM_STATE_ASLEEP)
+    if (nm_manager_get_state(priv->manager) == NM_STATE_DISABLED)
         return;
 
     if (!nm_device_autoconnect_allowed(device))
@@ -1686,7 +1853,7 @@ nm_policy_device_recheck_auto_activate_schedule(NMPolicy *self, NMDevice *device
 
     nm_manager_for_each_active_connection (priv->manager, ac, tmp_list) {
         if (nm_active_connection_get_device(ac) == device) {
-            if (nm_device_sys_iface_state_is_external(device)
+            if (nm_device_managed_type_is_external(device)
                 && nm_device_get_allow_autoconnect_on_external(device)) {
                 /* pass */
             } else
@@ -1766,7 +1933,7 @@ _connection_autoconnect_retries_set(NMPolicy             *self,
             nm_assert(retry_time != 0);
 
             priv->reset_connections_retries_idle_source = nm_g_timeout_add_seconds_source(
-                MAX(0, retry_time - nm_utils_get_monotonic_timestamp_sec()),
+                NM_MAX(0, retry_time - nm_utils_get_monotonic_timestamp_sec()),
                 reset_connections_retries,
                 self);
         }
@@ -1774,11 +1941,11 @@ _connection_autoconnect_retries_set(NMPolicy             *self,
 }
 
 static void
-unblock_autoconnect_for_ports(NMPolicy   *self,
-                              const char *master_device,
-                              const char *master_uuid_settings,
-                              const char *master_uuid_applied,
-                              gboolean    reset_devcon_autoconnect)
+unblock_autoconnect_for_children(NMPolicy   *self,
+                                 const char *parent_device,
+                                 const char *parent_uuid_settings,
+                                 const char *parent_uuid_applied,
+                                 const char *parent_mac_addr)
 {
     NMPolicyPrivate             *priv = NM_POLICY_GET_PRIVATE(self);
     NMSettingsConnection *const *connections;
@@ -1786,13 +1953,13 @@ unblock_autoconnect_for_ports(NMPolicy   *self,
     guint                        i;
 
     _LOGT(LOGD_CORE,
-          "block-autoconnect: unblocking port profiles for controller ifname=%s%s%s, uuid=%s%s%s"
+          "block-autoconnect: unblocking child profiles for parent ifname=%s%s%s, uuid=%s%s%s"
           "%s%s%s",
-          NM_PRINT_FMT_QUOTE_STRING(master_device),
-          NM_PRINT_FMT_QUOTE_STRING(master_uuid_settings),
-          NM_PRINT_FMT_QUOTED(master_uuid_applied,
+          NM_PRINT_FMT_QUOTE_STRING(parent_device),
+          NM_PRINT_FMT_QUOTE_STRING(parent_uuid_settings),
+          NM_PRINT_FMT_QUOTED(parent_uuid_applied,
                               ", applied-uuid=\"",
-                              master_uuid_applied,
+                              parent_uuid_applied,
                               "\"",
                               ""));
 
@@ -1800,22 +1967,85 @@ unblock_autoconnect_for_ports(NMPolicy   *self,
     connections = nm_settings_get_connections(priv->settings, NULL);
     for (i = 0; connections[i]; i++) {
         NMSettingsConnection *sett_conn = connections[i];
-        NMSettingConnection  *s_slave_con;
-        const char           *slave_master;
+        NMConnection         *connection;
+        NMDeviceFactory      *factory;
+        const char           *parent_name = NULL;
 
-        s_slave_con =
-            nm_settings_connection_get_setting(sett_conn, NM_META_SETTING_TYPE_CONNECTION);
-        slave_master = nm_setting_connection_get_master(s_slave_con);
-        if (!slave_master)
+        connection = nm_settings_connection_get_connection(sett_conn);
+        factory    = nm_device_factory_manager_find_factory_for_connection(connection);
+        if (factory)
+            parent_name = nm_device_factory_get_connection_parent(factory, connection);
+
+        if (!parent_name)
             continue;
 
-        if (!NM_IN_STRSET(slave_master, master_device, master_uuid_applied, master_uuid_settings))
+        if (!NM_IN_STRSET(parent_name,
+                          parent_device,
+                          parent_uuid_applied,
+                          parent_uuid_settings,
+                          parent_mac_addr))
             continue;
 
-        if (reset_devcon_autoconnect) {
-            if (nm_manager_devcon_autoconnect_retries_reset(priv->manager, NULL, sett_conn))
+        if (nm_manager_devcon_autoconnect_retries_reset(priv->manager, NULL, sett_conn))
+            changed = TRUE;
+
+        /* unblock the devices associated with that connection */
+        if (nm_manager_devcon_autoconnect_blocked_reason_set(
+                priv->manager,
+                NULL,
+                sett_conn,
+                NM_SETTINGS_AUTOCONNECT_BLOCKED_REASON_FAILED,
+                FALSE)) {
+            if (!nm_settings_connection_autoconnect_is_blocked(sett_conn))
                 changed = TRUE;
         }
+    }
+
+    if (changed)
+        nm_policy_device_recheck_auto_activate_all_schedule(self);
+}
+
+static void
+unblock_autoconnect_for_ports(NMPolicy   *self,
+                              const char *controller_device,
+                              const char *controller_uuid_settings,
+                              const char *controller_uuid_applied)
+{
+    NMPolicyPrivate             *priv = NM_POLICY_GET_PRIVATE(self);
+    NMSettingsConnection *const *connections;
+    gboolean                     changed = FALSE;
+    guint                        i;
+
+    _LOGT(LOGD_CORE,
+          "block-autoconnect: unblocking port profiles for controller ifname=%s%s%s, uuid=%s%s%s"
+          "%s%s%s",
+          NM_PRINT_FMT_QUOTE_STRING(controller_device),
+          NM_PRINT_FMT_QUOTE_STRING(controller_uuid_settings),
+          NM_PRINT_FMT_QUOTED(controller_uuid_applied,
+                              ", applied-uuid=\"",
+                              controller_uuid_applied,
+                              "\"",
+                              ""));
+
+    connections = nm_settings_get_connections(priv->settings, NULL);
+    for (i = 0; connections[i]; i++) {
+        NMSettingsConnection *sett_conn = connections[i];
+        NMSettingConnection  *s_port_con;
+        const char           *port_controller;
+
+        s_port_con = nm_settings_connection_get_setting(sett_conn, NM_META_SETTING_TYPE_CONNECTION);
+        port_controller = nm_setting_connection_get_controller(s_port_con);
+        if (!port_controller)
+            continue;
+
+        if (!NM_IN_STRSET(port_controller,
+                          controller_device,
+                          controller_uuid_applied,
+                          controller_uuid_settings))
+            continue;
+
+        if (nm_manager_devcon_autoconnect_retries_reset(priv->manager, NULL, sett_conn))
+            changed = TRUE;
 
         /* unblock the devices associated with that connection */
         if (nm_manager_devcon_autoconnect_blocked_reason_set(
@@ -1836,8 +2066,8 @@ unblock_autoconnect_for_ports(NMPolicy   *self,
 static void
 unblock_autoconnect_for_ports_for_sett_conn(NMPolicy *self, NMSettingsConnection *sett_conn)
 {
-    const char          *master_device;
-    const char          *master_uuid_settings;
+    const char          *controller_device;
+    const char          *controller_uuid_settings;
     NMSettingConnection *s_con;
 
     nm_assert(NM_IS_POLICY(self));
@@ -1847,51 +2077,56 @@ unblock_autoconnect_for_ports_for_sett_conn(NMPolicy *self, NMSettingsConnection
 
     nm_assert(NM_IS_SETTING_CONNECTION(s_con));
 
-    master_uuid_settings = nm_setting_connection_get_uuid(s_con);
-    master_device        = nm_setting_connection_get_interface_name(s_con);
+    controller_uuid_settings = nm_setting_connection_get_uuid(s_con);
+    controller_device        = nm_setting_connection_get_interface_name(s_con);
 
-    unblock_autoconnect_for_ports(self, master_device, master_uuid_settings, NULL, TRUE);
+    unblock_autoconnect_for_ports(self, controller_device, controller_uuid_settings, NULL);
 }
 
 static void
-activate_slave_connections(NMPolicy *self, NMDevice *device)
+activate_port_or_children_connections(NMPolicy *self,
+                                      NMDevice *device,
+                                      gboolean  activate_children_connections_only)
 {
-    const char   *master_device;
-    const char   *master_uuid_settings = NULL;
-    const char   *master_uuid_applied  = NULL;
+    const char   *controller_device;
+    const char   *controller_uuid_settings = NULL;
+    const char   *controller_uuid_applied  = NULL;
+    const char   *parent_mac_addr          = NULL;
     NMActRequest *req;
-    gboolean      internal_activation = FALSE;
 
-    master_device = nm_device_get_iface(device);
-    nm_assert(master_device);
+    controller_device = nm_device_get_iface(device);
+    nm_assert(controller_device);
+
+    parent_mac_addr = nm_device_get_permanent_hw_address(device);
 
     req = nm_device_get_act_request(device);
     if (req) {
         NMConnection         *connection;
         NMSettingsConnection *sett_conn;
-        NMAuthSubject        *subject;
 
         sett_conn = nm_active_connection_get_settings_connection(NM_ACTIVE_CONNECTION(req));
         if (sett_conn)
-            master_uuid_settings = nm_settings_connection_get_uuid(sett_conn);
+            controller_uuid_settings = nm_settings_connection_get_uuid(sett_conn);
 
         connection = nm_active_connection_get_applied_connection(NM_ACTIVE_CONNECTION(req));
         if (connection)
-            master_uuid_applied = nm_connection_get_uuid(connection);
+            controller_uuid_applied = nm_connection_get_uuid(connection);
 
-        if (nm_streq0(master_uuid_settings, master_uuid_applied))
-            master_uuid_applied = NULL;
-
-        subject = nm_active_connection_get_subject(NM_ACTIVE_CONNECTION(req));
-        internal_activation =
-            subject && (nm_auth_subject_get_subject_type(subject) == NM_AUTH_SUBJECT_TYPE_INTERNAL);
+        if (nm_streq0(controller_uuid_settings, controller_uuid_applied))
+            controller_uuid_applied = NULL;
     }
 
-    unblock_autoconnect_for_ports(self,
-                                  master_device,
-                                  master_uuid_settings,
-                                  master_uuid_applied,
-                                  !internal_activation);
+    if (!activate_children_connections_only) {
+        unblock_autoconnect_for_ports(self,
+                                      controller_device,
+                                      controller_uuid_settings,
+                                      controller_uuid_applied);
+    }
+    unblock_autoconnect_for_children(self,
+                                     controller_device,
+                                     controller_uuid_settings,
+                                     controller_uuid_applied,
+                                     parent_mac_addr);
 }
 
 static gboolean
@@ -2048,8 +2283,10 @@ device_state_changed(NMDevice           *device,
                 con_v = nm_settings_connection_get_last_secret_agent_version_id(sett_conn);
                 if (con_v == 0 || con_v == nm_agent_manager_get_agent_version_id(priv->agent_mgr)) {
                     _LOGD(LOGD_DEVICE,
-                          "block-autoconnect: connection '%s' now blocked from autoconnect due to "
-                          "no secrets",
+                          "block-autoconnect: connection[" NM_HASH_OBFUSCATE_PTR_FMT
+                          "] (%s) now blocked from "
+                          "autoconnect due to no secrets",
+                          NM_HASH_OBFUSCATE_PTR(sett_conn),
                           nm_settings_connection_get_id(sett_conn));
                     nm_settings_connection_autoconnect_blocked_reason_set(
                         sett_conn,
@@ -2059,19 +2296,18 @@ device_state_changed(NMDevice           *device,
                 }
                 break;
             case NM_DEVICE_STATE_REASON_DEPENDENCY_FAILED:
-                /* A connection that fails due to dependency-failed is not
-                 * able to reconnect until the master connection activates
-                 * again; when this happens, the master clears the blocked
-                 * reason for all its slaves in activate_slave_connections()
-                 * and tries to reconnect them. For this to work, the slave
-                 * should be marked as blocked when it fails with
-                 * dependency-failed.
+                /* A connection that fails due to dependency-failed is not able to
+                 * reconnect until the connection it depends on activates again;
+                 * when this happens, the controller or parent clears the blocked
+                 * reason for all its dependent devices in activate_port_or_children_connections()
+                 * and tries to reconnect them. For this to work, the port should
+                 * be marked as blocked when it fails with dependency-failed.
                  */
                 _LOGD(LOGD_DEVICE,
-                      "block-autoconnect: connection[%p] (%s) now blocked from autoconnect due to "
-                      "failed "
-                      "dependency",
-                      sett_conn,
+                      "block-autoconnect: connection[" NM_HASH_OBFUSCATE_PTR_FMT
+                      "] (%s) now blocked "
+                      "from autoconnect due to failed dependency",
+                      NM_HASH_OBFUSCATE_PTR(sett_conn),
                       nm_settings_connection_get_id(sett_conn));
                 nm_manager_devcon_autoconnect_blocked_reason_set(
                     priv->manager,
@@ -2093,32 +2329,41 @@ device_state_changed(NMDevice           *device,
                     /* blocked */
                 } else if (tries != NM_AUTOCONNECT_RETRIES_FOREVER) {
                     _LOGD(LOGD_DEVICE,
-                          "autoconnect: connection[%p] (%s): failed to autoconnect; %u tries left",
-                          sett_conn,
+                          "autoconnect: connection[" NM_HASH_OBFUSCATE_PTR_FMT "] (%s): failed to "
+                          "autoconnect; %u tries left",
+                          NM_HASH_OBFUSCATE_PTR(sett_conn),
                           nm_settings_connection_get_id(sett_conn),
                           tries - 1u);
                     _connection_autoconnect_retries_set(self, device, sett_conn, tries - 1u);
                 } else {
                     _LOGD(LOGD_DEVICE,
-                          "autoconnect: connection[%p] (%s) failed to autoconnect; infinite tries "
-                          "left",
-                          sett_conn,
+                          "autoconnect: connection[" NM_HASH_OBFUSCATE_PTR_FMT "] (%s) failed to "
+                          "autoconnect; infinite tries left",
+                          NM_HASH_OBFUSCATE_PTR(sett_conn),
                           nm_settings_connection_get_id(sett_conn));
                 }
             }
         }
         break;
     case NM_DEVICE_STATE_ACTIVATED:
+        if (nm_device_get_device_type(device) == NM_DEVICE_TYPE_OVS_INTERFACE) {
+            /* When parent is ovs-interface, the kernel link is only created in stage3, we have to
+            * delay unblocking the children and schedule them for activation until parent is activated */
+            activate_port_or_children_connections(self, device, TRUE);
+        }
         if (sett_conn) {
             /* Reset auto retries back to default since connection was successful */
-            nm_manager_devcon_autoconnect_retries_reset(priv->manager, device, sett_conn);
+            nm_manager_devcon_autoconnect_reset_reconnect_all(priv->manager,
+                                                              device,
+                                                              sett_conn,
+                                                              FALSE);
         }
 
         /* Since there is no guarantee that device_l3cd_changed() is called
          * again when the device becomes ACTIVATED, we need also to update
          * routing and DNS here. */
         nm_dns_manager_begin_updates(priv->dns_manager, __func__);
-        if (!nm_device_sys_iface_state_is_external(device)) {
+        if (!nm_device_managed_type_is_external(device)) {
             nm_dns_manager_set_ip_config(priv->dns_manager,
                                          AF_UNSPEC,
                                          device,
@@ -2131,7 +2376,7 @@ device_state_changed(NMDevice           *device,
         update_ip_dns(self, AF_INET6, device);
         update_ip4_routing(self, TRUE);
         update_ip6_routing(self, TRUE);
-        update_system_hostname(self, "routing and dns");
+        update_system_hostname(self, "routing and dns", TRUE);
         nm_dns_manager_end_updates(priv->dns_manager, __func__);
 
         break;
@@ -2193,9 +2438,9 @@ device_state_changed(NMDevice           *device,
         break;
 
     case NM_DEVICE_STATE_PREPARE:
-        /* Reset auto-connect retries of all slaves and schedule them for
+        /* Reset auto-connect retries of all ports or children and schedule them for
          * activation. */
-        activate_slave_connections(self, device);
+        activate_port_or_children_connections(self, device, FALSE);
 
         /* Now that the device state is progressing, we don't care
          * anymore for the AC state. */
@@ -2266,6 +2511,10 @@ device_l3cd_changed(NMDevice             *device,
      */
     state = nm_device_get_state(device);
     if (l3cd_new && state >= NM_DEVICE_STATE_IP_CONFIG && state < NM_DEVICE_STATE_DEACTIVATING) {
+        /* Since the device L3CD_CHANGED signal is emitted *after* the commit of
+         * configuration, addresses and routes are already set in kernel when we
+         * write the configuration to resolv.conf or send it to the DNS plugin.
+         * This prevents "leaks" of DNS queries via the wrong routes.*/
         nm_dns_manager_set_ip_config(priv->dns_manager,
                                      AF_UNSPEC,
                                      device,
@@ -2279,7 +2528,7 @@ device_l3cd_changed(NMDevice             *device,
         update_ip6_routing(self, TRUE);
         /* FIXME: since we already monitor platform addresses changes,
          * this is probably no longer necessary? */
-        update_system_hostname(self, "ip conf");
+        update_system_hostname(self, "ip conf", FALSE);
     } else {
         nm_dns_manager_set_ip_config(priv->dns_manager,
                                      AF_UNSPEC,
@@ -2301,7 +2550,7 @@ device_platform_address_changed(NMDevice *device, gpointer user_data)
 
     state = nm_device_get_state(device);
     if (state > NM_DEVICE_STATE_DISCONNECTED && state < NM_DEVICE_STATE_DEACTIVATING) {
-        update_system_hostname(self, "address changed");
+        update_system_hostname(self, "address changed", TRUE);
     }
 }
 
@@ -2635,11 +2884,15 @@ dns_config_changed(NMDnsManager *dns_manager, gpointer user_data)
     if (priv->updating_dns)
         return;
 
-    nm_manager_for_each_device (priv->manager, device, tmp_lst) {
-        nm_device_clear_dns_lookup_data(device, "DNS configuration changed");
+    if (!nm_dns_manager_is_unmanaged(dns_manager)) {
+        nm_manager_for_each_device (priv->manager, device, tmp_lst) {
+            nm_device_clear_dns_lookup_data(device, "DNS configuration changed");
+        }
+
+        update_system_hostname(self, "DNS configuration changed", FALSE);
     }
 
-    update_system_hostname(self, "DNS configuration changed");
+    nm_dispatcher_call_dns_change();
 }
 
 static void
@@ -2907,7 +3160,7 @@ constructed(GObject *object)
     G_OBJECT_CLASS(nm_policy_parent_class)->constructed(object);
 
     _LOGD(LOGD_DNS, "hostname-mode: %s", _hostname_mode_to_string(priv->hostname_mode));
-    update_system_hostname(self, "initial hostname");
+    update_system_hostname(self, "initial hostname", FALSE);
 }
 
 NMPolicy *
@@ -2930,7 +3183,7 @@ dispose(GObject *object)
     NMPolicy        *self = NM_POLICY(object);
     NMPolicyPrivate *priv = NM_POLICY_GET_PRIVATE(self);
 
-    nm_assert(!c_list_is_empty(&priv->policy_auto_activate_lst_head));
+    nm_assert(c_list_is_empty(&priv->policy_auto_activate_lst_head));
     nm_assert(g_hash_table_size(priv->devices) == 0);
 
     nm_clear_g_object(&priv->default_ac4);
@@ -2965,6 +3218,7 @@ dispose(GObject *object)
 
     nm_clear_g_source_inst(&priv->reset_connections_retries_idle_source);
     nm_clear_g_source_inst(&priv->device_recheck_auto_activate_all_idle_source);
+    nm_clear_g_source_inst(&priv->hostname_retry.source);
 
     nm_clear_g_free(&priv->orig_hostname);
     nm_clear_g_free(&priv->cur_hostname);

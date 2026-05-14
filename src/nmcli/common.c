@@ -355,7 +355,7 @@ print_ip_config(NMIPConfig      *cfg,
     }
 
     if (!nmc_print_table(nmc_config,
-                         (gpointer[]){cfg, NULL},
+                         (gpointer[]) {cfg, NULL},
                          NULL,
                          NULL,
                          addr_family == AF_INET
@@ -386,7 +386,7 @@ print_dhcp_config(NMDhcpConfig    *dhcp,
     }
 
     if (!nmc_print_table(nmc_config,
-                         (gpointer[]){dhcp, NULL},
+                         (gpointer[]) {dhcp, NULL},
                          NULL,
                          NULL,
                          addr_family == AF_INET
@@ -700,7 +700,7 @@ get_secrets_from_user(const NmcConfig *nmc_config,
                 if (msg)
                     nmc_print("%s\n", msg);
 
-                echo_on = secret->is_secret ? nmc_config->show_secrets : TRUE;
+                echo_on = secret->is_secret ? secret->force_echo || nmc_config->show_secrets : TRUE;
 
                 if (secret->no_prompt_entry_id)
                     pwd = nmc_readline_echo(nmc_config, echo_on, "%s: ", secret->pretty_name);
@@ -824,7 +824,7 @@ static char    *rl_string;
 /**
  * nmc_cleanup_readline:
  *
- * Cleanup readline when nmcli is terminated with a signal.
+ * Cleanup readline when nmcli is terminated.
  * It makes sure the terminal is not garbled.
  */
 void
@@ -1016,7 +1016,7 @@ nmc_readline_echo(const NmcConfig *nmc_config, gboolean echo_on, const char *pro
         saved_history = history_get_history_state();
         history_set_history_state(&passwd_history);
 #else
-        start  = where_history();
+        start = where_history();
 #endif
         /* stifling history is important as it tells readline to
          * not store anything, otherwise sensitive data could be
@@ -1138,7 +1138,7 @@ nmc_rl_gen_func_ifnames(const char *text, int state)
 char *nmc_rl_pre_input_deftext;
 
 int
-nmc_rl_set_deftext(_NMC_RL_STARTUPHOOK_ARGS)
+nmc_rl_set_deftext(void)
 {
     if (nmc_rl_pre_input_deftext && rl_startup_hook) {
         rl_insert_text(nmc_rl_pre_input_deftext);
@@ -1399,7 +1399,7 @@ call_cmd(NmCli *nmc, GTask *task, const NMCCommand *cmd, int argc, const char *c
 
             nmc->should_wait++;
             call  = g_slice_new(CmdCall);
-            *call = (CmdCall){
+            *call = (CmdCall) {
                 .cmd  = cmd,
                 .argc = argc,
                 .argv = nm_strv_dup(argv, argc, TRUE),
@@ -1430,7 +1430,7 @@ call_cmd(NmCli *nmc, GTask *task, const NMCCommand *cmd, int argc, const char *c
 
         nmc->should_wait++;
         call  = g_slice_new(CmdCall);
-        *call = (CmdCall){
+        *call = (CmdCall) {
             .cmd  = cmd,
             .argc = argc,
             .argv = nm_strv_dup(argv, argc, TRUE),

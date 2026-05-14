@@ -26,31 +26,35 @@ typedef enum {
 
     _NML_DBUS_LOG_LEVEL_INITIALIZED = 0x01,
 
-    _NML_DBUS_LOG_LEVEL_TRACE = 0x02,
+    NML_DBUS_LOG_LEVEL_TRACE = 0x02,
 
-    _NML_DBUS_LOG_LEVEL_DEBUG = 0x04,
+    NML_DBUS_LOG_LEVEL_DEBUG = 0x04,
 
     /* the difference between a warning and a critical is that it results in
-     * g_warning() vs. g_critical() messages. Note that we want to use "warnings"
-     * for unknown D-Bus API that could just result because we run against a
-     * newer NetworkManager version (such warnings are more graceful, because
-     * we want that libnm can be forward compatible against newer servers).
-     * Critical warnings should be emitted when NetworkManager exposes something
-     * on D-Bus that breaks the current expectations. Usually NetworkManager
-     * should not break API, hence such issues are more severe. */
-    _NML_DBUS_LOG_LEVEL_WARN  = 0x08,
-    _NML_DBUS_LOG_LEVEL_ERROR = 0x10,
+     * g_warning() vs. g_critical() messages (with NML_DBUS_LOG_ASSERT). Note
+     * that we want to use "warnings" for unknown D-Bus API that could just
+     * result because we run against a newer NetworkManager version (such
+     * warnings are more graceful, because we want that libnm can be forward
+     * compatible against newer servers).  Critical warnings should be emitted
+     * when NetworkManager exposes something on D-Bus that breaks the current
+     * expectations. Usually NetworkManager should not break API, hence such
+     * issues are more severe. */
+    NML_DBUS_LOG_LEVEL_WARN  = 0x08,
+    NML_DBUS_LOG_LEVEL_ERROR = 0x10,
 
     /* ANY is only relevant for nml_dbus_log_enabled() to check whether any of the
      * options is on. */
     NML_DBUS_LOG_LEVEL_ANY = _NML_DBUS_LOG_LEVEL_INITIALIZED,
 
-    NML_DBUS_LOG_LEVEL_TRACE = _NML_DBUS_LOG_LEVEL_TRACE,
-    NML_DBUS_LOG_LEVEL_DEBUG = _NML_DBUS_LOG_LEVEL_DEBUG | NML_DBUS_LOG_LEVEL_TRACE,
-    NML_DBUS_LOG_LEVEL_WARN  = _NML_DBUS_LOG_LEVEL_WARN | NML_DBUS_LOG_LEVEL_DEBUG,
-    NML_DBUS_LOG_LEVEL_ERROR = _NML_DBUS_LOG_LEVEL_ERROR | NML_DBUS_LOG_LEVEL_WARN,
-
     NML_DBUS_LOG_STDOUT = 0x20,
+
+    NML_DBUS_LOG_ASSERT = 0x40,
+
+    _NML_DBUS_LOG_LEVEL_ERROR = NML_DBUS_LOG_LEVEL_ERROR,
+    _NML_DBUS_LOG_LEVEL_WARN  = NML_DBUS_LOG_LEVEL_WARN | _NML_DBUS_LOG_LEVEL_ERROR,
+    _NML_DBUS_LOG_LEVEL_DEBUG = NML_DBUS_LOG_LEVEL_DEBUG | _NML_DBUS_LOG_LEVEL_WARN,
+    _NML_DBUS_LOG_LEVEL_TRACE = NML_DBUS_LOG_LEVEL_TRACE | _NML_DBUS_LOG_LEVEL_DEBUG,
+
 } NMLDBusLogLevel;
 
 #undef _LOGL_TRACE
@@ -61,7 +65,6 @@ typedef enum {
 
 #define _LOGL_TRACE NML_DBUS_LOG_LEVEL_TRACE
 #define _LOGL_DEBUG NML_DBUS_LOG_LEVEL_DEBUG
-#define _LOGL_INFO  NML_DBUS_LOG_LEVEL_INFO
 #define _LOGL_WARN  NML_DBUS_LOG_LEVEL_WARN
 #define _LOGL_ERR   NML_DBUS_LOG_LEVEL_ERR
 
@@ -87,9 +90,14 @@ nml_dbus_log_enabled_full(NMLDBusLogLevel level, gboolean *out_use_stdout)
         l = _nml_dbus_log_level_init();
 
     nm_assert(l & _NML_DBUS_LOG_LEVEL_INITIALIZED);
+
     NM_SET_OUT(out_use_stdout, NM_FLAGS_HAS(l, NML_DBUS_LOG_STDOUT));
-    if (level == NML_DBUS_LOG_LEVEL_ANY)
-        return l != _NML_DBUS_LOG_LEVEL_INITIALIZED;
+
+    if (level == NML_DBUS_LOG_LEVEL_ANY) {
+        return NM_FLAGS_ANY(l,
+                            NML_DBUS_LOG_LEVEL_TRACE | NML_DBUS_LOG_LEVEL_DEBUG
+                                | NML_DBUS_LOG_LEVEL_WARN | NML_DBUS_LOG_LEVEL_ERROR);
+    }
     return !!(((NMLDBusLogLevel) l) & level);
 }
 
@@ -371,11 +379,10 @@ typedef struct {
 } NMLDBusMetaProperty;
 
 #define NML_DBUS_META_PROPERTY_INIT(v_dbus_property_name, v_dbus_type, v_obj_properties_idx, ...) \
-    {                                                                                             \
-        .dbus_property_name = "" v_dbus_property_name "",                                         \
-        .dbus_type          = NM_G_VARIANT_TYPE("" v_dbus_type ""),                               \
-        .obj_properties_idx = v_obj_properties_idx, ##__VA_ARGS__                                 \
-    }
+    {.dbus_property_name = "" v_dbus_property_name "",                                            \
+     .dbus_type          = NM_G_VARIANT_TYPE("" v_dbus_type ""),                                  \
+     .obj_properties_idx = v_obj_properties_idx,                                                  \
+     ##__VA_ARGS__}
 
 #define _NML_DBUS_META_PROPERTY_INIT_DEFAULT(v_dbus_type,          \
                                              v_exp_type,           \
@@ -433,8 +440,8 @@ typedef struct {
         v_obj_properties_idx,                                                     \
         .prop_struct_offset =                                                     \
             NM_STRUCT_OFFSET_ENSURE_TYPE(NMLDBusPropertyO, v_container, v_field), \
-        .extra.property_vtable_o =                                                \
-            &((const NMLDBusPropertVTableO){.get_o_type_fcn = (v_get_o_type_fcn), ##__VA_ARGS__}))
+        .extra.property_vtable_o = &(                                             \
+            (const NMLDBusPropertVTableO) {.get_o_type_fcn = (v_get_o_type_fcn), ##__VA_ARGS__}))
 
 #define NML_DBUS_META_PROPERTY_INIT_AO_PROP(v_dbus_property_name,                  \
                                             v_obj_properties_idx,                  \
@@ -449,7 +456,7 @@ typedef struct {
         .prop_struct_offset =                                                      \
             NM_STRUCT_OFFSET_ENSURE_TYPE(NMLDBusPropertyAO, v_container, v_field), \
         .extra.property_vtable_ao = &(                                             \
-            (const NMLDBusPropertVTableAO){.get_o_type_fcn = (v_get_o_type_fcn), ##__VA_ARGS__}))
+            (const NMLDBusPropertVTableAO) {.get_o_type_fcn = (v_get_o_type_fcn), ##__VA_ARGS__}))
 
 #define NML_DBUS_META_PROPERTY_INIT_FCN(v_dbus_property_name,                 \
                                         v_obj_properties_idx,                 \
@@ -552,18 +559,18 @@ struct _NMLDBusMetaIface {
 #define NML_DBUS_META_IFACE_OBJ_PROPERTIES()                                    \
     .obj_properties             = (const GParamSpec *const *) (obj_properties), \
     .n_obj_properties           = _PROPERTY_ENUMS_LAST,                         \
-    .obj_properties_reverse_idx = ((guint8[_PROPERTY_ENUMS_LAST]){})
+    .obj_properties_reverse_idx = ((guint8[_PROPERTY_ENUMS_LAST]) {})
 
-#define NML_DBUS_META_IFACE_DBUS_PROPERTIES(...)                     \
-    .dbus_properties = ((const NMLDBusMetaProperty[]){__VA_ARGS__}), \
-    .n_dbus_properties =                                             \
-        (sizeof((const NMLDBusMetaProperty[]){__VA_ARGS__}) / sizeof(NMLDBusMetaProperty))
+#define NML_DBUS_META_IFACE_DBUS_PROPERTIES(...)                      \
+    .dbus_properties = ((const NMLDBusMetaProperty[]) {__VA_ARGS__}), \
+    .n_dbus_properties =                                              \
+        (sizeof((const NMLDBusMetaProperty[]) {__VA_ARGS__}) / sizeof(NMLDBusMetaProperty))
 
 #define NML_DBUS_META_IFACE_INIT(v_dbus_iface_name, v_get_type_fcn, v_interface_prio, ...) \
-    {                                                                                      \
-        .dbus_iface_name = "" v_dbus_iface_name "", .get_type_fcn = v_get_type_fcn,        \
-        .interface_prio = v_interface_prio, ##__VA_ARGS__                                  \
-    }
+    {.dbus_iface_name = "" v_dbus_iface_name "",                                           \
+     .get_type_fcn    = v_get_type_fcn,                                                    \
+     .interface_prio  = v_interface_prio,                                                  \
+     ##__VA_ARGS__}
 
 #define NML_DBUS_META_IFACE_INIT_PROP(v_dbus_iface_name, v_get_type_fcn, v_interface_prio, ...) \
     NML_DBUS_META_IFACE_INIT(v_dbus_iface_name,                                                 \
@@ -572,7 +579,7 @@ struct _NMLDBusMetaIface {
                              NML_DBUS_META_IFACE_OBJ_PROPERTIES(),                              \
                              ##__VA_ARGS__)
 
-extern const NMLDBusMetaIface *const _nml_dbus_meta_ifaces[45];
+extern const NMLDBusMetaIface *const _nml_dbus_meta_ifaces[47];
 
 extern const NMLDBusMetaIface _nml_dbus_meta_iface_nm;
 extern const NMLDBusMetaIface _nml_dbus_meta_iface_nm_accesspoint;
@@ -586,8 +593,10 @@ extern const NMLDBusMetaIface _nml_dbus_meta_iface_nm_device_bond;
 extern const NMLDBusMetaIface _nml_dbus_meta_iface_nm_device_bridge;
 extern const NMLDBusMetaIface _nml_dbus_meta_iface_nm_device_dummy;
 extern const NMLDBusMetaIface _nml_dbus_meta_iface_nm_device_generic;
+extern const NMLDBusMetaIface _nml_dbus_meta_iface_nm_device_hsr;
 extern const NMLDBusMetaIface _nml_dbus_meta_iface_nm_device_infiniband;
 extern const NMLDBusMetaIface _nml_dbus_meta_iface_nm_device_iptunnel;
+extern const NMLDBusMetaIface _nml_dbus_meta_iface_nm_device_ipvlan;
 extern const NMLDBusMetaIface _nml_dbus_meta_iface_nm_device_loopback;
 extern const NMLDBusMetaIface _nml_dbus_meta_iface_nm_device_lowpan;
 extern const NMLDBusMetaIface _nml_dbus_meta_iface_nm_device_macsec;
@@ -631,7 +640,7 @@ void _nml_dbus_meta_class_init_with_properties_impl(GObjectClass                
 #define _nml_dbus_meta_class_init_with_properties(object_class, ...) \
     _nml_dbus_meta_class_init_with_properties_impl(                  \
         (object_class),                                              \
-        ((const NMLDBusMetaIface *const[]){__VA_ARGS__, NULL}))
+        ((const NMLDBusMetaIface *const[]) {__VA_ARGS__, NULL}))
 
 /*****************************************************************************/
 
@@ -784,7 +793,7 @@ struct _NMObjectClass {
              * variable here. */          \
             nm_assert(!_f.klass);                                                    \
                                                                                      \
-            _f = (_NMObjectClassFieldInfo){                                          \
+            _f = (_NMObjectClassFieldInfo) {                                         \
                 .parent = _klass->field_name,                                        \
                 .klass  = _klass,                                                    \
                 .offset = (_offset),                                                 \
@@ -845,7 +854,7 @@ struct _NMDeviceClass {
     /* Slaves was originally part of some subtypes of NMDevice. It was deprecated and
     * a new NMDevice::ports property was added. When that property changes, we need
     * to notify about the subclass' respective property. This is the property. */
-    const GParamSpec *slaves_param_spec;
+    const GParamSpec *ports_param_spec;
 };
 
 #define _NML_DEVICE_META_PROPERTY_INDEX_PORTS 27

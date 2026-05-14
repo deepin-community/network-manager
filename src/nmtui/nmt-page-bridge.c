@@ -39,7 +39,7 @@ static gboolean
 bridge_connection_type_filter(GType connection_type, gpointer user_data)
 {
     return (connection_type == NM_TYPE_SETTING_WIRED || connection_type == NM_TYPE_SETTING_WIRELESS
-            || connection_type == NM_TYPE_SETTING_VLAN);
+            || connection_type == NM_TYPE_SETTING_VLAN || connection_type == NM_TYPE_SETTING_BOND);
 }
 
 static void
@@ -60,7 +60,7 @@ nmt_page_bridge_constructed(GObject *object)
     grid    = nmt_editor_section_get_body(section);
 
     widget = nmt_newt_separator_new();
-    nmt_editor_grid_append(grid, _("Slaves"), widget, NULL);
+    nmt_editor_grid_append(grid, _("Ports"), widget, NULL);
     nmt_editor_grid_set_row_flags(grid, widget, NMT_EDITOR_GRID_ROW_LABEL_ALIGN_LEFT);
 
     widget = nmt_port_list_new(conn, bridge_connection_type_filter, bridge);

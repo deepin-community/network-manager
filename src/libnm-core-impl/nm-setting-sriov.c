@@ -9,6 +9,7 @@
 
 #include "nm-setting-private.h"
 #include "nm-utils-private.h"
+#include "nm-core-enum-types.h"
 
 /**
  * SECTION:nm-setting-sriov
@@ -18,7 +19,14 @@
 
 /*****************************************************************************/
 
-NM_GOBJECT_PROPERTIES_DEFINE(NMSettingSriov, PROP_TOTAL_VFS, PROP_VFS, PROP_AUTOPROBE_DRIVERS, );
+NM_GOBJECT_PROPERTIES_DEFINE(NMSettingSriov,
+                             PROP_TOTAL_VFS,
+                             PROP_VFS,
+                             PROP_PRESERVE_ON_DOWN,
+                             PROP_AUTOPROBE_DRIVERS,
+                             PROP_ESWITCH_MODE,
+                             PROP_ESWITCH_INLINE_MODE,
+                             PROP_ESWITCH_ENCAP_MODE, );
 
 /**
  * NMSettingSriov:
@@ -32,6 +40,10 @@ struct _NMSettingSriov {
     GPtrArray *vfs;
     int        autoprobe_drivers;
     guint32    total_vfs;
+    int        preserve_on_down;
+    int        eswitch_mode;
+    int        eswitch_inline_mode;
+    int        eswitch_encap_mode;
 };
 
 struct _NMSettingSriovClass {
@@ -93,7 +105,7 @@ nm_sriov_vf_new(guint index)
     NMSriovVF *vf;
 
     vf  = g_slice_new(NMSriovVF);
-    *vf = (NMSriovVF){
+    *vf = (NMSriovVF) {
         .refcount   = 1,
         .index      = index,
         .attributes = g_hash_table_new_full(nm_str_hash,
@@ -213,7 +225,7 @@ vf_add_vlan(NMSriovVF *vf, guint vlan_id, guint qos, NMSriovVFVlanProtocol proto
     VFVlan *vlan;
 
     vlan  = g_slice_new(VFVlan);
-    *vlan = (VFVlan){
+    *vlan = (VFVlan) {
         .id       = vlan_id,
         .qos      = qos,
         .protocol = protocol,
@@ -817,6 +829,22 @@ nm_setting_sriov_clear_vfs(NMSettingSriov *setting)
 }
 
 /**
+ * nm_setting_sriov_get_preserve_on_down:
+ * @setting: the #NMSettingSriov
+ *
+ * Returns: the value contained in the #NMSettingSriov:preserve-on-down property.
+ *
+ * Since: 1.54
+ */
+NMSriovPreserveOnDown
+nm_setting_sriov_get_preserve_on_down(NMSettingSriov *setting)
+{
+    g_return_val_if_fail(NM_IS_SETTING_SRIOV(setting), NM_SRIOV_PRESERVE_ON_DOWN_DEFAULT);
+
+    return setting->preserve_on_down;
+}
+
+/**
  * nm_setting_sriov_get_autoprobe_drivers:
  * @setting: the #NMSettingSriov
  *
@@ -833,6 +861,54 @@ nm_setting_sriov_get_autoprobe_drivers(NMSettingSriov *setting)
     g_return_val_if_fail(NM_IS_SETTING_SRIOV(setting), NM_TERNARY_DEFAULT);
 
     return setting->autoprobe_drivers;
+}
+
+/**
+ * nm_setting_sriov_get_eswitch_mode:
+ * @setting: the #NMSettingSriov
+ *
+ * Returns: the value contained in the #NMSettingSriov:eswitch-mode property.
+ *
+ * Since: 1.46
+ */
+NMSriovEswitchMode
+nm_setting_sriov_get_eswitch_mode(NMSettingSriov *setting)
+{
+    g_return_val_if_fail(NM_IS_SETTING_SRIOV(setting), NM_SRIOV_ESWITCH_MODE_PRESERVE);
+
+    return setting->eswitch_mode;
+}
+
+/**
+ * nm_setting_sriov_get_eswitch_inline_mode:
+ * @setting: the #NMSettingSriov
+ *
+ * Returns: the value contained in the #NMSettingSriov:eswitch-inline-mode property.
+ *
+ * Since: 1.46
+ */
+NMSriovEswitchInlineMode
+nm_setting_sriov_get_eswitch_inline_mode(NMSettingSriov *setting)
+{
+    g_return_val_if_fail(NM_IS_SETTING_SRIOV(setting), NM_SRIOV_ESWITCH_INLINE_MODE_PRESERVE);
+
+    return setting->eswitch_inline_mode;
+}
+
+/**
+ * nm_setting_sriov_get_eswitch_encap_mode:
+ * @setting: the #NMSettingSriov
+ *
+ * Returns: the value contained in the #NMSettingSriov:eswitch-encap-mode property.
+ *
+ * Since: 1.46
+ */
+NMSriovEswitchEncapMode
+nm_setting_sriov_get_eswitch_encap_mode(NMSettingSriov *setting)
+{
+    g_return_val_if_fail(NM_IS_SETTING_SRIOV(setting), NM_SRIOV_ESWITCH_ENCAP_MODE_PRESERVE);
+
+    return setting->eswitch_encap_mode;
 }
 
 static int
@@ -1330,6 +1406,108 @@ nm_setting_sriov_class_init(NMSettingSriovClass *klass)
                                                     NM_SETTING_PARAM_FUZZY_IGNORE,
                                                     NMSettingSriov,
                                                     autoprobe_drivers);
+
+    /**
+     * NMSettingSriov:eswitch-mode
+     *
+     * Select the eswitch mode of the device. Currently it's only supported for
+     * PCI PF devices, and only if the eswitch device is managed from the same
+     * PCI address than the PF.
+     *
+     * If set to %NM_SRIOV_ESWITCH_MODE_PRESERVE (default) the eswitch mode won't be
+     * modified by NetworkManager.
+     *
+     * Since: 1.46
+     */
+    _nm_setting_property_define_direct_enum(properties_override,
+                                            obj_properties,
+                                            NM_SETTING_SRIOV_ESWITCH_MODE,
+                                            PROP_ESWITCH_MODE,
+                                            NM_TYPE_SRIOV_ESWITCH_MODE,
+                                            NM_SRIOV_ESWITCH_MODE_PRESERVE,
+                                            NM_SETTING_PARAM_FUZZY_IGNORE,
+                                            NULL,
+                                            NMSettingSriov,
+                                            eswitch_mode);
+
+    /**
+     * NMSettingSriov:eswitch-inline-mode
+     *
+     * Select the eswitch inline-mode of the device. Some HWs need the VF driver to put
+     * part of the packet headers on the TX descriptor so the e-switch can do proper
+     * matching and steering.
+     *
+     * Currently it's only supported for PCI PF devices, and only if the eswitch device
+     * is managed from the same PCI address than the PF.
+     *
+     * If set to %NM_SRIOV_ESWITCH_INLINE_MODE_PRESERVE (default) the eswitch inline-mode
+     * won't be modified by NetworkManager.
+     *
+     * Since: 1.46
+     */
+    _nm_setting_property_define_direct_enum(properties_override,
+                                            obj_properties,
+                                            NM_SETTING_SRIOV_ESWITCH_INLINE_MODE,
+                                            PROP_ESWITCH_INLINE_MODE,
+                                            NM_TYPE_SRIOV_ESWITCH_INLINE_MODE,
+                                            NM_SRIOV_ESWITCH_INLINE_MODE_PRESERVE,
+                                            NM_SETTING_PARAM_FUZZY_IGNORE,
+                                            NULL,
+                                            NMSettingSriov,
+                                            eswitch_inline_mode);
+
+    /**
+     * NMSettingSriov:eswitch-encap-mode
+     *
+     * Select the eswitch encapsulation support.
+     *
+     * Currently it's only supported for PCI PF devices, and only if the eswitch device
+     * is managed from the same PCI address than the PF.
+     *
+     * If set to %NM_SRIOV_ESWITCH_ENCAP_MODE_PRESERVE (default) the eswitch encap-mode
+     * won't be modified by NetworkManager.
+     *
+     * Since: 1.46
+     */
+    _nm_setting_property_define_direct_enum(properties_override,
+                                            obj_properties,
+                                            NM_SETTING_SRIOV_ESWITCH_ENCAP_MODE,
+                                            PROP_ESWITCH_ENCAP_MODE,
+                                            NM_TYPE_SRIOV_ESWITCH_ENCAP_MODE,
+                                            NM_SRIOV_ESWITCH_ENCAP_MODE_PRESERVE,
+                                            NM_SETTING_PARAM_FUZZY_IGNORE,
+                                            NULL,
+                                            NMSettingSriov,
+                                            eswitch_encap_mode);
+
+    /**
+     * NMSettingSriov:preserve-on-down
+     *
+     * This controls whether NetworkManager preserves the SR-IOV parameters set on
+     * the device when the connection is deactivated, or whether it resets them to
+     * their default value. The SR-IOV parameters are those specified in this setting
+     * (the "sriov" setting), like the number of VFs to create, the eswitch
+     * configuration, etc.
+     *
+     * If set to %NM_SRIOV_PRESERVE_ON_DOWN_NO, NetworkManager resets the SR-IOV
+     * parameters when the connection is deactivated. When set to
+     * %NM_SRIOV_PRESERVE_ON_DOWN_YES, NetworkManager preserves those parameters
+     * on the device. If the value is %NM_SRIOV_PRESERVE_ON_DOWN_DEFAULT, NetworkManager
+     * looks up a global default value in the configuration; in case no such value is
+     * defined, it uses %NM_SRIOV_PRESERVE_ON_DOWN_NO as fallback.
+     *
+     * Since: 1.54
+     */
+    _nm_setting_property_define_direct_enum(properties_override,
+                                            obj_properties,
+                                            NM_SETTING_SRIOV_PRESERVE_ON_DOWN,
+                                            PROP_PRESERVE_ON_DOWN,
+                                            NM_TYPE_SRIOV_PRESERVE_ON_DOWN,
+                                            NM_SRIOV_PRESERVE_ON_DOWN_DEFAULT,
+                                            NM_SETTING_PARAM_FUZZY_IGNORE,
+                                            NULL,
+                                            NMSettingSriov,
+                                            preserve_on_down);
 
     g_object_class_install_properties(object_class, _PROPERTY_ENUMS_LAST, obj_properties);
 

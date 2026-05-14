@@ -191,7 +191,8 @@ int n_dhcp4_c_connection_connect(NDhcp4CConnection *connection,
         r = n_dhcp4_c_socket_udp_new(&fd_udp,
                                      connection->client_config->ifindex,
                                      client,
-                                     server);
+                                     server,
+                                     connection->probe_config->dscp);
         if (r)
                 return r;
 
@@ -378,6 +379,10 @@ void n_dhcp4_c_connection_get_timeout(NDhcp4CConnection *connection,
         *timeoutp = timeout;
 }
 
+void n_dhcp4_c_connection_clear_client_ip(NDhcp4CConnection *connection) {
+        connection->client_ip = INADDR_ANY;
+}
+
 static int n_dhcp4_c_connection_packet_broadcast(NDhcp4CConnection *connection,
                                                  NDhcp4Outgoing *message) {
         int r;
@@ -388,6 +393,7 @@ static int n_dhcp4_c_connection_packet_broadcast(NDhcp4CConnection *connection,
                                          connection->client_config->ifindex,
                                          connection->client_config->broadcast_mac,
                                          connection->client_config->n_broadcast_mac,
+                                         connection->probe_config->dscp,
                                          message);
         if (r)
                 return r;
@@ -543,12 +549,14 @@ static int n_dhcp4_c_connection_new_message(NDhcp4CConnection *connection,
         if (r)
                 return r;
 
-        r = n_dhcp4_outgoing_append(message,
-                                    N_DHCP4_OPTION_CLIENT_IDENTIFIER,
-                                    connection->client_config->client_id,
-                                    connection->client_config->n_client_id);
-        if (r)
-                return r;
+        if (connection->client_config->n_client_id > 0) {
+                r = n_dhcp4_outgoing_append(message,
+                                            N_DHCP4_OPTION_CLIENT_IDENTIFIER,
+                                            connection->client_config->client_id,
+                                            connection->client_config->n_client_id);
+                if (r)
+                        return r;
+        }
 
         switch (message_type) {
         case N_DHCP4_MESSAGE_DISCOVER:
@@ -1006,9 +1014,9 @@ static const char *message_type_to_str(uint8_t type) {
         }
 }
 
-static int n_dhcp4_c_connection_send_request(NDhcp4CConnection *connection,
-                                             NDhcp4Outgoing *request,
-                                             uint64_t timestamp) {
+int n_dhcp4_c_connection_send_request(NDhcp4CConnection *connection,
+                                      NDhcp4Outgoing *request,
+                                      uint64_t timestamp) {
         char server_addr[INET_ADDRSTRLEN];
         char client_addr[INET_ADDRSTRLEN];
         char error_msg[128];
@@ -1027,13 +1035,13 @@ static int n_dhcp4_c_connection_send_request(NDhcp4CConnection *connection,
         case N_DHCP4_C_MESSAGE_REBOOT:
         case N_DHCP4_C_MESSAGE_REBIND:
         case N_DHCP4_C_MESSAGE_RENEW:
+        case N_DHCP4_C_MESSAGE_DECLINE:
+        case N_DHCP4_C_MESSAGE_RELEASE:
                 request->userdata.base_time = timestamp;
                 n_dhcp4_outgoing_set_xid(request, n_dhcp4_client_probe_config_get_random(connection->probe_config));
 
                 break;
         case N_DHCP4_C_MESSAGE_SELECT:
-        case N_DHCP4_C_MESSAGE_DECLINE:
-        case N_DHCP4_C_MESSAGE_RELEASE:
                 break;
         default:
                 c_assert(0);

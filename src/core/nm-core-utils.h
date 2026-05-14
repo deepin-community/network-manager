@@ -306,14 +306,20 @@ typedef enum {
     NM_UTILS_STABLE_TYPE_RANDOM    = 3,
 } NMUtilsStableType;
 
-#define NM_UTILS_STABLE_TYPE_NONE ((NMUtilsStableType) -1)
+#define NM_UTILS_STABLE_TYPE_NONE ((NMUtilsStableType) - 1)
 
 NMUtilsStableType nm_utils_stable_id_parse(const char *stable_id,
                                            const char *deviceid,
                                            const char *hwaddr,
                                            const char *bootid,
                                            const char *uuid,
+                                           GBytes     *ssid,
                                            char      **out_generated);
+
+NMUtilsStableType nm_utils_stable_id_parse_network_ssid(GBytes     *ssid,
+                                                        const char *uuid,
+                                                        gboolean    complete,
+                                                        char      **out_stable_id);
 
 char *nm_utils_stable_id_random(void);
 char *nm_utils_stable_id_generated_complete(const char *msg);
@@ -455,6 +461,7 @@ const char *nm_utils_parse_dns_domain(const char *domain, gboolean *is_routing);
 void nm_wifi_utils_parse_ies(const guint8 *bytes,
                              gsize         len,
                              guint32      *out_max_rate,
+                             guint32      *out_bandwidth,
                              gboolean     *out_metered,
                              gboolean     *out_owe_transition_mode);
 
@@ -471,16 +478,46 @@ guint8 nm_wifi_utils_level_to_quality(int val);
 /*****************************************************************************/
 
 void nm_utils_spawn_helper(const char *const  *args,
+                           gboolean            binary_output,
                            GCancellable       *cancellable,
                            GAsyncReadyCallback callback,
                            gpointer            cb_data);
 
-char *nm_utils_spawn_helper_finish(GAsyncResult *result, GError **error);
+char   *nm_utils_spawn_helper_finish_string(GAsyncResult *result, GError **error);
+GBytes *nm_utils_spawn_helper_finish_binary(GAsyncResult *result, GError **error);
 
 /*****************************************************************************/
 
 uid_t nm_utils_get_nm_uid(void);
 
 gid_t nm_utils_get_nm_gid(void);
+
+/*****************************************************************************/
+
+gboolean nm_utils_connection_supported(NMConnection *connection, GError **error);
+
+/*****************************************************************************/
+
+typedef struct {
+    gint64 ts_msec;
+    gint64 tokens;
+} NMRateLimit;
+
+gboolean nm_rate_limit_check(NMRateLimit *rate_limit, gint32 window_sec, gint32 burst);
+
+/*****************************************************************************/
+
+const char *nm_utils_get_connection_first_permissions_user(NMConnection *connection);
+
+/*****************************************************************************/
+
+const char **nm_utils_get_connection_private_files_paths(NMConnection *connection);
+
+void        nm_utils_read_private_files(const char *const  *paths,
+                                        const char         *user,
+                                        GCancellable       *cancellable,
+                                        GAsyncReadyCallback callback,
+                                        gpointer            cb_data);
+GHashTable *nm_utils_read_private_files_finish(GAsyncResult *result, GError **error);
 
 #endif /* __NM_CORE_UTILS_H__ */

@@ -69,6 +69,8 @@ struct _NMDevice;
 
 #define NM_META_TEXT_PROMPT_IP_TUNNEL_MODE N_("IP Tunnel mode")
 
+#define NM_META_TEXT_PROMPT_IPVLAN_MODE N_("IPVLAN mode")
+
 #define NM_META_TEXT_PROMPT_MACVLAN_MODE N_("MACVLAN mode")
 
 #define NM_META_TEXT_PROMPT_MACSEC_MODE N_("MACsec mode")
@@ -114,7 +116,8 @@ typedef enum {
     NM_META_COLOR_PERMISSION_UNKNOWN,
     NM_META_COLOR_PERMISSION_YES,
     NM_META_COLOR_PROMPT,
-    NM_META_COLOR_STATE_ASLEEP,
+    NM_META_COLOR_STATE_DISABLED,
+    NM_META_COLOR_STATE_ASLEEP = NM_META_COLOR_STATE_DISABLED, /* Deprecated */
     NM_META_COLOR_STATE_CONNECTED_GLOBAL,
     NM_META_COLOR_STATE_CONNECTED_LOCAL,
     NM_META_COLOR_STATE_CONNECTED_SITE,
@@ -160,7 +163,7 @@ typedef enum {
     NM_META_ACCESSOR_GET_OUT_FLAGS_NONE = 0,
     NM_META_ACCESSOR_GET_OUT_FLAGS_STRV = (1LL << 0),
 
-    /* the property allows to be hidden, if and only if, it's value is set to the
+    /* the property allows one to be hidden, if and only if, it's value is set to the
      * default. This should only be set by new properties, to preserve behavior
      * of old properties, which were always printed. */
     NM_META_ACCESSOR_GET_OUT_FLAGS_HIDE = (1LL << 1),
@@ -178,10 +181,35 @@ typedef enum {
 
 typedef enum {
     NM_META_PROPERTY_TYPE_MAC_MODE_DEFAULT,
-    NM_META_PROPERTY_TYPE_MAC_MODE_CLONED,
+    NM_META_PROPERTY_TYPE_MAC_MODE_CLONED_ETHERNET,
+    NM_META_PROPERTY_TYPE_MAC_MODE_CLONED_WIFI,
     NM_META_PROPERTY_TYPE_MAC_MODE_INFINIBAND,
     NM_META_PROPERTY_TYPE_MAC_MODE_WPAN,
 } NMMetaPropertyTypeMacMode;
+
+typedef enum _nm_packed {
+    NM_META_PROPERTY_TYPE_FORMAT_UNDEF = 0,
+    NM_META_PROPERTY_TYPE_FORMAT_INT,
+    NM_META_PROPERTY_TYPE_FORMAT_STRING,
+    NM_META_PROPERTY_TYPE_FORMAT_ENUM,
+    NM_META_PROPERTY_TYPE_FORMAT_SECRET_FLAGS,
+    NM_META_PROPERTY_TYPE_FORMAT_BOOL,
+    NM_META_PROPERTY_TYPE_FORMAT_TERNARY,
+    NM_META_PROPERTY_TYPE_FORMAT_MAC,
+    NM_META_PROPERTY_TYPE_FORMAT_IPV4,
+    NM_META_PROPERTY_TYPE_FORMAT_IPV6,
+    NM_META_PROPERTY_TYPE_FORMAT_IPV4_IPV6,
+    NM_META_PROPERTY_TYPE_FORMAT_MTU,
+    NM_META_PROPERTY_TYPE_FORMAT_BYTES,
+    NM_META_PROPERTY_TYPE_FORMAT_PATH,
+    NM_META_PROPERTY_TYPE_FORMAT_ETHTOOL,
+    NM_META_PROPERTY_TYPE_FORMAT_MULTILIST,
+    NM_META_PROPERTY_TYPE_FORMAT_OBJLIST,
+    NM_META_PROPERTY_TYPE_FORMAT_OPTIONLIST,
+    NM_META_PROPERTY_TYPE_FORMAT_DCB,
+    NM_META_PROPERTY_TYPE_FORMAT_DCB_BOOL,
+    NM_META_PROPERTY_TYPE_FORMAT_DCB_FLAGS,
+} NMMetaPropertyTypeFormat;
 
 typedef struct _NMMetaEnvironment           NMMetaEnvironment;
 typedef struct _NMMetaType                  NMMetaType;
@@ -232,6 +260,8 @@ struct _NMMetaPropertyType {
                                        gboolean                     *out_complete_filename,
                                        char                       ***out_to_free);
 
+    NMMetaPropertyTypeFormat doc_format;
+
     /* Whether set_fcn() supports the '-' modifier. That is, whether the property
      * is a list type. */
     bool set_supports_remove : 1;
@@ -252,7 +282,7 @@ typedef struct {
 struct _NMMetaPropertyTypData {
     union {
         struct {
-            GType (*get_gtype)(void);
+            GType (*get_gtype)(void); /* note: only allowed for int/uint properties */
             int                                 min;
             int                                 max;
             const struct _NMUtilsEnumValueInfo *value_infos_get; /* nicks for get function */
@@ -264,9 +294,21 @@ struct _NMMetaPropertyTypData {
                                    int                       value);
         } gobject_enum;
         struct {
-            NMMetaSignUnsignInt64          min;
-            NMMetaSignUnsignInt64          max;
-            guint                          base;
+            NMMetaSignUnsignInt64 min;
+            NMMetaSignUnsignInt64 max;
+            guint                 base;
+
+            /* Normally, when a property has "base = 16", it is printed
+             * as unsigned even if the gtype is signed. For some properties,
+             * we want to print the hexadecimal representation for positive
+             * values, and the base10 representation with minus sign for negative
+             * values. A typical use case is to encode the default value as
+             * "-1" and use positive values as a hexadecimal number. To avoid
+             * ambiguity when setting the value via nmcli, the property minimum
+             * allowed value should not be <= -10.
+             */
+            bool print_hex_negative_as_base10;
+
             const NMMetaUtilsIntValueInfo *value_infos;
         } gobject_int;
         struct {
@@ -350,6 +392,7 @@ struct _NMMetaPropertyTypData {
     const char *const                 *values_static;
     const NMMetaPropertyTypDataNested *nested;
     NMMetaPropertyTypFlags             typ_flags;
+    NMMetaPropertyTypeFormat           list_items_doc_format;
 };
 
 typedef enum {
@@ -476,8 +519,17 @@ extern const NMMetaSettingInfoEditor nm_meta_setting_infos_editor[_NM_META_SETTI
 extern const NMMetaSettingValidPartItem *const nm_meta_setting_info_valid_parts_default[];
 
 const NMMetaSettingValidPartItem *const *
-nm_meta_setting_info_valid_parts_for_slave_type(const char  *slave_type,
-                                                const char **out_slave_name);
+nm_meta_setting_info_valid_parts_for_port_type(const char *port_type, const char **out_port_name);
+
+gboolean nm_meta_property_int_get_range(const NMMetaPropertyInfo *property_info,
+                                        NMMetaSignUnsignInt64    *out_min,
+                                        NMMetaSignUnsignInt64    *out_max);
+
+gboolean nm_meta_property_enum_get_range(const NMMetaPropertyInfo *property_info,
+                                         int                      *out_min,
+                                         int                      *out_max);
+
+GType nm_meta_property_enum_get_type(const NMMetaPropertyInfo *property_info);
 
 /*****************************************************************************/
 

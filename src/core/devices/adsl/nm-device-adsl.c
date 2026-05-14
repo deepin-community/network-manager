@@ -117,8 +117,7 @@ complete_connection(NMDevice            *device,
                               NULL,
                               _("ADSL connection"),
                               NULL,
-                              NULL,
-                              FALSE); /* No IPv6 yet by default */
+                              NULL);
     return TRUE;
 }
 
@@ -494,7 +493,7 @@ act_stage2_config(NMDevice *device, NMDeviceStateReason *out_failure_reason)
             _LOGD(LOGD_ADSL, "starting PPPoA");
         }
 
-        priv->ppp_mgr = nm_ppp_mgr_start(&((const NMPppMgrConfig){
+        priv->ppp_mgr = nm_ppp_mgr_start(&((const NMPppMgrConfig) {
                                              .netns         = nm_device_get_netns(device),
                                              .parent_iface  = ppp_iface,
                                              .callback      = _ppp_mgr_callback,
@@ -683,7 +682,11 @@ static const NMDBusInterfaceInfoExtended interface_info_device_adsl = {
     .parent = NM_DEFINE_GDBUS_INTERFACE_INFO_INIT(
         NM_DBUS_INTERFACE_DEVICE_ADSL,
         .properties = NM_DEFINE_GDBUS_PROPERTY_INFOS(
-            NM_DEFINE_DBUS_PROPERTY_INFO_EXTENDED_READABLE("Carrier", "b", NM_DEVICE_CARRIER), ), ),
+            NM_DEFINE_DBUS_PROPERTY_INFO_EXTENDED_READABLE(
+                "Carrier",
+                "b",
+                NM_DEVICE_CARRIER,
+                .annotations = NM_GDBUS_ANNOTATION_INFO_LIST_DEPRECATED(), ), ), ),
 };
 
 static void

@@ -30,6 +30,7 @@ typedef struct {
 typedef struct {
     GHashTable    *config;
     GHashTable    *blobs;
+    char          *private_user;
     NMSupplCapMask capabilities;
     guint32        ap_scan;
     bool           fast_required : 1;
@@ -60,7 +61,7 @@ _get_capability(NMSupplicantConfigPrivate *priv, NMSupplCapType type)
 }
 
 NMSupplicantConfig *
-nm_supplicant_config_new(NMSupplCapMask capabilities)
+nm_supplicant_config_new(NMSupplCapMask capabilities, const char *private_user)
 {
     NMSupplicantConfigPrivate *priv;
     NMSupplicantConfig        *self;
@@ -69,6 +70,7 @@ nm_supplicant_config_new(NMSupplCapMask capabilities)
     priv = NM_SUPPLICANT_CONFIG_GET_PRIVATE(self);
 
     priv->capabilities = capabilities;
+    priv->private_user = g_strdup(private_user);
 
     return self;
 }
@@ -154,7 +156,7 @@ nm_supplicant_config_add_option_with_type(NMSupplicantConfig *self,
     }
 
     opt  = g_slice_new(ConfigOption);
-    *opt = (ConfigOption){
+    *opt = (ConfigOption) {
         .value = nm_memdup_nul(value, len),
         .len   = len,
         .type  = type,
@@ -204,20 +206,30 @@ nm_supplicant_config_add_blob(NMSupplicantConfig *self,
     ConfigOption              *old_opt;
     ConfigOption              *opt;
     NMSupplOptType             type;
-    const guint8              *data;
     gsize                      data_len;
+    gs_free char              *full_value = NULL;
 
     g_return_val_if_fail(NM_IS_SUPPLICANT_CONFIG(self), FALSE);
     g_return_val_if_fail(key != NULL, FALSE);
     g_return_val_if_fail(value != NULL, FALSE);
     g_return_val_if_fail(blobid != NULL, FALSE);
 
-    data = g_bytes_get_data(value, &data_len);
+    g_bytes_get_data(value, &data_len);
     g_return_val_if_fail(data_len > 0, FALSE);
 
-    priv = NM_SUPPLICANT_CONFIG_GET_PRIVATE(self);
+    if (data_len > 32 * 1024 * 1024) {
+        g_set_error(error,
+                    NM_SUPPLICANT_ERROR,
+                    NM_SUPPLICANT_ERROR_CONFIG,
+                    "blob '%s' is larger than 32MiB",
+                    key);
+        return FALSE;
+    }
 
-    type = nm_supplicant_settings_verify_setting(key, (const char *) data, data_len);
+    priv       = NM_SUPPLICANT_CONFIG_GET_PRIVATE(self);
+    full_value = g_strdup_printf("blob://%s", blobid);
+
+    type = nm_supplicant_settings_verify_setting(key, full_value, strlen(full_value));
     if (type == NM_SUPPL_OPT_TYPE_INVALID) {
         g_set_error(error,
                     NM_SUPPLICANT_ERROR,
@@ -238,7 +250,7 @@ nm_supplicant_config_add_blob(NMSupplicantConfig *self,
     }
 
     opt        = g_slice_new0(ConfigOption);
-    opt->value = g_strdup_printf("blob://%s", blobid);
+    opt->value = g_steal_pointer(&full_value);
     opt->len   = strlen(opt->value);
     opt->type  = type;
 
@@ -258,19 +270,19 @@ static gboolean
 nm_supplicant_config_add_blob_for_connection(NMSupplicantConfig *self,
                                              GBytes             *field,
                                              const char         *name,
-                                             const char         *con_uid,
+                                             const char         *con_uuid,
                                              GError            **error)
 {
     if (field && g_bytes_get_size(field)) {
-        gs_free char *uid = NULL;
+        gs_free char *blob_id = NULL;
         char         *p;
 
-        uid = g_strdup_printf("%s-%s", con_uid, name);
-        for (p = uid; *p; p++) {
+        blob_id = g_strdup_printf("%s-%s", con_uuid, name);
+        for (p = blob_id; *p; p++) {
             if (*p == '/')
                 *p = '-';
         }
-        if (!nm_supplicant_config_add_blob(self, name, field, uid, error))
+        if (!nm_supplicant_config_add_blob(self, name, field, blob_id, error))
             return FALSE;
     }
     return TRUE;
@@ -283,6 +295,7 @@ nm_supplicant_config_finalize(GObject *object)
 
     g_hash_table_destroy(priv->config);
     nm_clear_pointer(&priv->blobs, g_hash_table_destroy);
+    nm_clear_pointer(&priv->private_user, g_free);
 
     G_OBJECT_CLASS(nm_supplicant_config_parent_class)->finalize(object);
 }
@@ -396,14 +409,16 @@ again:
 }
 
 gboolean
-nm_supplicant_config_add_setting_macsec(NMSupplicantConfig *self,
-                                        NMSettingMacsec    *setting,
-                                        GError            **error)
+nm_supplicant_config_add_setting_macsec(NMSupplicantConfig    *self,
+                                        NMSettingMacsec       *setting,
+                                        NMSettingMacsecOffload offload,
+                                        GError               **error)
 {
     const char *value;
     char        buf[32];
     int         port;
     gsize       key_len;
+    const char *offload_str = NULL;
 
     g_return_val_if_fail(NM_IS_SUPPLICANT_CONFIG(self), FALSE);
     g_return_val_if_fail(setting != NULL, FALSE);
@@ -472,7 +487,93 @@ nm_supplicant_config_add_setting_macsec(NMSupplicantConfig *self,
             return FALSE;
     }
 
+    switch (offload) {
+    case NM_SETTING_MACSEC_OFFLOAD_OFF:
+        /* This is the default in wpa_supplicant. Don't set the option,
+         * so that if user doesn't enable offload, the connection still
+         * works with previous versions of the supplicant.
+         */
+        break;
+    case NM_SETTING_MACSEC_OFFLOAD_PHY:
+        offload_str = "1";
+        break;
+    case NM_SETTING_MACSEC_OFFLOAD_MAC:
+        offload_str = "2";
+        break;
+    case NM_SETTING_MACSEC_OFFLOAD_DEFAULT:
+        nm_assert_not_reached();
+        break;
+    }
+    if (offload_str
+        && !nm_supplicant_config_add_option(self, "macsec_offload", offload_str, -1, NULL, error)) {
+        return FALSE;
+    }
+
     return TRUE;
+}
+
+static void
+get_ap_params(guint                         freq,
+              NMSettingWirelessChannelWidth width,
+              guint                        *out_ht40,
+              int                          *out_max_oper_chwidth,
+              guint                        *out_center_freq)
+{
+    *out_ht40             = 0;
+    *out_max_oper_chwidth = -1;
+    *out_center_freq      = 0;
+
+    switch (width) {
+    case NM_SETTING_WIRELESS_CHANNEL_WIDTH_40MHZ:
+        *out_ht40             = 1;
+        *out_max_oper_chwidth = 0;
+        return;
+    case NM_SETTING_WIRELESS_CHANNEL_WIDTH_80MHZ:
+    {
+        guint channel;
+        guint center_channel = 0;
+
+        if (freq < 5000) {
+            /* the setting is not valid */
+            nm_assert_not_reached();
+            return;
+        }
+
+        /* Determine the center channel according to the table at
+         * https://en.wikipedia.org/wiki/List_of_WLAN_channels */
+
+        channel = (freq - 5000) / 5;
+
+        if (channel >= 36 && channel <= 48)
+            center_channel = 42;
+        else if (channel >= 52 && channel <= 64)
+            center_channel = 58;
+        else if (channel >= 100 && channel <= 112)
+            center_channel = 106;
+        else if (channel >= 116 && channel <= 128)
+            center_channel = 122;
+        else if (channel >= 132 && channel <= 144)
+            center_channel = 138;
+        else if (channel >= 149 && channel <= 161)
+            center_channel = 155;
+        else if (channel >= 165 && channel <= 177)
+            center_channel = 171;
+
+        if (center_channel) {
+            *out_ht40             = 1;
+            *out_max_oper_chwidth = 1;
+            *out_center_freq      = 5000 + 5 * center_channel;
+        }
+
+        return;
+    }
+
+    case NM_SETTING_WIRELESS_CHANNEL_WIDTH_AUTO:
+    case NM_SETTING_WIRELESS_CHANNEL_WIDTH_20MHZ:
+    default:
+        /* in case of unknown enum value, fall back to the safest parameters */
+        return;
+    }
 }
 
 gboolean
@@ -538,10 +639,48 @@ nm_supplicant_config_add_setting_wireless(NMSupplicantConfig *self,
 
     if ((is_adhoc || is_ap || is_mesh) && fixed_freq) {
         gs_free char *str_freq = NULL;
+        guint         ht40;
+        int           max_oper_chwidth;
+        guint         center_freq;
 
         str_freq = g_strdup_printf("%u", fixed_freq);
         if (!nm_supplicant_config_add_option(self, "frequency", str_freq, -1, NULL, error))
             return FALSE;
+
+        if (is_ap) {
+            get_ap_params(fixed_freq,
+                          nm_setting_wireless_get_channel_width(setting),
+                          &ht40,
+                          &max_oper_chwidth,
+                          &center_freq);
+
+            if (!nm_supplicant_config_add_option(self, "ht40", ht40 ? "1" : "0", -1, NULL, error))
+                return FALSE;
+
+            if (center_freq != 0) {
+                g_free(str_freq);
+                str_freq = g_strdup_printf("%u", center_freq);
+                if (!nm_supplicant_config_add_option(self,
+                                                     "vht_center_freq1",
+                                                     str_freq,
+                                                     -1,
+                                                     NULL,
+                                                     error))
+                    return FALSE;
+            }
+
+            if (max_oper_chwidth >= 0) {
+                g_free(str_freq);
+                str_freq = g_strdup_printf("%u", max_oper_chwidth);
+                if (!nm_supplicant_config_add_option(self,
+                                                     "max_oper_chwidth",
+                                                     str_freq,
+                                                     -1,
+                                                     NULL,
+                                                     error))
+                    return FALSE;
+            }
+        }
     }
 
     /* Except for Ad-Hoc, Hotspot and Mesh, request that the driver probe for the
@@ -822,6 +961,7 @@ nm_supplicant_config_add_setting_wireless_security(NMSupplicantConfig           
                                                    guint32                       mtu,
                                                    NMSettingWirelessSecurityPmf  pmf,
                                                    NMSettingWirelessSecurityFils fils,
+                                                   GHashTable                   *files,
                                                    GError                      **error)
 {
     NMSupplicantConfigPrivate    *priv          = NM_SUPPLICANT_CONFIG_GET_PRIVATE(self);
@@ -904,7 +1044,7 @@ nm_supplicant_config_add_setting_wireless_security(NMSupplicantConfig           
         if (_get_capability(priv, NM_SUPPL_CAP_TYPE_SAE)
             && _get_capability(priv, NM_SUPPL_CAP_TYPE_PMF)
             && _get_capability(priv, NM_SUPPL_CAP_TYPE_BIP)
-            && (!is_ap || pmf != NM_SETTING_WIRELESS_SECURITY_PMF_DISABLE)) {
+            && (pmf != NM_SETTING_WIRELESS_SECURITY_PMF_DISABLE)) {
             g_string_append(key_mgmt_conf, " SAE");
             if (!is_ap && _get_capability(priv, NM_SUPPL_CAP_TYPE_FT))
                 g_string_append(key_mgmt_conf, " FT-SAE");
@@ -1176,6 +1316,7 @@ nm_supplicant_config_add_setting_wireless_security(NMSupplicantConfig           
                                                         con_uuid,
                                                         mtu,
                                                         FALSE,
+                                                        files,
                                                         error))
                 return FALSE;
         }
@@ -1257,6 +1398,7 @@ nm_supplicant_config_add_setting_8021x(NMSupplicantConfig *self,
                                        const char         *con_uuid,
                                        guint32             mtu,
                                        gboolean            wired,
+                                       GHashTable         *files,
                                        GError            **error)
 {
     NMSupplicantConfigPrivate    *priv;
@@ -1486,24 +1628,21 @@ nm_supplicant_config_add_setting_8021x(NMSupplicantConfig *self,
     }
 
     /* CA certificate */
+    path  = NULL;
+    bytes = NULL;
     if (ca_cert_override) {
-        if (!add_string_val(self, ca_cert_override, "ca_cert", FALSE, NULL, error))
-            return FALSE;
+        /* This is a build-time-configured system-wide file path, no need to pass
+         * it as a blob */
+        path = ca_cert_override;
     } else {
         switch (nm_setting_802_1x_get_ca_cert_scheme(setting)) {
         case NM_SETTING_802_1X_CK_SCHEME_BLOB:
             bytes = nm_setting_802_1x_get_ca_cert_blob(setting);
-            if (!nm_supplicant_config_add_blob_for_connection(self,
-                                                              bytes,
-                                                              "ca_cert",
-                                                              con_uuid,
-                                                              error))
-                return FALSE;
             break;
         case NM_SETTING_802_1X_CK_SCHEME_PATH:
             path = nm_setting_802_1x_get_ca_cert_path(setting);
-            if (!add_string_val(self, path, "ca_cert", FALSE, NULL, error))
-                return FALSE;
+            if (priv->private_user)
+                bytes = nm_g_hash_table_lookup(files, path);
             break;
         case NM_SETTING_802_1X_CK_SCHEME_PKCS11:
             if (!add_pkcs11_uri_with_pin(self,
@@ -1519,26 +1658,32 @@ nm_supplicant_config_add_setting_8021x(NMSupplicantConfig *self,
             break;
         }
     }
+    if (bytes) {
+        if (!nm_supplicant_config_add_blob_for_connection(self, bytes, "ca_cert", con_uuid, error))
+            return FALSE;
+    } else if (path) {
+        /* Private connections cannot use paths other than the system CA store */
+        g_return_val_if_fail(ca_cert_override || !priv->private_user, FALSE);
+        if (!add_string_val(self, path, "ca_cert", FALSE, NULL, error))
+            return FALSE;
+    }
 
     /* Phase 2 CA certificate */
+    path  = NULL;
+    bytes = NULL;
     if (ca_cert_override) {
-        if (!add_string_val(self, ca_cert_override, "ca_cert2", FALSE, NULL, error))
-            return FALSE;
+        /* This is a build-time-configured system-wide file path, no need to pass
+         * it as a blob */
+        path = ca_cert_override;
     } else {
         switch (nm_setting_802_1x_get_phase2_ca_cert_scheme(setting)) {
         case NM_SETTING_802_1X_CK_SCHEME_BLOB:
             bytes = nm_setting_802_1x_get_phase2_ca_cert_blob(setting);
-            if (!nm_supplicant_config_add_blob_for_connection(self,
-                                                              bytes,
-                                                              "ca_cert2",
-                                                              con_uuid,
-                                                              error))
-                return FALSE;
             break;
         case NM_SETTING_802_1X_CK_SCHEME_PATH:
             path = nm_setting_802_1x_get_phase2_ca_cert_path(setting);
-            if (!add_string_val(self, path, "ca_cert2", FALSE, NULL, error))
-                return FALSE;
+            if (priv->private_user)
+                bytes = nm_g_hash_table_lookup(files, path);
             break;
         case NM_SETTING_802_1X_CK_SCHEME_PKCS11:
             if (!add_pkcs11_uri_with_pin(
@@ -1554,6 +1699,15 @@ nm_supplicant_config_add_setting_8021x(NMSupplicantConfig *self,
         default:
             break;
         }
+    }
+    if (bytes) {
+        if (!nm_supplicant_config_add_blob_for_connection(self, bytes, "ca_cert2", con_uuid, error))
+            return FALSE;
+    } else if (path) {
+        /* Private connections cannot use paths other than the system CA store */
+        g_return_val_if_fail(ca_cert_override || !priv->private_user, FALSE);
+        if (!add_string_val(self, path, "ca_cert2", FALSE, NULL, error))
+            return FALSE;
     }
 
     /* Subject match */
@@ -1606,21 +1760,17 @@ nm_supplicant_config_add_setting_8021x(NMSupplicantConfig *self,
 
     /* Private key */
     added = FALSE;
+    path  = NULL;
+    bytes = NULL;
     switch (nm_setting_802_1x_get_private_key_scheme(setting)) {
     case NM_SETTING_802_1X_CK_SCHEME_BLOB:
         bytes = nm_setting_802_1x_get_private_key_blob(setting);
-        if (!nm_supplicant_config_add_blob_for_connection(self,
-                                                          bytes,
-                                                          "private_key",
-                                                          con_uuid,
-                                                          error))
-            return FALSE;
         added = TRUE;
         break;
     case NM_SETTING_802_1X_CK_SCHEME_PATH:
         path = nm_setting_802_1x_get_private_key_path(setting);
-        if (!add_string_val(self, path, "private_key", FALSE, NULL, error))
-            return FALSE;
+        if (priv->private_user)
+            bytes = nm_g_hash_table_lookup(files, path);
         added = TRUE;
         break;
     case NM_SETTING_802_1X_CK_SCHEME_PKCS11:
@@ -1636,6 +1786,19 @@ nm_supplicant_config_add_setting_8021x(NMSupplicantConfig *self,
         break;
     default:
         break;
+    }
+    if (bytes) {
+        if (!nm_supplicant_config_add_blob_for_connection(self,
+                                                          bytes,
+                                                          "private_key",
+                                                          con_uuid,
+                                                          error))
+            return FALSE;
+    } else if (path) {
+        /* Private connections cannot use paths */
+        g_return_val_if_fail(!priv->private_user, FALSE);
+        if (!add_string_val(self, path, "private_key", FALSE, NULL, error))
+            return FALSE;
     }
 
     if (added) {
@@ -1660,20 +1823,16 @@ nm_supplicant_config_add_setting_8021x(NMSupplicantConfig *self,
             /* Only add the client cert if the private key is not PKCS#12, as
              * wpa_supplicant configuration directs us to do.
              */
+            path  = NULL;
+            bytes = NULL;
             switch (nm_setting_802_1x_get_client_cert_scheme(setting)) {
             case NM_SETTING_802_1X_CK_SCHEME_BLOB:
                 bytes = nm_setting_802_1x_get_client_cert_blob(setting);
-                if (!nm_supplicant_config_add_blob_for_connection(self,
-                                                                  bytes,
-                                                                  "client_cert",
-                                                                  con_uuid,
-                                                                  error))
-                    return FALSE;
                 break;
             case NM_SETTING_802_1X_CK_SCHEME_PATH:
                 path = nm_setting_802_1x_get_client_cert_path(setting);
-                if (!add_string_val(self, path, "client_cert", FALSE, NULL, error))
-                    return FALSE;
+                if (priv->private_user)
+                    bytes = nm_g_hash_table_lookup(files, path);
                 break;
             case NM_SETTING_802_1X_CK_SCHEME_PKCS11:
                 if (!add_pkcs11_uri_with_pin(
@@ -1689,26 +1848,35 @@ nm_supplicant_config_add_setting_8021x(NMSupplicantConfig *self,
             default:
                 break;
             }
+            if (bytes) {
+                if (!nm_supplicant_config_add_blob_for_connection(self,
+                                                                  bytes,
+                                                                  "client_cert",
+                                                                  con_uuid,
+                                                                  error))
+                    return FALSE;
+            } else if (path) {
+                /* Private connections cannot use paths */
+                g_return_val_if_fail(!priv->private_user, FALSE);
+                if (!add_string_val(self, path, "client_cert", FALSE, NULL, error))
+                    return FALSE;
+            }
         }
     }
 
     /* Phase 2 private key */
     added = FALSE;
+    path  = NULL;
+    bytes = NULL;
     switch (nm_setting_802_1x_get_phase2_private_key_scheme(setting)) {
     case NM_SETTING_802_1X_CK_SCHEME_BLOB:
         bytes = nm_setting_802_1x_get_phase2_private_key_blob(setting);
-        if (!nm_supplicant_config_add_blob_for_connection(self,
-                                                          bytes,
-                                                          "private_key2",
-                                                          con_uuid,
-                                                          error))
-            return FALSE;
         added = TRUE;
         break;
     case NM_SETTING_802_1X_CK_SCHEME_PATH:
         path = nm_setting_802_1x_get_phase2_private_key_path(setting);
-        if (!add_string_val(self, path, "private_key2", FALSE, NULL, error))
-            return FALSE;
+        if (priv->private_user)
+            bytes = nm_g_hash_table_lookup(files, path);
         added = TRUE;
         break;
     case NM_SETTING_802_1X_CK_SCHEME_PKCS11:
@@ -1725,6 +1893,19 @@ nm_supplicant_config_add_setting_8021x(NMSupplicantConfig *self,
         break;
     default:
         break;
+    }
+    if (bytes) {
+        if (!nm_supplicant_config_add_blob_for_connection(self,
+                                                          bytes,
+                                                          "private_key2",
+                                                          con_uuid,
+                                                          error))
+            return FALSE;
+    } else if (path) {
+        /* Private connections cannot use paths */
+        g_return_val_if_fail(!priv->private_user, FALSE);
+        if (!add_string_val(self, path, "private_key2", FALSE, NULL, error))
+            return FALSE;
     }
 
     if (added) {
@@ -1749,20 +1930,16 @@ nm_supplicant_config_add_setting_8021x(NMSupplicantConfig *self,
             /* Only add the client cert if the private key is not PKCS#12, as
              * wpa_supplicant configuration directs us to do.
              */
+            path  = NULL;
+            bytes = NULL;
             switch (nm_setting_802_1x_get_phase2_client_cert_scheme(setting)) {
             case NM_SETTING_802_1X_CK_SCHEME_BLOB:
                 bytes = nm_setting_802_1x_get_phase2_client_cert_blob(setting);
-                if (!nm_supplicant_config_add_blob_for_connection(self,
-                                                                  bytes,
-                                                                  "client_cert2",
-                                                                  con_uuid,
-                                                                  error))
-                    return FALSE;
                 break;
             case NM_SETTING_802_1X_CK_SCHEME_PATH:
                 path = nm_setting_802_1x_get_phase2_client_cert_path(setting);
-                if (!add_string_val(self, path, "client_cert2", FALSE, NULL, error))
-                    return FALSE;
+                if (priv->private_user)
+                    bytes = nm_g_hash_table_lookup(files, path);
                 break;
             case NM_SETTING_802_1X_CK_SCHEME_PKCS11:
                 if (!add_pkcs11_uri_with_pin(
@@ -1778,6 +1955,19 @@ nm_supplicant_config_add_setting_8021x(NMSupplicantConfig *self,
             default:
                 break;
             }
+            if (bytes) {
+                if (!nm_supplicant_config_add_blob_for_connection(self,
+                                                                  bytes,
+                                                                  "client_cert2",
+                                                                  con_uuid,
+                                                                  error))
+                    return FALSE;
+            } else if (path) {
+                /* Private connections cannot use paths */
+                g_return_val_if_fail(!priv->private_user, FALSE);
+                if (!add_string_val(self, path, "client_cert2", FALSE, NULL, error))
+                    return FALSE;
+            }
         }
     }
 
@@ -1786,6 +1976,9 @@ nm_supplicant_config_add_setting_8021x(NMSupplicantConfig *self,
         return FALSE;
     value = nm_setting_802_1x_get_anonymous_identity(setting);
     if (!add_string_val(self, value, "anonymous_identity", FALSE, NULL, error))
+        return FALSE;
+    value = nm_setting_802_1x_get_openssl_ciphers(setting);
+    if (value && !add_string_val(self, value, "openssl_ciphers", FALSE, NULL, error))
         return FALSE;
 
     return TRUE;

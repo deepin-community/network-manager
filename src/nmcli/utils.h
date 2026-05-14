@@ -93,6 +93,7 @@ typedef enum {
     NMC_GENERIC_INFO_TYPE_GENERAL_STATUS_WWAN,
     NMC_GENERIC_INFO_TYPE_GENERAL_STATUS_WIMAX_HW,
     NMC_GENERIC_INFO_TYPE_GENERAL_STATUS_WIMAX,
+    NMC_GENERIC_INFO_TYPE_GENERAL_STATUS_METERED,
     _NMC_GENERIC_INFO_TYPE_GENERAL_STATUS_NUM,
 
     NMC_GENERIC_INFO_TYPE_GENERAL_PERMISSIONS_PERMISSION = 0,
@@ -227,6 +228,7 @@ typedef enum {
     NMC_GENERIC_INFO_TYPE_DEVICE_DETAIL_WIFI_PROPERTIES_ADHOC,
     NMC_GENERIC_INFO_TYPE_DEVICE_DETAIL_WIFI_PROPERTIES_2GHZ,
     NMC_GENERIC_INFO_TYPE_DEVICE_DETAIL_WIFI_PROPERTIES_5GHZ,
+    NMC_GENERIC_INFO_TYPE_DEVICE_DETAIL_WIFI_PROPERTIES_6GHZ,
     NMC_GENERIC_INFO_TYPE_DEVICE_DETAIL_WIFI_PROPERTIES_MESH,
     NMC_GENERIC_INFO_TYPE_DEVICE_DETAIL_WIFI_PROPERTIES_IBSS_RSN,
     _NMC_GENERIC_INFO_TYPE_DEVICE_DETAIL_WIFI_PROPERTIES_NUM,
@@ -267,13 +269,13 @@ struct _NmcMetaGenericInfo {
 };
 
 #define NMC_META_GENERIC(n, ...) \
-    (&((NmcMetaGenericInfo){.meta_type = &nmc_meta_type_generic_info, .name = n, __VA_ARGS__}))
+    (&((NmcMetaGenericInfo) {.meta_type = &nmc_meta_type_generic_info, .name = n, __VA_ARGS__}))
 
 #define NMC_META_GENERIC_WITH_NESTED(n, nest, ...) \
     NMC_META_GENERIC(n, .nested = (nest), __VA_ARGS__)
 
 #define NMC_META_GENERIC_GROUP(_group_name, _nested, _name_header)                       \
-    ((const NMMetaAbstractInfo *const *) ((const NmcMetaGenericInfo *const[]){           \
+    ((const NMMetaAbstractInfo *const *) ((const NmcMetaGenericInfo *const[]) {          \
         NMC_META_GENERIC_WITH_NESTED(_group_name, _nested, .name_header = _name_header), \
         NULL,                                                                            \
     }))

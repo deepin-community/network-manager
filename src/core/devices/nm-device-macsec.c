@@ -10,6 +10,7 @@
 #include <linux/if_ether.h>
 
 #include "nm-act-request.h"
+#include "nm-config.h"
 #include "nm-device-private.h"
 #include "libnm-platform/nm-platform.h"
 #include "nm-device-factory.h"
@@ -190,6 +191,7 @@ build_supplicant_config(NMDeviceMacsec *self, GError **error)
     NMConnection                       *connection;
     const char                         *con_uuid;
     guint32                             mtu;
+    int                                 offload;
 
     connection = nm_device_get_applied_connection(NM_DEVICE(self));
 
@@ -199,20 +201,40 @@ build_supplicant_config(NMDeviceMacsec *self, GError **error)
     mtu      = nm_platform_link_get_mtu(nm_device_get_platform(NM_DEVICE(self)),
                                    nm_device_get_ifindex(NM_DEVICE(self)));
 
-    config = nm_supplicant_config_new(NM_SUPPL_CAP_MASK_NONE);
+    config = nm_supplicant_config_new(NM_SUPPL_CAP_MASK_NONE,
+                                      nm_utils_get_connection_first_permissions_user(connection));
 
     s_macsec = nm_device_get_applied_setting(NM_DEVICE(self), NM_TYPE_SETTING_MACSEC);
 
     g_return_val_if_fail(s_macsec, NULL);
 
-    if (!nm_supplicant_config_add_setting_macsec(config, s_macsec, error)) {
+    offload = nm_setting_macsec_get_offload(s_macsec);
+    if (offload == NM_SETTING_MACSEC_OFFLOAD_DEFAULT) {
+        offload = nm_config_data_get_connection_default_int64(NM_CONFIG_GET_DATA,
+                                                              NM_CON_DEFAULT("macsec.offload"),
+                                                              NM_DEVICE(self),
+                                                              NM_SETTING_MACSEC_OFFLOAD_OFF,
+                                                              NM_SETTING_MACSEC_OFFLOAD_MAC,
+                                                              NM_SETTING_MACSEC_OFFLOAD_OFF);
+    }
+
+    if (!nm_supplicant_config_add_setting_macsec(config,
+                                                 s_macsec,
+                                                 (NMSettingMacsecOffload) offload,
+                                                 error)) {
         g_prefix_error(error, "macsec-setting: ");
         return NULL;
     }
 
     if (nm_setting_macsec_get_mode(s_macsec) == NM_SETTING_MACSEC_MODE_EAP) {
         s_8021x = nm_connection_get_setting_802_1x(connection);
-        if (!nm_supplicant_config_add_setting_8021x(config, s_8021x, con_uuid, mtu, TRUE, error)) {
+        if (!nm_supplicant_config_add_setting_8021x(config,
+                                                    s_8021x,
+                                                    con_uuid,
+                                                    mtu,
+                                                    TRUE,
+                                                    nm_device_get_private_files(NM_DEVICE(self)),
+                                                    error)) {
             g_prefix_error(error, "802-1x-setting: ");
             return NULL;
         }
@@ -418,6 +440,9 @@ supplicant_iface_start(NMDeviceMacsec *self)
     NMDeviceMacsecPrivate              *priv   = NM_DEVICE_MACSEC_GET_PRIVATE(self);
     gs_unref_object NMSupplicantConfig *config = NULL;
     gs_free_error GError               *error  = NULL;
+    NMActRequest                       *request;
+    NMActiveConnection                 *controller_ac;
+    NMDevice                           *controller;
 
     config = build_supplicant_config(self, &error);
     if (!config) {
@@ -430,6 +455,16 @@ supplicant_iface_start(NMDeviceMacsec *self)
     }
 
     nm_supplicant_interface_disconnect(priv->supplicant.iface);
+
+    /* Tell the supplicant in which bridge the interface is */
+    if ((request = nm_device_get_act_request(NM_DEVICE(self)))
+        && (controller_ac = nm_active_connection_get_controller(NM_ACTIVE_CONNECTION(request)))
+        && (controller = nm_active_connection_get_device(controller_ac))
+        && nm_device_get_device_type(controller) == NM_DEVICE_TYPE_BRIDGE) {
+        nm_supplicant_interface_set_bridge(priv->supplicant.iface, nm_device_get_iface(controller));
+    } else
+        nm_supplicant_interface_set_bridge(priv->supplicant.iface, NULL);
+
     nm_supplicant_interface_assoc(priv->supplicant.iface, config, supplicant_iface_assoc_cb, self);
     return TRUE;
 }
@@ -669,14 +704,6 @@ get_generic_capabilities(NMDevice *dev)
 /******************************************************************/
 
 static gboolean
-is_available(NMDevice *device, NMDeviceCheckDevAvailableFlags flags)
-{
-    if (!nm_device_parent_get_device(device))
-        return FALSE;
-    return NM_DEVICE_CLASS(nm_device_macsec_parent_class)->is_available(device, flags);
-}
-
-static gboolean
 create_and_realize(NMDevice              *device,
                    NMConnection          *connection,
                    NMDevice              *parent,
@@ -888,7 +915,6 @@ nm_device_macsec_class_init(NMDeviceMacsecClass *klass)
     device_class->deactivate               = deactivate;
     device_class->get_generic_capabilities = get_generic_capabilities;
     device_class->link_changed             = link_changed;
-    device_class->is_available             = is_available;
     device_class->parent_changed_notify    = parent_changed_notify;
     device_class->state_changed            = device_state_changed;
     device_class->get_configured_mtu       = nm_device_get_configured_mtu_wired_parent;
@@ -1007,36 +1033,18 @@ get_connection_parent(NMDeviceFactory *factory, NMConnection *connection)
     g_return_val_if_fail(nm_connection_is_type(connection, NM_SETTING_MACSEC_SETTING_NAME), NULL);
 
     s_macsec = nm_connection_get_setting_macsec(connection);
-    g_assert(s_macsec);
-
-    parent = nm_setting_macsec_get_parent(s_macsec);
-    if (parent)
-        return parent;
+    if (s_macsec) {
+        parent = nm_setting_macsec_get_parent(s_macsec);
+        if (parent)
+            return parent;
+    }
 
     /* Try the hardware address from the MACsec connection's hardware setting */
     s_wired = nm_connection_get_setting_wired(connection);
     if (s_wired)
         return nm_setting_wired_get_mac_address(s_wired);
-
-    return NULL;
-}
-
-static char *
-get_connection_iface(NMDeviceFactory *factory, NMConnection *connection, const char *parent_iface)
-{
-    NMSettingMacsec *s_macsec;
-    const char      *ifname;
-
-    g_return_val_if_fail(nm_connection_is_type(connection, NM_SETTING_MACSEC_SETTING_NAME), NULL);
-
-    s_macsec = nm_connection_get_setting_macsec(connection);
-    g_assert(s_macsec);
-
-    if (!parent_iface)
+    else
         return NULL;
-
-    ifname = nm_connection_get_interface_name(connection);
-    return g_strdup(ifname);
 }
 
 NM_DEVICE_FACTORY_DEFINE_INTERNAL(
@@ -1046,5 +1054,4 @@ NM_DEVICE_FACTORY_DEFINE_INTERNAL(
     NM_DEVICE_FACTORY_DECLARE_LINK_TYPES(NM_LINK_TYPE_MACSEC)
         NM_DEVICE_FACTORY_DECLARE_SETTING_TYPES(NM_SETTING_MACSEC_SETTING_NAME),
     factory_class->create_device         = create_device;
-    factory_class->get_connection_parent = get_connection_parent;
-    factory_class->get_connection_iface  = get_connection_iface;)
+    factory_class->get_connection_parent = get_connection_parent;);

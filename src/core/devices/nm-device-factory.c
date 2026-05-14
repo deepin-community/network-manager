@@ -28,6 +28,10 @@ G_DEFINE_ABSTRACT_TYPE(NMDeviceFactory, nm_device_factory, G_TYPE_OBJECT)
 
 /*****************************************************************************/
 
+static NMDeviceFactory *generic_factory;
+
+/*****************************************************************************/
+
 static void
 nm_device_factory_get_supported_types(NMDeviceFactory    *factory,
                                       const NMLinkType  **out_link_types,
@@ -66,7 +70,8 @@ nm_device_factory_create_device(NMDeviceFactory      *factory,
     if (plink) {
         g_return_val_if_fail(!connection, NULL);
         g_return_val_if_fail(strcmp(iface, plink->name) == 0, NULL);
-        nm_assert(factory == nm_device_factory_manager_find_factory_for_link_type(plink->type));
+        nm_assert(factory == nm_device_factory_manager_find_factory_for_link_type(plink->type)
+                  || factory == generic_factory);
     } else if (connection)
         nm_assert(factory == nm_device_factory_manager_find_factory_for_connection(connection));
     else
@@ -142,7 +147,7 @@ nm_device_factory_get_connection_iface(NMDeviceFactory *factory,
         g_set_error(error,
                     NM_MANAGER_ERROR,
                     NM_MANAGER_ERROR_FAILED,
-                    "failed to determine interface name: error determine name for %s",
+                    "failed to determine interface name for a %s",
                     nm_connection_get_connection_type(connection));
         return NULL;
     }
@@ -178,10 +183,17 @@ nm_device_factory_class_init(NMDeviceFactoryClass *klass)
 static GHashTable *factories_by_link    = NULL;
 static GHashTable *factories_by_setting = NULL;
 
-static void __attribute__((destructor)) _cleanup(void)
+static void __attribute__((destructor))
+_cleanup(void)
 {
     nm_clear_pointer(&factories_by_link, g_hash_table_unref);
     nm_clear_pointer(&factories_by_setting, g_hash_table_unref);
+}
+
+NMDeviceFactory *
+nm_device_factory_get_generic_factory(void)
+{
+    return generic_factory;
 }
 
 NMDeviceFactory *
@@ -300,9 +312,12 @@ _load_internal_factory(GType                             factory_gtype,
                        gpointer                          user_data)
 {
     gs_unref_object NMDeviceFactory *factory = NULL;
+    GType                            nm_generic_device_factory_get_type(void);
 
     factory = g_object_new(factory_gtype, NULL);
     _add_factory(factory, NULL, callback, user_data);
+    if (factory_gtype == nm_generic_device_factory_get_type())
+        generic_factory = factory;
 }
 
 static void
@@ -396,8 +411,11 @@ nm_device_factory_manager_load_factories(NMDeviceFactoryManagerFactoryFunc callb
     _ADD_INTERNAL(nm_bridge_device_factory_get_type);
     _ADD_INTERNAL(nm_dummy_device_factory_get_type);
     _ADD_INTERNAL(nm_ethernet_device_factory_get_type);
+    _ADD_INTERNAL(nm_generic_device_factory_get_type);
+    _ADD_INTERNAL(nm_hsr_device_factory_get_type);
     _ADD_INTERNAL(nm_infiniband_device_factory_get_type);
     _ADD_INTERNAL(nm_ip_tunnel_device_factory_get_type);
+    _ADD_INTERNAL(nm_ipvlan_device_factory_get_type);
     _ADD_INTERNAL(nm_loopback_device_factory_get_type);
     _ADD_INTERNAL(nm_macsec_device_factory_get_type);
     _ADD_INTERNAL(nm_macvlan_device_factory_get_type);

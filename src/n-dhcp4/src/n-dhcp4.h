@@ -128,6 +128,7 @@ NDhcp4ClientProbeConfig *n_dhcp4_client_probe_config_free(NDhcp4ClientProbeConfi
 
 void n_dhcp4_client_probe_config_set_inform_only(NDhcp4ClientProbeConfig *config, bool inform_only);
 void n_dhcp4_client_probe_config_set_init_reboot(NDhcp4ClientProbeConfig *config, bool init_reboot);
+void n_dhcp4_client_probe_config_set_dscp(NDhcp4ClientProbeConfig *config, uint8_t dscp);
 void n_dhcp4_client_probe_config_set_requested_ip(NDhcp4ClientProbeConfig *config, struct in_addr ip);
 void n_dhcp4_client_probe_config_set_start_delay(NDhcp4ClientProbeConfig *config, uint64_t msecs);
 void n_dhcp4_client_probe_config_request_option(NDhcp4ClientProbeConfig *config, uint8_t option);
@@ -160,6 +161,7 @@ NDhcp4ClientProbe *n_dhcp4_client_probe_free(NDhcp4ClientProbe *probe);
 
 void n_dhcp4_client_probe_set_userdata(NDhcp4ClientProbe *probe, void *userdata);
 void n_dhcp4_client_probe_get_userdata(NDhcp4ClientProbe *probe, void **userdatap);
+int n_dhcp4_client_probe_release(NDhcp4ClientProbe *probe);
 
 /* client leases */
 

@@ -23,6 +23,7 @@
 #include "nm-active-connection.h"
 #include "nm-act-request.h"
 #include "dns/nm-dns-manager.h"
+#include "nm-firewall-utils.h"
 
 #define _NMLOG_DEVICE_TYPE NMDeviceWireGuard
 #include "nm-device-logging.h"
@@ -430,7 +431,7 @@ get_extra_rules(NMDevice *device)
 
         g_ptr_array_add(extra_rules,
                         nmp_object_new(NMP_OBJECT_TYPE_ROUTING_RULE,
-                                       &((const NMPlatformRoutingRule){
+                                       &((const NMPlatformRoutingRule) {
                                            .priority                   = priority,
                                            .addr_family                = addr_family,
                                            .action                     = FR_ACT_TO_TBL,
@@ -440,7 +441,7 @@ get_extra_rules(NMDevice *device)
 
         g_ptr_array_add(extra_rules,
                         nmp_object_new(NMP_OBJECT_TYPE_ROUTING_RULE,
-                                       &((const NMPlatformRoutingRule){
+                                       &((const NMPlatformRoutingRule) {
                                            .priority    = priority + 1u,
                                            .addr_family = addr_family,
                                            .action      = FR_ACT_TO_TBL,
@@ -588,7 +589,7 @@ _peers_add(NMDeviceWireGuard *self, NMWireGuardPeer *peer)
     nm_assert(!_peers_find(priv, peer));
 
     peer_data  = g_slice_new(PeerData);
-    *peer_data = (PeerData){
+    *peer_data = (PeerData) {
         .self = self,
         .peer = nm_wireguard_peer_ref(peer),
         .ep_resolv =
@@ -598,7 +599,7 @@ _peers_add(NMDeviceWireGuard *self, NMWireGuardPeer *peer)
     };
 
     c_list_link_tail(&priv->lst_peers_head, &peer_data->lst_peers);
-    if (!nm_g_hash_table_add(priv->peers, peer_data))
+    if (!g_hash_table_add(priv->peers, peer_data))
         nm_assert_not_reached();
     return peer_data;
 }
@@ -720,7 +721,7 @@ _peers_retry_in_msec(PeerData *peer_data, gboolean after_failure)
         return RETRY_IN_MSEC_MAX;
 
     /* double the retry-time, starting with one second. */
-    return NM_MIN(RETRY_IN_MSEC_MAX, (1u << peer_data->ep_resolv.resolv_fail_count) * 500);
+    return NM_MIN(RETRY_IN_MSEC_MAX, (1l << peer_data->ep_resolv.resolv_fail_count) * 500);
 }
 
 static void
@@ -792,7 +793,7 @@ _peers_resolve_cb(GObject *source_object, GAsyncResult *res, gpointer user_data)
             switch (g_inet_address_get_family(a)) {
             case G_SOCKET_FAMILY_IPV4:
                 nm_assert(g_inet_address_get_native_size(a) == sizeof(struct in_addr));
-                s->in = (struct sockaddr_in){
+                s->in = (struct sockaddr_in) {
                     .sin_family = AF_INET,
                     .sin_port   = htons(nm_sock_addr_endpoint_get_port(
                         _nm_wireguard_peer_get_endpoint(peer_data->peer))),
@@ -801,7 +802,7 @@ _peers_resolve_cb(GObject *source_object, GAsyncResult *res, gpointer user_data)
                 break;
             case G_SOCKET_FAMILY_IPV6:
                 nm_assert(g_inet_address_get_native_size(a) == sizeof(struct in6_addr));
-                s->in6 = (struct sockaddr_in6){
+                s->in6 = (struct sockaddr_in6) {
                     .sin6_family   = AF_INET6,
                     .sin6_port     = htons(nm_sock_addr_endpoint_get_port(
                         _nm_wireguard_peer_get_endpoint(peer_data->peer))),
@@ -985,7 +986,7 @@ _peers_update(NMDeviceWireGuard *self,
     if (nm_clear_g_cancellable(&peer_data->ep_resolv.cancellable))
         _peers_resolving_cnt_decrement(self);
 
-    peer_data->ep_resolv = (PeerEndpointResolveData){
+    peer_data->ep_resolv = (PeerEndpointResolveData) {
         .sockaddr          = sockaddr,
         .resolv_fail_count = 0,
         .cancellable       = NULL,
@@ -1166,7 +1167,7 @@ _peers_get_platform_list(NMDeviceWireGuardPrivate            *priv,
                     prefix = addr_family == AF_INET ? 32 : 128;
 
                 g_array_append_val(allowed_ips,
-                                   ((NMPWireGuardAllowedIP){
+                                   ((NMPWireGuardAllowedIP) {
                                        .family = addr_family,
                                        .mask   = prefix,
                                        .addr   = addrbin,
@@ -1205,6 +1206,40 @@ skip:
     *out_peer_flags       = g_steal_pointer(&plpeer_flags);
     *out_len              = i_good;
     *out_allowed_ips_data = g_steal_pointer(&allowed_ips);
+}
+
+static void
+_configure_firewall(NMDeviceWireGuard *self, NMConnection *connection, int addr_family, gboolean up)
+{
+    NMDeviceWireGuardPrivate *priv = NM_DEVICE_WIREGUARD_GET_PRIVATE(self);
+    const char               *ip_iface;
+    NMSettingIPConfig        *ip_config;
+
+    ip_iface = nm_device_get_ip_iface(NM_DEVICE(self));
+
+    nm_assert(ip_iface);
+
+    switch (addr_family) {
+    case AF_INET:
+        if (!priv->auto_default_route_enabled_4)
+            return;
+
+        ip_config = nm_connection_get_setting_ip4_config(connection);
+        break;
+    case AF_INET6:
+        if (!priv->auto_default_route_enabled_6)
+            return;
+
+        ip_config = nm_connection_get_setting_ip6_config(connection);
+        break;
+    default:
+        nm_assert_not_reached();
+    }
+
+    nm_assert(ip_config);
+    nm_assert(priv->auto_default_route_fwmark);
+
+    nm_firewall_config_set_wg_rule(ip_iface, ip_config, priv->auto_default_route_fwmark, up);
 }
 
 /*****************************************************************************/
@@ -1298,6 +1333,18 @@ create_and_realize(NMDevice              *device,
     }
 
     return TRUE;
+}
+
+static void
+deactivate(NMDevice *device)
+{
+    NMDeviceWireGuard *self       = NM_DEVICE_WIREGUARD(device);
+    NMConnection      *connection = nm_device_get_applied_connection(NM_DEVICE(self));
+
+    if (connection) {
+        _configure_firewall(self, connection, AF_INET, FALSE);
+        _configure_firewall(self, connection, AF_INET6, FALSE);
+    }
 }
 
 /*****************************************************************************/
@@ -1486,7 +1533,7 @@ link_config(NMDeviceWireGuard   *self,
 
     _peers_update_all(self, s_wg, &peers_removed);
 
-    wg_lnk = (NMPlatformLnkWireGuard){};
+    wg_lnk = (NMPlatformLnkWireGuard) {};
 
     wg_change_flags = NM_PLATFORM_WIREGUARD_CHANGE_FLAG_NONE;
 
@@ -1586,26 +1633,25 @@ act_stage2_config(NMDevice *device, NMDeviceStateReason *out_failure_reason)
 {
     NMDeviceWireGuard        *self = NM_DEVICE_WIREGUARD(device);
     NMDeviceWireGuardPrivate *priv = NM_DEVICE_WIREGUARD_GET_PRIVATE(self);
-    NMDeviceSysIfaceState     sys_iface_state;
+    NMDeviceManagedType       managed_type;
     NMDeviceStateReason       failure_reason;
     NMActStageReturn          ret;
 
-    sys_iface_state = nm_device_sys_iface_state_get(device);
+    managed_type = nm_device_managed_type_get(device);
 
-    if (sys_iface_state == NM_DEVICE_SYS_IFACE_STATE_EXTERNAL) {
+    if (managed_type == NM_DEVICE_MANAGED_TYPE_EXTERNAL) {
         NM_SET_OUT(out_failure_reason, NM_DEVICE_STATE_REASON_NONE);
         return NM_ACT_STAGE_RETURN_SUCCESS;
     }
 
-    ret =
-        link_config(NM_DEVICE_WIREGUARD(device),
-                    "configure",
-                    (sys_iface_state == NM_DEVICE_SYS_IFACE_STATE_ASSUME) ? LINK_CONFIG_MODE_ASSUME
-                                                                          : LINK_CONFIG_MODE_FULL,
-                    &failure_reason);
+    ret = link_config(NM_DEVICE_WIREGUARD(device),
+                      "configure",
+                      (managed_type == NM_DEVICE_MANAGED_TYPE_ASSUME) ? LINK_CONFIG_MODE_ASSUME
+                                                                      : LINK_CONFIG_MODE_FULL,
+                      &failure_reason);
 
     if (ret == NM_ACT_STAGE_RETURN_FAILURE) {
-        if (sys_iface_state == NM_DEVICE_SYS_IFACE_STATE_ASSUME) {
+        if (managed_type == NM_DEVICE_MANAGED_TYPE_ASSUME) {
             /* this never fails. */
             return NM_ACT_STAGE_RETURN_SUCCESS;
         }
@@ -1624,6 +1670,57 @@ act_stage2_config(NMDevice *device, NMDeviceStateReason *out_failure_reason)
     }
 
     return ret;
+}
+
+static gboolean
+skip_peer_route(const NMIPAddr    *peer_addr,
+                guint              peer_addr_prefix,
+                int                addr_family,
+                NMSettingIPConfig *s_ip)
+{
+    guint num_addresses;
+    guint i;
+
+    /*
+     * If the allowed-ip subnet is already reachable on the interface via the
+     * prefix route of a static IP address, skip adding the peer route.
+     * We don't want to override the prefix route with a new one because the
+     * prefix route also specifies the correct source IP address.
+     *
+     * wg-quick does something similar here:
+     * https://git.zx2c4.com/wireguard-tools/tree/src/wg-quick/linux.bash?h=v1.0.20250521#n177
+     * The condition in wg-quick is a bit different because it checks that no
+     * duplicate route exists on the interface. We can't do exactly the same
+     * because here we don't have visibility on all the platform routes.
+     */
+
+    if (!s_ip)
+        return FALSE;
+
+    num_addresses = nm_setting_ip_config_get_num_addresses(s_ip);
+    for (i = 0; i < num_addresses; i++) {
+        NMIPAddr     setting_addr;
+        NMIPAddr     peer_addr_tmp;
+        guint        setting_prefix;
+        NMIPAddress *a;
+
+        peer_addr_tmp = *peer_addr;
+
+        a = nm_setting_ip_config_get_address(s_ip, i);
+        nm_ip_address_get_address_binary(a, &setting_addr);
+        setting_prefix = nm_ip_address_get_prefix(a);
+
+        if (setting_prefix > peer_addr_prefix)
+            continue;
+
+        nm_ip_addr_clear_host_address(addr_family, &setting_addr, NULL, setting_prefix);
+        nm_ip_addr_clear_host_address(addr_family, &peer_addr_tmp, NULL, setting_prefix);
+
+        if (nm_ip_addr_equal(addr_family, &peer_addr_tmp, &setting_addr))
+            return TRUE;
+    }
+
+    return FALSE;
 }
 
 static const NML3ConfigData *
@@ -1692,6 +1789,7 @@ _get_dev2_ip_config(NMDeviceWireGuard *self, int addr_family)
 
         n_aips = nm_wireguard_peer_get_allowed_ips_len(peer);
         for (j = 0; j < n_aips; j++) {
+            NMSettingIPConfig *s_ip;
             NMPlatformIPXRoute rt;
             NMIPAddr           addrbin;
             const char        *aip;
@@ -1699,7 +1797,8 @@ _get_dev2_ip_config(NMDeviceWireGuard *self, int addr_family)
             int                prefix;
             guint32            rtable_coerced;
 
-            aip = nm_wireguard_peer_get_allowed_ip(peer, j, &valid);
+            aip  = nm_wireguard_peer_get_allowed_ip(peer, j, &valid);
+            s_ip = nm_connection_get_setting_ip_config(connection, addr_family);
 
             if (!valid || !nm_inet_parse_with_prefix_bin(addr_family, aip, NULL, &addrbin, &prefix))
                 continue;
@@ -1708,9 +1807,6 @@ _get_dev2_ip_config(NMDeviceWireGuard *self, int addr_family)
                 prefix = (addr_family == AF_INET) ? 32 : 128;
 
             if (prefix == 0) {
-                NMSettingIPConfig *s_ip;
-
-                s_ip = nm_connection_get_setting_ip_config(connection, addr_family);
                 if (nm_setting_ip_config_get_never_default(s_ip))
                     continue;
             }
@@ -1723,6 +1819,9 @@ _get_dev2_ip_config(NMDeviceWireGuard *self, int addr_family)
 
             nm_ip_addr_clear_host_address(addr_family, &addrbin, NULL, prefix);
 
+            if (skip_peer_route(&addrbin, prefix, addr_family, s_ip))
+                continue;
+
             rtable_coerced = route_table_coerced;
 
             if (prefix == 0 && auto_default_route_enabled) {
@@ -1734,7 +1833,7 @@ _get_dev2_ip_config(NMDeviceWireGuard *self, int addr_family)
             }
 
             if (addr_family == AF_INET) {
-                rt.r4 = (NMPlatformIP4Route){
+                rt.r4 = (NMPlatformIP4Route) {
                     .network       = addrbin.addr4,
                     .plen          = prefix,
                     .ifindex       = ip_ifindex,
@@ -1743,7 +1842,7 @@ _get_dev2_ip_config(NMDeviceWireGuard *self, int addr_family)
                     .metric        = route_metric,
                 };
             } else {
-                rt.r6 = (NMPlatformIP6Route){
+                rt.r6 = (NMPlatformIP6Route) {
                     .network       = addrbin.addr6,
                     .plen          = prefix,
                     .ifindex       = ip_ifindex,
@@ -1769,6 +1868,10 @@ act_stage3_ip_config(NMDevice *device, int addr_family)
     nm_auto_unref_l3cd const NML3ConfigData *l3cd = NULL;
 
     l3cd = _get_dev2_ip_config(NM_DEVICE_WIREGUARD(device), addr_family);
+    _configure_firewall(NM_DEVICE_WIREGUARD(device),
+                        nm_device_get_applied_connection(device),
+                        addr_family,
+                        TRUE);
     nm_device_devip_set_state(device, addr_family, NM_DEVICE_IP_STATE_READY, l3cd);
 }
 
@@ -1867,6 +1970,10 @@ reapply_connection(NMDevice *device, NMConnection *con_old, NMConnection *con_ne
 
     if (state >= NM_DEVICE_STATE_CONFIG) {
         priv->auto_default_route_refresh = TRUE;
+
+        _configure_firewall(self, con_old, AF_INET, FALSE);
+        _configure_firewall(self, con_old, AF_INET6, FALSE);
+
         link_config(NM_DEVICE_WIREGUARD(device), "reapply", LINK_CONFIG_MODE_REAPPLY, NULL);
     }
 
@@ -2019,6 +2126,7 @@ nm_device_wireguard_class_init(NMDeviceWireGuardClass *klass)
 
     device_class->state_changed                                 = device_state_changed;
     device_class->create_and_realize                            = create_and_realize;
+    device_class->deactivate                                    = deactivate;
     device_class->act_stage2_config                             = act_stage2_config;
     device_class->act_stage2_config_also_for_external_or_assume = TRUE;
     device_class->act_stage3_ip_config                          = act_stage3_ip_config;

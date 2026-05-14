@@ -29,8 +29,10 @@
 #include "nm-device-dummy.h"
 #include "nm-device-ethernet.h"
 #include "nm-device-generic.h"
+#include "nm-device-hsr.h"
 #include "nm-device-infiniband.h"
 #include "nm-device-ip-tunnel.h"
+#include "nm-device-ipvlan.h"
 #include "nm-device-loopback.h"
 #include "nm-device-macsec.h"
 #include "nm-device-macvlan.h"
@@ -57,6 +59,7 @@
 #include "nm-object-private.h"
 #include "nm-remote-connection.h"
 #include "nm-utils.h"
+#include "nm-setting-ethtool.h"
 #include "nm-vpn-connection.h"
 
 /*****************************************************************************/
@@ -417,7 +420,7 @@ nml_init_data_new_sync(GCancellable *cancellable, GMainLoop *main_loop, GError *
     NMLInitData *init_data;
 
     init_data  = g_slice_new(NMLInitData);
-    *init_data = (NMLInitData){
+    *init_data = (NMLInitData) {
         .cancellable = nm_g_object_ref(cancellable),
         .is_sync     = TRUE,
         .data.sync =
@@ -435,7 +438,7 @@ nml_init_data_new_async(GCancellable *cancellable, GTask *task_take)
     NMLInitData *init_data;
 
     init_data  = g_slice_new(NMLInitData);
-    *init_data = (NMLInitData){
+    *init_data = (NMLInitData) {
         .cancellable = nm_g_object_ref(cancellable),
         .is_sync     = FALSE,
         .data.async =
@@ -1101,7 +1104,7 @@ nml_dbus_object_new(NMRefString *dbus_path_take)
     nm_assert(NM_IS_REF_STRING(dbus_path_take));
 
     dbobj  = g_slice_new(NMLDBusObject);
-    *dbobj = (NMLDBusObject){
+    *dbobj = (NMLDBusObject) {
         .dbus_path        = g_steal_pointer(&dbus_path_take),
         .ref_count        = 1,
         .dbus_objects_lst = C_LIST_INIT(dbobj->dbus_objects_lst),
@@ -1207,7 +1210,7 @@ nml_dbus_object_iface_data_get(NMLDBusObject *dbobj,
         G_STRUCT_OFFSET(NMLDBusObjIfaceData, prop_datas)
         + (meta_iface ? (sizeof(NMLDBusObjPropData) * meta_iface->n_dbus_properties) : 0u));
     if (meta_iface) {
-        *db_iface_data = (NMLDBusObjIfaceData){
+        *db_iface_data = (NMLDBusObjIfaceData) {
             .dbus_iface.meta         = meta_iface,
             .dbus_iface_is_wellknown = TRUE,
             .changed_prop_lst_head   = C_LIST_INIT(db_iface_data->changed_prop_lst_head),
@@ -1215,7 +1218,7 @@ nml_dbus_object_iface_data_get(NMLDBusObject *dbobj,
         };
         db_prop_data = &db_iface_data->prop_datas[0];
         for (i = 0; i < meta_iface->n_dbus_properties; i++, db_prop_data++) {
-            *db_prop_data = (NMLDBusObjPropData){
+            *db_prop_data = (NMLDBusObjPropData) {
                 .prop_data_value  = NULL,
                 .changed_prop_lst = C_LIST_INIT(db_prop_data->changed_prop_lst),
             };
@@ -3910,7 +3913,7 @@ _request_wait_start(GTask      *task_take,
     }
 
     request_data  = g_slice_new(RequestWaitData);
-    *request_data = (RequestWaitData){
+    *request_data = (RequestWaitData) {
         .task           = g_steal_pointer(&task),
         .op_name        = op_name,
         .gtype          = gtype,
@@ -4772,8 +4775,8 @@ nm_client_save_hostname(NMClient     *client,
  * @hostname: (nullable): the new persistent hostname to set, or %NULL to
  *   clear any existing persistent hostname
  * @cancellable: a #GCancellable, or %NULL
- * @callback: (scope async): callback to be called when the operation completes
- * @user_data: (closure): caller-specific data passed to @callback
+ * @callback: (scope async) (closure user_data): callback to be called when the operation completes
+ * @user_data: caller-specific data passed to @callback
  *
  * Requests that the machine's persistent hostname be set to the specified value
  * or cleared.
@@ -5770,8 +5773,8 @@ _add_connection_call(NMClient                     *self,
  *   added, not the object itself
  * @save_to_disk: whether to immediately save the connection to disk
  * @cancellable: a #GCancellable, or %NULL
- * @callback: (scope async): callback to be called when the add operation completes
- * @user_data: (closure): caller-specific data passed to @callback
+ * @callback: (scope async) (closure user_data): callback to be called when the add operation completes
+ * @user_data: caller-specific data passed to @callback
  *
  * Requests that the remote settings service add the given settings to a new
  * connection.  If @save_to_disk is %TRUE, the connection is immediately written
@@ -5843,8 +5846,8 @@ nm_client_add_connection_finish(NMClient *client, GAsyncResult *result, GError *
  *   not yet provide AddConnection2(). By setting this to %FALSE, the function
  *   under the hood always calls AddConnection2().
  * @cancellable: a #GCancellable, or %NULL
- * @callback: (scope async): callback to be called when the add operation completes
- * @user_data: (closure): caller-specific data passed to @callback
+ * @callback: (scope async) (closure user_data): callback to be called when the add operation completes
+ * @user_data: caller-specific data passed to @callback
  *
  * Call AddConnection2() D-Bus API asynchronously.
  *
@@ -5970,8 +5973,8 @@ nm_client_load_connections(NMClient     *client,
  * @client: the %NMClient
  * @filenames: (array zero-terminated=1): %NULL-terminated array of filenames to load
  * @cancellable: a #GCancellable, or %NULL
- * @callback: (scope async): callback to be called when the operation completes
- * @user_data: (closure): caller-specific data passed to @callback
+ * @callback: (scope async) (closure user_data): callback to be called when the operation completes
+ * @user_data: caller-specific data passed to @callback
  *
  * Requests that the remote settings service asynchronously load or reload the
  * given files, adding or updating the connections described within.
@@ -6085,8 +6088,8 @@ nm_client_reload_connections(NMClient *client, GCancellable *cancellable, GError
  * nm_client_reload_connections_async:
  * @client: the #NMClient
  * @cancellable: a #GCancellable, or %NULL
- * @callback: (scope async): callback to be called when the reload operation completes
- * @user_data: (closure): caller-specific data passed to @callback
+ * @callback: (scope async) (closure user_data): callback to be called when the reload operation completes
+ * @user_data: caller-specific data passed to @callback
  *
  * Requests that the remote settings service begin reloading all connection
  * files from disk, adding, updating, and removing connections until the
@@ -6314,7 +6317,7 @@ nm_client_get_capabilities(NMClient *client, gsize *length)
  *
  * If available, the first element in the array is NM_VERSION which
  * encodes the daemon version as "(major << 16 | minor << 8 | micro)".
- * The following elements are a bitfield of %NMVersionInfoCapabilities
+ * The following elements are a bitfield of %NMVersionInfoCapability
  * that indicate that the daemon supports a certain capability.
  *
  * Returns: (transfer none) (array length=length): the
@@ -6442,8 +6445,8 @@ checkpoint_create_cb(GObject *object, GAsyncResult *result, gpointer user_data)
  * @rollback_timeout: the rollback timeout in seconds
  * @flags: creation flags
  * @cancellable: a #GCancellable, or %NULL
- * @callback: (scope async): callback to be called when the add operation completes
- * @user_data: (closure): caller-specific data passed to @callback
+ * @callback: (scope async) (closure user_data): callback to be called when the add operation completes
+ * @user_data: caller-specific data passed to @callback
  *
  * Creates a checkpoint of the current networking configuration
  * for given interfaces. An empty @devices argument means all
@@ -6515,8 +6518,8 @@ nm_client_checkpoint_create_finish(NMClient *client, GAsyncResult *result, GErro
  * @client: the %NMClient
  * @checkpoint_path: the D-Bus path for the checkpoint
  * @cancellable: a #GCancellable, or %NULL
- * @callback: (scope async): callback to be called when the add operation completes
- * @user_data: (closure): caller-specific data passed to @callback
+ * @callback: (scope async) (closure user_data): callback to be called when the add operation completes
+ * @user_data: caller-specific data passed to @callback
  *
  * Destroys an existing checkpoint without performing a rollback.
  *
@@ -6575,8 +6578,8 @@ nm_client_checkpoint_destroy_finish(NMClient *client, GAsyncResult *result, GErr
  * @client: the %NMClient
  * @checkpoint_path: the D-Bus path to the checkpoint
  * @cancellable: a #GCancellable, or %NULL
- * @callback: (scope async): callback to be called when the add operation completes
- * @user_data: (closure): caller-specific data passed to @callback
+ * @callback: (scope async) (closure user_data): callback to be called when the add operation completes
+ * @user_data: caller-specific data passed to @callback
  *
  * Performs the rollback of a checkpoint before the timeout is reached.
  *
@@ -6657,8 +6660,8 @@ nm_client_checkpoint_rollback_finish(NMClient *client, GAsyncResult *result, GEr
  * @add_timeout: the timeout in seconds counting from now.
  *   Set to zero, to disable the timeout.
  * @cancellable: a #GCancellable, or %NULL
- * @callback: (scope async): callback to be called when the add operation completes
- * @user_data: (closure): caller-specific data passed to @callback
+ * @callback: (scope async) (closure user_data): callback to be called when the add operation completes
+ * @user_data: caller-specific data passed to @callback
  *
  * Resets the timeout for the checkpoint with path @checkpoint_path
  * to @timeout_add.
@@ -6722,8 +6725,8 @@ nm_client_checkpoint_adjust_rollback_timeout_finish(NMClient     *client,
  * @client: the %NMClient
  * @flags: flags indicating what to reload.
  * @cancellable: a #GCancellable, or %NULL
- * @callback: (scope async): callback to be called when the add operation completes
- * @user_data: (closure): caller-specific data passed to @callback
+ * @callback: (scope async) (closure user_data): callback to be called when the add operation completes
+ * @user_data: caller-specific data passed to @callback
  *
  * Reload NetworkManager's configuration and perform certain updates, like
  * flushing caches or rewriting external state to disk. This is similar to
@@ -7075,7 +7078,7 @@ _init_release_all(NMClient *self)
 
     nm_assert(c_list_is_empty(&priv->obj_changed_lst_head));
 
-    dbus_objects_lst_heads = ((CList *[]){
+    dbus_objects_lst_heads = ((CList *[]) {
         &priv->dbus_objects_lst_head_on_dbus,
         &priv->dbus_objects_lst_head_with_nmobj_not_ready,
         &priv->dbus_objects_lst_head_with_nmobj_ready,
@@ -7682,7 +7685,7 @@ set_property(GObject *object, guint prop_id, const GValue *value, GParamSpec *ps
         } else {
             NMClientInstanceFlags flags = v_uint;
 
-            /* After object construction, we only allow to toggle certain flags and
+            /* After object construction, we only allow one to toggle certain flags and
              * ignore all other flags. */
 
             if ((priv->instance_flags ^ flags)
@@ -8202,7 +8205,7 @@ const NMLDBusMetaIface _nml_dbus_meta_iface_nm_settings = NML_DBUS_META_IFACE_IN
             _priv.settings.connections,
             nm_remote_connection_get_type,
             .notify_changed_ao       = _property_ao_notify_changed_connections_cb,
-            .check_nmobj_visible_fcn = (gboolean(*)(GObject *)) nm_remote_connection_get_visible),
+            .check_nmobj_visible_fcn = (gboolean (*)(GObject *)) nm_remote_connection_get_visible),
         NML_DBUS_META_PROPERTY_INIT_S("Hostname",
                                       PROP_HOSTNAME,
                                       NMClient,
@@ -8311,7 +8314,7 @@ nm_client_class_init(NMClientClass *client_class)
      * Expose version info and capabilities of NetworkManager. If non-empty,
      * the first element is NM_VERSION, which encodes the version of the
      * daemon as "(major << 16 | minor << 8 | micro)". The following elements
-     * is a bitfields of %NMVersionInfoCapabilities. If a bit is set, then
+     * is a bitfields of %NMVersionInfoCapability. If a bit is set, then
      * the running NetworkManager has the respective capability.
      *
      * Since: 1.42
@@ -9147,7 +9150,7 @@ nm_client_wait_shutdown(NMClient           *client,
     }
 
     data  = g_slice_new(WaitShutdownData);
-    *data = (WaitShutdownData){
+    *data = (WaitShutdownData) {
         .cancellable        = nm_g_object_ref(cancellable),
         .task               = g_object_ref(task),
         .result             = -1,
@@ -9220,17 +9223,17 @@ nm_client_wait_shutdown_finish(GAsyncResult *result, GError **error)
 
 /*****************************************************************************
  * Backported symbols. Usually, new API is only added in new major versions
- * of NetworkManager (that is, on "master" branch). Sometimes however, we might
+ * of NetworkManager (that is, on "main" branch). Sometimes however, we might
  * have to backport some API to an older stable branch. In that case, we backport
  * the symbols with a different version corresponding to the minor API.
  *
- * To allow upgrading from such a extended minor-release, "master" contains these
+ * To allow upgrading from such a extended minor-release, "main" contains these
  * backported symbols too.
  *
  * For example, 1.2.0 added nm_setting_connection_autoconnect_slaves_get_type.
  * This was backported for 1.0.4 as nm_setting_connection_autoconnect_slaves_get_type@libnm_1_0_4
  * To allow an application that was linked against 1.0.4 to seamlessly upgrade to
- * a newer major version, the same symbols is also exposed on "master". Note, that
+ * a newer major version, the same symbols is also exposed on "main". Note, that
  * a user can only seamlessly upgrade to a newer major version, that is released
  * *after* 1.0.4 is out. In this example, 1.2.0 was released after 1.4.0, and thus
  * a 1.0.4 user can upgrade to 1.2.0 ABI.
@@ -9312,3 +9315,51 @@ NM_BACKPORT_SYMBOL(libnm_1_30_8,
                    (address));
 
 NM_BACKPORT_SYMBOL(libnm_1_30_8, NMIPRoute *, nm_ip_route_dup, (NMIPRoute * route), (route));
+
+NM_BACKPORT_SYMBOL(libnm_1_46_8,
+                   gboolean,
+                   nm_ethtool_optname_is_fec,
+                   (const char *optname),
+                   (optname));
+
+NM_BACKPORT_SYMBOL(libnm_1_46_8, GType, nm_setting_ethtool_fec_mode_get_type, (void), ());
+
+NM_BACKPORT_SYMBOL(libnm_1_48_18,
+                   gboolean,
+                   nm_ethtool_optname_is_fec,
+                   (const char *optname),
+                   (optname));
+
+NM_BACKPORT_SYMBOL(libnm_1_48_18, GType, nm_setting_ethtool_fec_mode_get_type, (void), ());
+
+NM_BACKPORT_SYMBOL(libnm_1_50_4,
+                   gboolean,
+                   nm_ethtool_optname_is_fec,
+                   (const char *optname),
+                   (optname));
+
+NM_BACKPORT_SYMBOL(libnm_1_50_4, GType, nm_setting_ethtool_fec_mode_get_type, (void), ());
+
+NM_BACKPORT_SYMBOL(libnm_1_52_2,
+                   char *,
+                   nm_utils_copy_cert_as_user,
+                   (const char *filename, const char *user, GError **error),
+                   (filename, user, error));
+
+NM_BACKPORT_SYMBOL(libnm_1_52_2,
+                   gboolean,
+                   nm_vpn_plugin_info_supports_safe_private_file_access,
+                   (NMVpnPluginInfo * self),
+                   (self));
+
+NM_BACKPORT_SYMBOL(libnm_1_54_3,
+                   char *,
+                   nm_utils_copy_cert_as_user,
+                   (const char *filename, const char *user, GError **error),
+                   (filename, user, error));
+
+NM_BACKPORT_SYMBOL(libnm_1_54_3,
+                   gboolean,
+                   nm_vpn_plugin_info_supports_safe_private_file_access,
+                   (NMVpnPluginInfo * self),
+                   (self));

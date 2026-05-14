@@ -26,12 +26,14 @@
 
 #include "libnm-core-intern/nm-core-internal.h"
 #include "libnm-glib-aux/nm-str-buf.h"
+#include "libnm-glib-aux/nm-io-utils.h"
 
 #include "NetworkManagerUtils.h"
 #include "devices/nm-device.h"
 #include "nm-config.h"
 #include "nm-dbus-object.h"
 #include "nm-dns-dnsmasq.h"
+#include "nm-dns-dnsconfd.h"
 #include "nm-dns-plugin.h"
 #include "nm-dns-systemd-resolved.h"
 #include "nm-ip-config.h"
@@ -401,7 +403,7 @@ _dns_config_ip_data_new(NMDnsConfigData      *data,
     nm_assert(ip_config_type != NM_DNS_IP_CONFIG_TYPE_REMOVED);
 
     ip_data  = g_slice_new(NMDnsConfigIPData);
-    *ip_data = (NMDnsConfigIPData){
+    *ip_data = (NMDnsConfigIPData) {
         .data           = data,
         .source_tag     = source_tag,
         .l3cd           = nm_l3_config_data_ref_and_seal(l3cd),
@@ -543,7 +545,7 @@ add_string_item(GPtrArray *array, const char *str, gboolean dup)
 static void
 add_dns_option_item(GPtrArray *array, const char *str)
 {
-    if (_nm_utils_dns_option_find_idx(array, str) < 0)
+    if (_nm_utils_dns_option_find_idx((const char *const *) array->pdata, array->len, str) < 0)
         g_ptr_array_add(array, g_strdup(str));
 }
 
@@ -585,7 +587,11 @@ add_dns_domains(GPtrArray            *array,
 }
 
 static void
-merge_one_l3cd(NMResolvConfData *rc, int addr_family, int ifindex, const NML3ConfigData *l3cd)
+merge_one_l3cd(NMResolvConfData     *rc,
+               int                   addr_family,
+               int                   ifindex,
+               const NML3ConfigData *l3cd,
+               gboolean              ignore_searches_and_options)
 {
     char               buf[NM_INET_ADDRSTRLEN + 50];
     gboolean           has_trust_ad;
@@ -600,7 +606,7 @@ merge_one_l3cd(NMResolvConfData *rc, int addr_family, int ifindex, const NML3Con
     for (i = 0; i < num_nameservers; i++) {
         NMIPAddr a;
 
-        if (!nm_utils_dnsname_parse_assert(addr_family, strarr[i], NULL, &a, NULL))
+        if (!nm_dns_uri_parse_plain(addr_family, strarr[i], NULL, &a))
             continue;
 
         if (addr_family == AF_INET)
@@ -623,30 +629,32 @@ merge_one_l3cd(NMResolvConfData *rc, int addr_family, int ifindex, const NML3Con
         add_string_item(rc->nameservers, buf, TRUE);
     }
 
-    add_dns_domains(rc->searches, addr_family, l3cd, FALSE, TRUE);
+    if (!ignore_searches_and_options) {
+        add_dns_domains(rc->searches, addr_family, l3cd, FALSE, TRUE);
 
-    has_trust_ad = FALSE;
-    strarr       = nm_l3_config_data_get_dns_options(l3cd, addr_family, &num);
-    for (i = 0; i < num; i++) {
-        const char *option = strarr[i];
+        has_trust_ad = FALSE;
+        strarr       = nm_l3_config_data_get_dns_options(l3cd, addr_family, &num);
+        for (i = 0; i < num; i++) {
+            const char *option = strarr[i];
 
-        if (nm_streq(option, NM_SETTING_DNS_OPTION_TRUST_AD)) {
-            has_trust_ad = TRUE;
-            continue;
+            if (nm_streq(option, NM_SETTING_DNS_OPTION_TRUST_AD)) {
+                has_trust_ad = TRUE;
+                continue;
+            }
+            add_dns_option_item(rc->options, option);
         }
-        add_dns_option_item(rc->options, option);
-    }
 
-    if (num_nameservers == 0) {
-        /* If the @l3cd contributes no DNS servers, ignore whether trust-ad is set or unset
-         * for this @l3cd. */
-    } else if (has_trust_ad) {
-        /* We only set has_trust_ad to TRUE, if all IP configs agree (or don't contribute).
-         * Once set to FALSE, it doesn't get reset. */
-        if (rc->has_trust_ad == NM_TERNARY_DEFAULT)
-            rc->has_trust_ad = NM_TERNARY_TRUE;
-    } else
-        rc->has_trust_ad = NM_TERNARY_FALSE;
+        if (num_nameservers == 0) {
+            /* If the @l3cd contributes no DNS servers, ignore whether trust-ad is set or unset
+             * for this @l3cd. */
+        } else if (has_trust_ad) {
+            /* We only set has_trust_ad to TRUE, if all IP configs agree (or don't contribute).
+             * Once set to FALSE, it doesn't get reset. */
+            if (rc->has_trust_ad == NM_TERNARY_DEFAULT)
+                rc->has_trust_ad = NM_TERNARY_TRUE;
+        } else
+            rc->has_trust_ad = NM_TERNARY_FALSE;
+    }
 
     if (addr_family == AF_INET) {
         const in_addr_t *nis_servers;
@@ -999,7 +1007,8 @@ _read_link_cached(const char *path, gboolean *is_cached, char **cached)
 #define MY_RESOLV_CONF_TMP MY_RESOLV_CONF ".tmp"
 #define RESOLV_CONF_TMP    "/etc/.resolv.conf.NetworkManager"
 
-#define NO_STUB_RESOLV_CONF NMRUNDIR "/no-stub-resolv.conf"
+#define NO_STUB_RESOLV_CONF     NMRUNDIR "/no-stub-resolv.conf"
+#define NO_STUB_RESOLV_CONF_TMP NMRUNDIR "/no-stub-resolv.conf.tmp"
 
 static void
 update_resolv_conf_no_stub(NMDnsManager      *self,
@@ -1012,7 +1021,14 @@ update_resolv_conf_no_stub(NMDnsManager      *self,
 
     content = create_resolv_conf(searches, nameservers, options);
 
-    if (!g_file_set_contents(NO_STUB_RESOLV_CONF, content, -1, &local)) {
+    if (!nm_utils_file_set_contents(NO_STUB_RESOLV_CONF,
+                                    content,
+                                    -1,
+                                    0644,
+                                    NULL,
+                                    NO_STUB_RESOLV_CONF_TMP,
+                                    NULL,
+                                    &local)) {
         _LOGD("update-resolv-no-stub: failure to write file: %s", local->message);
         g_error_free(local);
         return;
@@ -1230,12 +1246,15 @@ compute_hash(NMDnsManager *self, const NMGlobalDnsConfig *global, guint8 buffer[
 {
     nm_auto_free_checksum GChecksum *sum = NULL;
     NMDnsConfigIPData               *ip_data;
+    gboolean                         has_global_dns_section = FALSE;
 
     sum = g_checksum_new(G_CHECKSUM_SHA1);
     nm_assert(HASH_LEN == g_checksum_type_get_length(G_CHECKSUM_SHA1));
 
-    if (global)
+    if (global) {
         nm_global_dns_config_update_checksum(global, sum);
+        has_global_dns_section = nm_global_dns_has_global_dns_section(global);
+    }
 
     if (!global || !nm_global_dns_config_lookup_domain(global, "*")) {
         const CList *head;
@@ -1247,7 +1266,8 @@ compute_hash(NMDnsManager *self, const NMGlobalDnsConfig *global, guint8 buffer[
             nm_l3_config_data_hash_dns(ip_data->l3cd,
                                        sum,
                                        ip_data->addr_family,
-                                       ip_data->ip_config_type);
+                                       ip_data->ip_config_type,
+                                       has_global_dns_section);
         }
     }
 
@@ -1262,6 +1282,9 @@ merge_global_dns_config(NMResolvConfData *rc, NMGlobalDnsConfig *global_conf)
     const char *const *options;
     const char *const *servers;
     guint              i;
+
+    /* Global config must be processed before connections' config */
+    nm_assert(rc->nameservers->len == 0);
 
     if (!global_conf)
         return FALSE;
@@ -1291,8 +1314,15 @@ merge_global_dns_config(NMResolvConfData *rc, NMGlobalDnsConfig *global_conf)
     if (!servers)
         return TRUE;
 
-    for (i = 0; servers[i]; i++)
-        add_string_item(rc->nameservers, servers[i], TRUE);
+    for (i = 0; servers[i]; i++) {
+        char addrstr[NM_INET_ADDRSTRLEN];
+
+        /* TODO: support IPv6 link-local addresses with scope id */
+        if (!nm_dns_uri_parse_plain(AF_UNSPEC, servers[i], addrstr, NULL))
+            continue;
+
+        add_string_item(rc->nameservers, addrstr, TRUE);
+    }
 
     return TRUE;
 }
@@ -1300,7 +1330,6 @@ merge_global_dns_config(NMResolvConfData *rc, NMGlobalDnsConfig *global_conf)
 static const char *
 get_nameserver_list(int addr_family, const NML3ConfigData *l3cd, NMStrBuf *tmp_strbuf)
 {
-    char               buf[NM_INET_ADDRSTRLEN];
     guint              num;
     guint              i;
     const char *const *strarr;
@@ -1309,15 +1338,9 @@ get_nameserver_list(int addr_family, const NML3ConfigData *l3cd, NMStrBuf *tmp_s
 
     strarr = nm_l3_config_data_get_nameservers(l3cd, addr_family, &num);
     for (i = 0; i < num; i++) {
-        NMIPAddr a;
-
-        if (!nm_utils_dnsname_parse_assert(addr_family, strarr[i], NULL, &a, NULL))
-            continue;
-
-        nm_inet_ntop(addr_family, &a, buf);
         if (i > 0)
             nm_str_buf_append_c(tmp_strbuf, ' ');
-        nm_str_buf_append(tmp_strbuf, buf);
+        nm_str_buf_append(tmp_strbuf, strarr[i]);
     }
 
     nm_str_buf_maybe_expand(tmp_strbuf, 1, FALSE);
@@ -1350,12 +1373,17 @@ _collect_resolv_conf_data(NMDnsManager      *self,
             .nis_servers  = g_ptr_array_new(),
             .has_trust_ad = NM_TERNARY_DEFAULT,
     };
+    gboolean has_global_dns_section = FALSE;
 
     priv = NM_DNS_MANAGER_GET_PRIVATE(self);
 
-    if (global_config)
+    if (global_config) {
         merge_global_dns_config(&rc, global_config);
+        has_global_dns_section = nm_global_dns_has_global_dns_section(global_config);
+    }
 
+    /* If global nameservers are defined, no DNS configs are used from connections at all,
+     * including searches and options. */
     if (!global_config || !nm_global_dns_config_lookup_domain(global_config, "*")) {
         nm_auto_str_buf NMStrBuf tmp_strbuf = NM_STR_BUF_INIT(0, FALSE);
         int                      first_prio = 0;
@@ -1389,8 +1417,16 @@ _collect_resolv_conf_data(NMDnsManager      *self,
                   skip ? "<SKIP>" : "",
                   get_nameserver_list(ip_data->addr_family, ip_data->l3cd, &tmp_strbuf));
 
-            if (!skip)
-                merge_one_l3cd(&rc, ip_data->addr_family, ip_data->data->ifindex, ip_data->l3cd);
+            if (!skip) {
+                /* Merge the configs from connections. However, if there was a [global-dns]
+                 * it overwrites searches and options from the connections, thus we only
+                 * merge the nameservers. */
+                merge_one_l3cd(&rc,
+                               ip_data->addr_family,
+                               ip_data->data->ifindex,
+                               ip_data->l3cd,
+                               has_global_dns_section);
+            }
         }
     }
 
@@ -1876,8 +1912,11 @@ plugin_skip:;
         nameservers    = g_new0(char *, 2);
         nameservers[0] = g_strdup(lladdr);
 
-        need_edns0 = nm_strv_find_first(options, -1, NM_SETTING_DNS_OPTION_EDNS0) < 0;
-        need_trust = nm_strv_find_first(options, -1, NM_SETTING_DNS_OPTION_TRUST_AD) < 0;
+        need_edns0 = !nm_strv_contains(options, -1, NM_SETTING_DNS_OPTION_EDNS0)
+                     && !nm_strv_contains(options, -1, NM_SETTING_DNS_OPTION_INTERNAL_NO_ADD_EDNS0);
+        need_trust =
+            !nm_strv_contains(options, -1, NM_SETTING_DNS_OPTION_TRUST_AD)
+            && !nm_strv_contains(options, -1, NM_SETTING_DNS_OPTION_INTERNAL_NO_ADD_TRUST_AD);
 
         if (need_edns0 || need_trust) {
             gsize len;
@@ -1890,6 +1929,23 @@ plugin_skip:;
                 options[len++] = g_strdup(NM_SETTING_DNS_OPTION_TRUST_AD);
             options[len] = NULL;
         }
+    }
+
+    if (options) {
+        guint i;
+        guint j;
+
+        /* Skip internal options, those starting with '_' */
+        for (i = 0, j = 0; options[i]; i++) {
+            if (options[i][0] == '_') {
+                g_free(options[i]);
+                continue;
+            }
+            if (i != j)
+                options[j] = options[i];
+            j++;
+        }
+        options[j] = NULL;
     }
 
     if (do_update) {
@@ -1948,7 +2004,7 @@ plugin_skip:;
     }
 
     /* signal that DNS resolution configs were changed */
-    if ((do_update || caching || force_emit) && result == SR_SUCCESS)
+    if ((caching || force_emit) && result == SR_SUCCESS)
         g_signal_emit(self, signals[CONFIG_CHANGED], 0);
 
     nm_clear_pointer(&priv->config_variant, g_variant_unref);
@@ -1962,6 +2018,16 @@ plugin_skip:;
 
     nm_assert(!local_error);
     return TRUE;
+}
+
+gboolean
+nm_dns_manager_is_unmanaged(NMDnsManager *self)
+{
+    NMDnsManagerPrivate *priv = NM_DNS_MANAGER_GET_PRIVATE(self);
+
+    return NM_IN_SET(priv->rc_manager,
+                     NM_DNS_MANAGER_RESOLV_CONF_MAN_UNMANAGED,
+                     NM_DNS_MANAGER_RESOLV_CONF_MAN_IMMUTABLE);
 }
 
 /*****************************************************************************/
@@ -2078,7 +2144,7 @@ nm_dns_manager_set_ip_config(NMDnsManager         *self,
 
     if (!data) {
         data  = g_slice_new(NMDnsConfigData);
-        *data = (NMDnsConfigData){
+        *data = (NMDnsConfigData) {
             .ifindex       = ifindex,
             .self          = self,
             .data_lst_head = C_LIST_INIT(data->data_lst_head),
@@ -2391,7 +2457,7 @@ _resolvconf_resolved_managed(void)
          * We want to handle that, because systemd-resolved might not
          * have started yet. */
         full_path = g_file_read_link(_PATH_RESCONF, NULL);
-        if (nm_strv_find_first(RESOLVED_PATHS, G_N_ELEMENTS(RESOLVED_PATHS), full_path) >= 0)
+        if (nm_strv_contains(RESOLVED_PATHS, G_N_ELEMENTS(RESOLVED_PATHS), full_path))
             return TRUE;
 
         /* see if resolv.conf is a symlink that resolves exactly one
@@ -2403,7 +2469,7 @@ _resolvconf_resolved_managed(void)
          * We want to handle that, because systemd-resolved might not
          * have started yet. */
         real_path = realpath(_PATH_RESCONF, NULL);
-        if (nm_strv_find_first(RESOLVED_PATHS, G_N_ELEMENTS(RESOLVED_PATHS), real_path) >= 0)
+        if (nm_strv_contains(RESOLVED_PATHS, G_N_ELEMENTS(RESOLVED_PATHS), real_path))
             return TRUE;
 
         /* fall-through and resolve the symlink, to check the file
@@ -2495,6 +2561,12 @@ again:
             priv->plugin   = nm_dns_dnsmasq_new();
             plugin_changed = TRUE;
         }
+    } else if (nm_streq0(mode, "dnsconfd")) {
+        if (force_reload_plugin || !NM_IS_DNS_DNSCONFD(priv->plugin)) {
+            _clear_plugin(self);
+            priv->plugin   = nm_dns_dnsconfd_new();
+            plugin_changed = TRUE;
+        }
     } else {
         if (!NM_IN_STRSET(mode, "none", "default")) {
             if (mode) {
@@ -2511,7 +2583,7 @@ again:
 
     if (rc_manager == NM_DNS_MANAGER_RESOLV_CONF_MAN_AUTO) {
         rc_manager_was_auto = TRUE;
-        if (nm_streq(mode, "systemd-resolved"))
+        if (nm_streq(mode, "systemd-resolved") || nm_streq(mode, "dnsconfd"))
             rc_manager = NM_DNS_MANAGER_RESOLV_CONF_MAN_UNMANAGED;
         else if (HAS_RESOLVCONF && g_file_test(RESOLVCONF_PATH, G_FILE_TEST_IS_EXECUTABLE)) {
             /* We detect /sbin/resolvconf only at this stage. That means, if you install
@@ -2700,7 +2772,6 @@ _get_config_variant(NMDnsManager *self)
         guint              num_domains;
         guint              num_searches;
         guint              i;
-        char               buf[NM_INET_ADDRSTRLEN];
         const char        *ifname;
         const char *const *strarr;
 
@@ -2712,12 +2783,7 @@ _get_config_variant(NMDnsManager *self)
 
         g_variant_builder_init(&strv_builder, G_VARIANT_TYPE("as"));
         for (i = 0; i < num; i++) {
-            NMIPAddr a;
-
-            if (!nm_utils_dnsname_parse_assert(ip_data->addr_family, strarr[i], NULL, &a, NULL))
-                continue;
-
-            g_variant_builder_add(&strv_builder, "s", nm_inet_ntop(ip_data->addr_family, &a, buf));
+            g_variant_builder_add(&strv_builder, "s", strarr[i]);
         }
         g_variant_builder_add(&entry_builder,
                               "{sv}",

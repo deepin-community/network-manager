@@ -4,10 +4,14 @@
 
 #include "nm-std-utils.h"
 
-#include <stdint.h>
 #include <assert.h>
+#include <fcntl.h>
+#include <grp.h>
 #include <limits.h>
 #include <net/if.h>
+#include <pwd.h>
+#include <stdint.h>
+#include <sys/types.h>
 
 /*****************************************************************************/
 
@@ -91,4 +95,152 @@ out_huge:
         return (size_t) SSIZE_MAX;
     }
     return SIZE_MAX;
+}
+
+/*****************************************************************************/
+
+bool
+nm_utils_set_effective_user(const char *user, char *errbuf, size_t errbuf_len)
+{
+    struct passwd *pwentry;
+    int            errsv;
+    char           error[1024];
+
+    errno   = 0;
+    pwentry = getpwnam(user);
+    if (!pwentry) {
+        errsv = errno;
+        if (errsv == 0) {
+            snprintf(errbuf, errbuf_len, "user not found");
+        } else {
+            snprintf(errbuf,
+                     errbuf_len,
+                     "error getting user entry: %d (%s)\n",
+                     errsv,
+                     _nm_strerror_r(errsv, error, sizeof(error)));
+        }
+        return false;
+    }
+
+    if (setgid(pwentry->pw_gid) != 0) {
+        errsv = errno;
+        snprintf(errbuf,
+                 errbuf_len,
+                 "failed to change group to %u: %d (%s)\n",
+                 pwentry->pw_gid,
+                 errsv,
+                 _nm_strerror_r(errsv, error, sizeof(error)));
+        return false;
+    }
+
+    if (initgroups(user, pwentry->pw_gid) != 0) {
+        errsv = errno;
+        snprintf(errbuf,
+                 errbuf_len,
+                 "failed to reset supplementary group list to %u: %d (%s)\n",
+                 pwentry->pw_gid,
+                 errsv,
+                 _nm_strerror_r(errsv, error, sizeof(error)));
+        return false;
+    }
+
+    if (setuid(pwentry->pw_uid) != 0) {
+        errsv = errno;
+        snprintf(errbuf,
+                 errbuf_len,
+                 "failed to change user to %u: %d (%s)\n",
+                 pwentry->pw_uid,
+                 errsv,
+                 _nm_strerror_r(errsv, error, sizeof(error)));
+        return false;
+    }
+
+    return true;
+}
+
+/*****************************************************************************/
+
+bool
+nm_utils_read_file_to_stdout(const char *filename, char *errbuf, size_t errbuf_len)
+{
+    nm_auto_close int fd = -1;
+    char              buffer[4096];
+    char              error[1024];
+    ssize_t           bytes_read;
+    int               errsv;
+
+    fd = open(filename, O_RDONLY);
+    if (fd == -1) {
+        errsv = errno;
+        snprintf(errbuf,
+                 errbuf_len,
+                 "error opening the file: %d (%s)",
+                 errsv,
+                 _nm_strerror_r(errsv, error, sizeof(error)));
+        return false;
+    }
+
+    while ((bytes_read = read(fd, buffer, sizeof(buffer))) > 0) {
+        if (fwrite(buffer, 1, bytes_read, stdout) != (size_t) bytes_read) {
+            errsv = errno;
+            snprintf(errbuf,
+                     errbuf_len,
+                     "error writing to stdout: %d (%s)",
+                     errsv,
+                     _nm_strerror_r(errsv, error, sizeof(error)));
+            return false;
+        }
+    }
+
+    if (bytes_read < 0) {
+        errsv = errno;
+        snprintf(errbuf,
+                 errbuf_len,
+                 "error reading the file: %d (%s)",
+                 errsv,
+                 _nm_strerror_r(errsv, error, sizeof(error)));
+        return false;
+    }
+
+    return true;
+}
+
+/*****************************************************************************/
+
+/**
+ * _nm_strerror_r:
+ * @errsv: the errno passed to strerror_r()
+ * @buf: the string buffer, must be non-null
+ * @buf_size: the size of the buffer, must be positive.
+ *
+ * A wrapper around strerror_r(). Does little else, aside clearing up the
+ * confusion about the different versions of the function.
+ *
+ * errno is preserved.
+ *
+ * Returns: the error string. This is either a static strong or @buf. It
+ *   is not guaranteed to be @buf.
+ */
+const char *
+_nm_strerror_r(int errsv, char *buf, size_t buf_size)
+{
+    NM_AUTO_PROTECT_ERRNO(errsv2);
+    char *buf2;
+
+    nm_assert(buf);
+    nm_assert(buf_size > 0);
+
+#if (!defined(__GLIBC__) && !defined(__UCLIBC__)) || ((_POSIX_C_SOURCE >= 200112L) && !_GNU_SOURCE)
+    /* XSI-compliant */
+    if (strerror_r(errsv, buf, buf_size) != 0) {
+        snprintf(buf, buf_size, "Unspecified errno %d", errsv);
+    }
+    buf2 = buf;
+#else
+    /* GNU-specific */
+    buf2 = strerror_r(errsv, buf, buf_size);
+#endif
+
+    nm_assert(buf2);
+    return buf2;
 }

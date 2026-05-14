@@ -48,14 +48,14 @@ complete_connection(NMDevice            *device,
                     NMConnection *const *existing_connections,
                     GError             **error)
 {
-    nm_utils_complete_generic_with_params(nm_device_get_platform(device),
-                                          connection,
-                                          NM_SETTING_DUMMY_SETTING_NAME,
-                                          existing_connections,
-                                          NULL,
-                                          _("Dummy connection"),
-                                          NULL,
-                                          nm_device_get_ip_iface(device));
+    nm_utils_complete_generic(nm_device_get_platform(device),
+                              connection,
+                              NM_SETTING_DUMMY_SETTING_NAME,
+                              existing_connections,
+                              NULL,
+                              _("Dummy connection"),
+                              NULL,
+                              nm_device_get_ip_iface(device));
 
     _nm_connection_ensure_setting(connection, NM_TYPE_SETTING_DUMMY);
 
@@ -107,9 +107,11 @@ static const NMDBusInterfaceInfoExtended interface_info_device_dummy = {
     .parent = NM_DEFINE_GDBUS_INTERFACE_INFO_INIT(
         NM_DBUS_INTERFACE_DEVICE_DUMMY,
         .properties = NM_DEFINE_GDBUS_PROPERTY_INFOS(
-            NM_DEFINE_DBUS_PROPERTY_INFO_EXTENDED_READABLE("HwAddress",
-                                                           "s",
-                                                           NM_DEVICE_HW_ADDRESS), ), ),
+            NM_DEFINE_DBUS_PROPERTY_INFO_EXTENDED_READABLE(
+                "HwAddress",
+                "s",
+                NM_DEVICE_HW_ADDRESS,
+                .annotations = NM_GDBUS_ANNOTATION_INFO_LIST_DEPRECATED(), ), ), ),
 };
 
 static void

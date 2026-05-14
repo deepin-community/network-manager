@@ -21,6 +21,7 @@
 #include <sys/types.h>
 
 #include "_sd-common.h"
+#include "sd-dhcp6-protocol.h"
 
 _SD_BEGIN_DECLARATIONS;
 

@@ -209,7 +209,7 @@ nm_vpn_editor_plugin_get_vt(NMVpnEditorPlugin *plugin, NMVpnEditorPluginVT *vt, 
         if (!p_vt)
             p_vt_size = 0;
         g_return_val_if_fail(p_vt_size, 0);
-        memcpy(vt, p_vt, MIN(vt_size, p_vt_size));
+        memcpy(vt, p_vt, NM_MIN(vt_size, p_vt_size));
     }
 
     return p_vt_size;
@@ -299,6 +299,9 @@ _nm_vpn_editor_plugin_load(const char               *plugin_name,
         return NULL;
     }
 
+    /* Note that factory() shouldn't be returning errors or failing.
+     * We can't change its prototype as it would consistute an ABI break,
+     * however it returning a failure would indicate a bug in the plugin. */
     editor_plugin = factory(&factory_error);
 
     if (loaded_before) {

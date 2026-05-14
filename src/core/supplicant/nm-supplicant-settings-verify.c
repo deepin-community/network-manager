@@ -20,21 +20,30 @@ struct Opt {
 
 typedef gboolean (*validate_func)(const struct Opt *, const char *, const guint32);
 
-#define OPT_INT(_key, _int_low, _int_high)                                                      \
-    {                                                                                           \
-        .key = _key, .type = NM_SUPPL_OPT_TYPE_INT, .int_high = _int_high, .int_low = _int_low, \
+#define OPT_INT(_key, _int_low, _int_high) \
+    {                                      \
+        .key      = _key,                  \
+        .type     = NM_SUPPL_OPT_TYPE_INT, \
+        .int_high = _int_high,             \
+        .int_low  = _int_low,              \
     }
-#define OPT_BYTES(_key, _int_high)                                           \
-    {                                                                        \
-        .key = _key, .type = NM_SUPPL_OPT_TYPE_BYTES, .int_high = _int_high, \
+#define OPT_BYTES(_key, _int_high)           \
+    {                                        \
+        .key      = _key,                    \
+        .type     = NM_SUPPL_OPT_TYPE_BYTES, \
+        .int_high = _int_high,               \
     }
-#define OPT_UTF8(_key, _int_high)                                           \
-    {                                                                       \
-        .key = _key, .type = NM_SUPPL_OPT_TYPE_UTF8, .int_high = _int_high, \
+#define OPT_UTF8(_key, _int_high)           \
+    {                                       \
+        .key      = _key,                   \
+        .type     = NM_SUPPL_OPT_TYPE_UTF8, \
+        .int_high = _int_high,              \
     }
-#define OPT_KEYWORD(_key, _str_allowed)                                              \
-    {                                                                                \
-        .key = _key, .type = NM_SUPPL_OPT_TYPE_KEYWORD, .str_allowed = _str_allowed, \
+#define OPT_KEYWORD(_key, _str_allowed)           \
+    {                                             \
+        .key         = _key,                      \
+        .type        = NM_SUPPL_OPT_TYPE_KEYWORD, \
+        .str_allowed = _str_allowed,              \
     }
 
 static const struct Opt opt_table[] = {
@@ -64,6 +73,7 @@ static const struct Opt opt_table[] = {
     OPT_KEYWORD("freq_list", NULL),
     OPT_INT("frequency", 2412, 5825),
     OPT_KEYWORD("group", NM_MAKE_STRV("CCMP", "TKIP", "WEP104", "WEP40", "GCMP-256", )),
+    OPT_INT("ht40", 0, 1),
     OPT_BYTES("identity", 0),
     OPT_INT("ieee80211w", 0, 2),
     OPT_INT("ignore_broadcast_ssid", 0, 2),
@@ -87,11 +97,14 @@ static const struct Opt opt_table[] = {
                              "OWE",
                              "NONE", )),
     OPT_INT("macsec_integ_only", 0, 1),
+    OPT_INT("macsec_offload", 0, 2),
     OPT_INT("macsec_policy", 0, 1),
     OPT_INT("macsec_port", 1, 65534),
+    OPT_INT("max_oper_chwidth", 0, 9),
     OPT_BYTES("mka_cak", 65536),
     OPT_BYTES("mka_ckn", 65536),
     OPT_BYTES("nai", 0),
+    OPT_BYTES("openssl_ciphers", 0),
     OPT_INT("owe_only", 0, 1),
     OPT_BYTES("pac_file", 0),
     OPT_KEYWORD("pairwise", NM_MAKE_STRV("CCMP", "TKIP", "GCMP-256", "NONE", )),
@@ -144,6 +157,7 @@ static const struct Opt opt_table[] = {
     OPT_BYTES("ssid", 32),
     OPT_BYTES("subject_match", 0),
     OPT_BYTES("subject_match2", 0),
+    OPT_INT("vht_center_freq1", 0, 100000),
     OPT_BYTES("wep_key0", 0),
     OPT_BYTES("wep_key1", 0),
     OPT_BYTES("wep_key2", 0),
@@ -228,7 +242,7 @@ validate_type_keyword(const struct Opt *opt, const char *value, const guint32 le
             s++;
         }
 
-        if (nm_strv_find_first(opt->str_allowed, -1, value) < 0)
+        if (!nm_strv_contains(opt->str_allowed, -1, value))
             return FALSE;
 
         if (!s)

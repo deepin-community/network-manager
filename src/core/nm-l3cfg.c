@@ -10,7 +10,9 @@
 #include "nm-compat-headers/linux/if_addr.h"
 #include <linux/if_ether.h>
 #include <linux/rtnetlink.h>
+#include <linux/fib_rules.h>
 
+#include "libnm-core-aux-intern/nm-libnm-core-utils.h"
 #include "libnm-glib-aux/nm-prioq.h"
 #include "libnm-glib-aux/nm-time-utils.h"
 #include "libnm-platform/nm-platform.h"
@@ -38,8 +40,7 @@ G_STATIC_ASSERT(NM_ACD_TIMEOUT_RFC5227_MSEC == N_ACD_TIMEOUT_RFC5227);
 
 #define ACD_SUPPORTED_ETH_ALEN                  ETH_ALEN
 #define ACD_ENSURE_RATELIMIT_MSEC               ((guint32) 4000u)
-#define ACD_WAIT_PROBING_EXTRA_TIME_MSEC        ((guint32) (1000u + ACD_ENSURE_RATELIMIT_MSEC))
-#define ACD_WAIT_PROBING_EXTRA_TIME2_MSEC       ((guint32) 1000u)
+#define ACD_WAIT_PROBING_EXTRA_TIME_MSEC        ((guint32) (2000u + ACD_ENSURE_RATELIMIT_MSEC))
 #define ACD_WAIT_TIME_PROBING_FULL_RESTART_MSEC ((guint32) 30000u)
 #define ACD_WAIT_TIME_CONFLICT_RESTART_MSEC     ((guint32) 120000u)
 #define ACD_WAIT_TIME_ANNOUNCE_RESTART_MSEC     ((guint32) 30000u)
@@ -165,7 +166,18 @@ typedef struct {
 
     /* This flag is only used temporarily to do a bulk update and
      * clear all the ones that are no longer in used. */
-    bool os_dirty : 1;
+    bool os_non_dynamic_dirty : 1;
+
+    /* Indicates that we have a object in combined_l3cd_commited that keeps the
+     * object state alive. */
+    bool os_non_dynamic : 1;
+
+    /* Indicates that there is a dynamic route from _commit_collect_routes(), that keeps the
+      * object state alive. */
+    bool os_dynamic : 1;
+
+    /* Indicates that this dynamic obj-state is marked as dirty. */
+    bool os_dynamic_dirty : 1;
 } ObjStateData;
 
 G_STATIC_ASSERT(G_STRUCT_OFFSET(ObjStateData, obj) == 0);
@@ -334,6 +346,7 @@ typedef struct _NML3CfgPrivate {
 
     bool nacd_acd_not_supported : 1;
     bool acd_ipv4_addresses_on_link_has : 1;
+    bool acd_data_pruning_needed : 1;
 
     bool changed_configs_configs : 1;
     bool changed_configs_acd_state : 1;
@@ -357,6 +370,8 @@ G_DEFINE_TYPE(NML3Cfg, nm_l3cfg, G_TYPE_OBJECT)
 
 #define _NETNS_WATCHER_IP_ADDR_TAG(self, addr_family) \
     ((gconstpointer) & (((char *) self)[1 + NM_IS_IPv4(addr_family)]))
+
+#define _NETNS_WATCHER_MPTCP_IPV6_TAG(self) ((gconstpointer) & (((char *) self)[3]))
 
 /*****************************************************************************/
 
@@ -394,7 +409,8 @@ static void _l3_commit(NML3Cfg *self, NML3CfgCommitType commit_type, gboolean is
 
 static void _nm_l3cfg_emit_signal_notify_acd_event_all(NML3Cfg *self);
 
-static gboolean _acd_has_valid_link(const NMPObject *obj,
+static gboolean _acd_has_valid_link(NML3Cfg         *self,
+                                    const NMPObject *obj,
                                     const guint8   **out_addr_bin,
                                     gboolean        *out_acd_not_supported);
 
@@ -423,7 +439,6 @@ static NM_UTILS_ENUM2STR_DEFINE(
     NML3ConfigNotifyType,
     NM_UTILS_ENUM2STR(NM_L3_CONFIG_NOTIFY_TYPE_ACD_EVENT, "acd-event"),
     NM_UTILS_ENUM2STR(NM_L3_CONFIG_NOTIFY_TYPE_IPV4LL_EVENT, "ipv4ll-event"),
-    NM_UTILS_ENUM2STR(NM_L3_CONFIG_NOTIFY_TYPE_L3CD_CHANGED, "l3cd-changed"),
     NM_UTILS_ENUM2STR(NM_L3_CONFIG_NOTIFY_TYPE_PLATFORM_CHANGE, "platform-change"),
     NM_UTILS_ENUM2STR(NM_L3_CONFIG_NOTIFY_TYPE_PLATFORM_CHANGE_ON_IDLE, "platform-change-on-idle"),
     NM_UTILS_ENUM2STR(NM_L3_CONFIG_NOTIFY_TYPE_PRE_COMMIT, "pre-commit"),
@@ -578,16 +593,17 @@ _l3_config_notify_data_to_string(const NML3ConfigNotifyData *notify_data,
     nm_strbuf_seek_end(&s, &l);
 
     switch (notify_data->notify_type) {
-    case NM_L3_CONFIG_NOTIFY_TYPE_L3CD_CHANGED:
+    case NM_L3_CONFIG_NOTIFY_TYPE_PRE_COMMIT:
+    case NM_L3_CONFIG_NOTIFY_TYPE_POST_COMMIT:
         nm_strbuf_append(&s,
                          &l,
                          ", l3cd-old=%s",
-                         NM_HASH_OBFUSCATE_PTR_STR(notify_data->l3cd_changed.l3cd_old, sbufobf));
+                         NM_HASH_OBFUSCATE_PTR_STR(notify_data->commit.l3cd_old, sbufobf));
         nm_strbuf_append(&s,
                          &l,
                          ", l3cd-new=%s",
-                         NM_HASH_OBFUSCATE_PTR_STR(notify_data->l3cd_changed.l3cd_new, sbufobf));
-        nm_strbuf_append(&s, &l, ", commited=%d", notify_data->l3cd_changed.commited);
+                         NM_HASH_OBFUSCATE_PTR_STR(notify_data->commit.l3cd_new, sbufobf));
+        nm_strbuf_append(&s, &l, ", l3cd-changed=%d", notify_data->commit.l3cd_changed);
         break;
     case NM_L3_CONFIG_NOTIFY_TYPE_ACD_EVENT:
         nm_strbuf_append(&s,
@@ -646,27 +662,22 @@ _nm_l3cfg_emit_signal_notify(NML3Cfg *self, const NML3ConfigNotifyData *notify_d
 }
 
 static void
-_nm_l3cfg_emit_signal_notify_simple(NML3Cfg *self, NML3ConfigNotifyType notify_type)
+_nm_l3cfg_emit_signal_notify_commit(NML3Cfg              *self,
+                                    NML3ConfigNotifyType  type,
+                                    const NML3ConfigData *l3cd_old,
+                                    const NML3ConfigData *l3cd_new,
+                                    gboolean              l3cd_changed)
 {
     NML3ConfigNotifyData notify_data;
 
-    notify_data.notify_type = notify_type;
-    _nm_l3cfg_emit_signal_notify(self, &notify_data);
-}
+    nm_assert(
+        NM_IN_SET(type, NM_L3_CONFIG_NOTIFY_TYPE_PRE_COMMIT, NM_L3_CONFIG_NOTIFY_TYPE_POST_COMMIT));
 
-static void
-_nm_l3cfg_emit_signal_notify_l3cd_changed(NML3Cfg              *self,
-                                          const NML3ConfigData *l3cd_old,
-                                          const NML3ConfigData *l3cd_new,
-                                          gboolean              commited)
-{
-    NML3ConfigNotifyData notify_data;
-
-    notify_data.notify_type  = NM_L3_CONFIG_NOTIFY_TYPE_L3CD_CHANGED;
-    notify_data.l3cd_changed = (typeof(notify_data.l3cd_changed)){
-        .l3cd_old = l3cd_old,
-        .l3cd_new = l3cd_new,
-        .commited = commited,
+    notify_data.notify_type = type;
+    notify_data.commit      = (typeof(notify_data.commit)) {
+             .l3cd_old     = l3cd_old,
+             .l3cd_new     = l3cd_new,
+             .l3cd_changed = l3cd_changed,
     };
     _nm_l3cfg_emit_signal_notify(self, &notify_data);
 }
@@ -674,9 +685,9 @@ _nm_l3cfg_emit_signal_notify_l3cd_changed(NML3Cfg              *self,
 /*****************************************************************************/
 
 static void
-_l3_changed_configs_set_dirty(NML3Cfg *self)
+_l3_changed_configs_set_dirty(NML3Cfg *self, const char *reason)
 {
-    _LOGT("IP configuration changed (mark dirty)");
+    _LOGT("IP configuration changed (mark dirty): %s", reason);
     self->priv.p->changed_configs_configs   = TRUE;
     self->priv.p->changed_configs_acd_state = TRUE;
 }
@@ -757,7 +768,7 @@ _nm_n_acd_data_probe_new(NML3Cfg *self, in_addr_t addr, guint32 timeout_msec, gp
     if (r)
         return NULL;
 
-    n_acd_probe_config_set_ip(probe_config, (struct in_addr){addr});
+    n_acd_probe_config_set_ip(probe_config, (struct in_addr) {addr});
     n_acd_probe_config_set_timeout(probe_config, timeout_msec);
 
     r = n_acd_probe(self->priv.p->nacd, &probe, probe_config);
@@ -770,51 +781,70 @@ _nm_n_acd_data_probe_new(NML3Cfg *self, in_addr_t addr, guint32 timeout_msec, gp
 
 /*****************************************************************************/
 
-#define nm_assert_obj_state(self, obj_state)                                                     \
-    G_STMT_START                                                                                 \
-    {                                                                                            \
-        if (NM_MORE_ASSERTS > 0) {                                                               \
-            const NML3Cfg      *_self      = (self);                                             \
-            const ObjStateData *_obj_state = (obj_state);                                        \
-                                                                                                 \
-            nm_assert(_obj_state);                                                               \
-            nm_assert(NM_IN_SET(NMP_OBJECT_GET_TYPE(_obj_state->obj),                            \
-                                NMP_OBJECT_TYPE_IP4_ADDRESS,                                     \
-                                NMP_OBJECT_TYPE_IP6_ADDRESS,                                     \
-                                NMP_OBJECT_TYPE_IP4_ROUTE,                                       \
-                                NMP_OBJECT_TYPE_IP6_ROUTE));                                     \
-            nm_assert(!_obj_state->os_plobj || _obj_state->os_was_in_platform);                  \
-            nm_assert(_obj_state->os_failedobj_expiry_msec != 0                                  \
-                      || _obj_state->os_failedobj_prioq_idx == NM_PRIOQ_IDX_NULL);               \
-            nm_assert(_obj_state->os_failedobj_expiry_msec == 0 || !_obj_state->os_plobj);       \
-            nm_assert(_obj_state->os_failedobj_expiry_msec == 0                                  \
-                      || c_list_is_empty(&_obj_state->os_zombie_lst));                           \
-            nm_assert(_obj_state->os_failedobj_expiry_msec == 0 || _obj_state->obj);             \
-            if (_self) {                                                                         \
-                if (c_list_is_empty(&_obj_state->os_zombie_lst)) {                               \
-                    nm_assert(_self->priv.p->combined_l3cd_commited);                            \
-                                                                                                 \
-                    if (NM_MORE_ASSERTS > 5) {                                                   \
-                        nm_assert(c_list_contains(&_self->priv.p->obj_state_lst_head,            \
-                                                  &_obj_state->os_lst));                         \
-                        nm_assert(_obj_state->os_plobj                                           \
-                                  == nm_platform_lookup_obj(_self->priv.platform,                \
-                                                            NMP_CACHE_ID_TYPE_OBJECT_TYPE,       \
-                                                            _obj_state->obj));                   \
-                        nm_assert(                                                               \
-                            c_list_is_empty(&obj_state->os_zombie_lst)                           \
-                                ? (_obj_state->obj                                               \
-                                   == nm_dedup_multi_entry_get_obj(nm_l3_config_data_lookup_obj( \
-                                       _self->priv.p->combined_l3cd_commited,                    \
-                                       _obj_state->obj)))                                        \
-                                : (!nm_l3_config_data_lookup_obj(                                \
-                                    _self->priv.p->combined_l3cd_commited,                       \
-                                    _obj_state->obj)));                                          \
-                    }                                                                            \
-                }                                                                                \
-            }                                                                                    \
-        }                                                                                        \
-    }                                                                                            \
+#define nm_assert_obj_state(self, obj_state)                                                  \
+    G_STMT_START                                                                              \
+    {                                                                                         \
+        if (NM_MORE_ASSERTS > 0) {                                                            \
+            const NML3Cfg      *_self      = (self);                                          \
+            const ObjStateData *_obj_state = (obj_state);                                     \
+                                                                                              \
+            nm_assert(_obj_state);                                                            \
+            nm_assert(NM_IN_SET(NMP_OBJECT_GET_TYPE(_obj_state->obj),                         \
+                                NMP_OBJECT_TYPE_IP4_ADDRESS,                                  \
+                                NMP_OBJECT_TYPE_IP6_ADDRESS,                                  \
+                                NMP_OBJECT_TYPE_IP4_ROUTE,                                    \
+                                NMP_OBJECT_TYPE_IP6_ROUTE));                                  \
+            nm_assert(!_obj_state->os_plobj || _obj_state->os_was_in_platform);               \
+            nm_assert(_obj_state->os_failedobj_expiry_msec != 0                               \
+                      || _obj_state->os_failedobj_prioq_idx == NM_PRIOQ_IDX_NULL);            \
+            nm_assert(_obj_state->os_failedobj_expiry_msec == 0 || !_obj_state->os_plobj);    \
+            nm_assert(_obj_state->os_failedobj_expiry_msec == 0                               \
+                      || c_list_is_empty(&_obj_state->os_zombie_lst));                        \
+            nm_assert(_obj_state->os_failedobj_expiry_msec == 0 || _obj_state->obj);          \
+            nm_assert(!_obj_state->os_plobj                                                   \
+                      || NMP_OBJECT_GET_TYPE(_obj_state->obj)                                 \
+                             == NMP_OBJECT_GET_TYPE(_obj_state->os_plobj));                   \
+            if (_self) {                                                                      \
+                if (c_list_is_empty(&_obj_state->os_zombie_lst)) {                            \
+                    nm_assert(_self->priv.p->combined_l3cd_commited);                         \
+                                                                                              \
+                    if (NM_MORE_ASSERTS > 5) {                                                \
+                        /* metric-any must be resolved before adding the object. Otherwise,
+                         * their real metric is not known, and they cannot be compared to objects
+                         * from NMPlatform cache. */   \
+                        nm_assert(!NM_IN_SET(NMP_OBJECT_GET_TYPE(_obj_state->obj),            \
+                                             NMP_OBJECT_TYPE_IP4_ROUTE,                       \
+                                             NMP_OBJECT_TYPE_IP6_ROUTE)                       \
+                                  || !NMP_OBJECT_CAST_IP_ROUTE(_obj_state->obj)->metric_any); \
+                                                                                              \
+                        nm_assert(c_list_contains(&_self->priv.p->obj_state_lst_head,         \
+                                                  &_obj_state->os_lst));                      \
+                        nm_assert(_obj_state->os_plobj                                        \
+                                  == nm_platform_lookup_obj(_self->priv.platform,             \
+                                                            NMP_CACHE_ID_TYPE_OBJECT_TYPE,    \
+                                                            _obj_state->obj));                \
+                        if (!c_list_is_empty(&obj_state->os_zombie_lst)) {                    \
+                            nm_assert(!obj_state->os_non_dynamic);                            \
+                            nm_assert(!obj_state->os_non_dynamic_dirty);                      \
+                            nm_assert(!obj_state->os_dynamic);                                \
+                            nm_assert(!obj_state->os_dynamic_dirty);                          \
+                        }                                                                     \
+                        if (obj_state->os_non_dynamic) {                                      \
+                            nm_assert(                                                        \
+                                _obj_state->obj                                               \
+                                == nm_dedup_multi_entry_get_obj(nm_l3_config_data_lookup_obj( \
+                                    _self->priv.p->combined_l3cd_commited,                    \
+                                    _obj_state->obj)));                                       \
+                        } else {                                                              \
+                            nm_assert(!nm_l3_config_data_lookup_obj(                          \
+                                _self->priv.p->combined_l3cd_commited,                        \
+                                _obj_state->obj));                                            \
+                        }                                                                     \
+                    }                                                                         \
+                }                                                                             \
+            }                                                                                 \
+        }                                                                                     \
+    }                                                                                         \
     G_STMT_END
 
 static ObjStateData *
@@ -823,12 +853,15 @@ _obj_state_data_new(const NMPObject *obj, const NMPObject *plobj)
     ObjStateData *obj_state;
 
     obj_state  = g_slice_new(ObjStateData);
-    *obj_state = (ObjStateData){
+    *obj_state = (ObjStateData) {
         .obj                      = nmp_object_ref(obj),
         .os_plobj                 = nmp_object_ref(plobj),
         .os_was_in_platform       = !!plobj,
         .os_nm_configured         = FALSE,
-        .os_dirty                 = FALSE,
+        .os_non_dynamic_dirty     = FALSE,
+        .os_non_dynamic           = FALSE,
+        .os_dynamic               = FALSE,
+        .os_dynamic_dirty         = FALSE,
         .os_failedobj_expiry_msec = 0,
         .os_failedobj_prioq_idx   = NM_PRIOQ_IDX_NULL,
         .os_zombie_lst            = C_LIST_INIT(obj_state->os_zombie_lst),
@@ -895,34 +928,6 @@ _obj_state_data_to_string(const ObjStateData *obj_state, char *buf, gsize buf_si
         nm_assert(obj_state->os_failedobj_prioq_idx == NM_PRIOQ_IDX_NULL);
 
     return buf0;
-}
-
-static gboolean
-_obj_state_data_update(ObjStateData *obj_state, const NMPObject *obj)
-{
-    gboolean changed = FALSE;
-
-    nm_assert_obj_state(NULL, obj_state);
-    nm_assert(obj);
-    nm_assert(nmp_object_id_equal(obj_state->obj, obj));
-
-    obj_state->os_dirty = FALSE;
-
-    if (obj_state->obj != obj) {
-        nm_auto_nmpobj const NMPObject *obj_old = NULL;
-
-        if (!nmp_object_equal(obj_state->obj, obj))
-            changed = TRUE;
-        obj_old        = g_steal_pointer(&obj_state->obj);
-        obj_state->obj = nmp_object_ref(obj);
-    }
-
-    if (!c_list_is_empty(&obj_state->os_zombie_lst)) {
-        c_list_unlink(&obj_state->os_zombie_lst);
-        changed = TRUE;
-    }
-
-    return changed;
 }
 
 /*****************************************************************************/
@@ -999,6 +1004,151 @@ out:
 }
 
 static void
+_obj_states_track_new(NML3Cfg *self, const NMPObject *obj, gboolean dynamic)
+{
+    char          sbuf[NM_UTILS_TO_STRING_BUFFER_SIZE];
+    ObjStateData *obj_state;
+
+    obj_state = _obj_state_data_new(
+        obj,
+        nm_platform_lookup_obj(self->priv.platform, NMP_CACHE_ID_TYPE_OBJECT_TYPE, obj));
+    obj_state->os_dynamic     = dynamic;
+    obj_state->os_non_dynamic = !dynamic;
+    c_list_link_tail(&self->priv.p->obj_state_lst_head, &obj_state->os_lst);
+    g_hash_table_add(self->priv.p->obj_state_hash, obj_state);
+    _LOGD("obj-state: track%s: %s",
+          dynamic ? " (dynamic)" : "",
+          _obj_state_data_to_string(obj_state, sbuf, sizeof(sbuf)));
+    nm_assert_obj_state(self, obj_state);
+}
+
+static gboolean
+_obj_states_track_update(NML3Cfg         *self,
+                         ObjStateData    *obj_state,
+                         const NMPObject *obj,
+                         gboolean         dynamic)
+{
+    gboolean changed = FALSE;
+
+    nm_assert_obj_state(NULL, obj_state);
+    nm_assert(obj);
+    nm_assert(nmp_object_id_equal(obj_state->obj, obj));
+
+    if (dynamic) {
+        if (!obj_state->os_dynamic)
+            changed = TRUE;
+        obj_state->os_dynamic_dirty = FALSE;
+        obj_state->os_dynamic       = TRUE;
+    } else {
+        if (!obj_state->os_non_dynamic)
+            changed = TRUE;
+        obj_state->os_non_dynamic_dirty = FALSE;
+        obj_state->os_non_dynamic       = TRUE;
+    }
+
+    if (obj_state->obj != obj && (!dynamic || !obj_state->os_non_dynamic)) {
+        nm_auto_nmpobj const NMPObject *obj_old = NULL;
+
+        if (!nmp_object_equal(obj_state->obj, obj))
+            changed = TRUE;
+        obj_old        = g_steal_pointer(&obj_state->obj);
+        obj_state->obj = nmp_object_ref(obj);
+    }
+
+    if (!c_list_is_empty(&obj_state->os_zombie_lst)) {
+        c_list_unlink(&obj_state->os_zombie_lst);
+        changed = TRUE;
+    }
+
+    if (changed) {
+        char sbuf[NM_UTILS_TO_STRING_BUFFER_SIZE];
+
+        _LOGD("obj-state: update: %s (static: %d, dynamic: %d)",
+              _obj_state_data_to_string(obj_state, sbuf, sizeof(sbuf)),
+              !!obj_state->os_non_dynamic,
+              !!obj_state->os_dynamic);
+    }
+
+    nm_assert_obj_state(self, obj_state);
+    return changed;
+}
+
+static gboolean
+_obj_states_track_mark_dirty(NML3Cfg *self, gboolean dynamic)
+{
+    ObjStateData *obj_state;
+    gboolean      any_dirty = FALSE;
+
+    c_list_for_each_entry (obj_state, &self->priv.p->obj_state_lst_head, os_lst) {
+        if (!c_list_is_empty(&obj_state->os_zombie_lst)) {
+            /* we can ignore zombies. */
+            continue;
+        }
+        if (dynamic) {
+            if (!obj_state->os_dynamic)
+                continue;
+            obj_state->os_dynamic_dirty = TRUE;
+        } else {
+            if (!obj_state->os_non_dynamic)
+                continue;
+            obj_state->os_non_dynamic_dirty = TRUE;
+        }
+        any_dirty = TRUE;
+    }
+
+    return any_dirty;
+}
+
+static void
+_obj_states_track_prune_dirty(NML3Cfg *self, gboolean also_dynamic)
+{
+    GHashTableIter h_iter;
+    ObjStateData  *obj_state;
+    char           sbuf[NM_UTILS_TO_STRING_BUFFER_SIZE];
+
+    g_hash_table_iter_init(&h_iter, self->priv.p->obj_state_hash);
+    while (g_hash_table_iter_next(&h_iter, (gpointer *) &obj_state, NULL)) {
+        if (!c_list_is_empty(&obj_state->os_zombie_lst)) {
+            /* The object is half-dead already and only kept for cleanup. But
+             * it does not need to be untracked. */
+            continue;
+        }
+
+        /* Resolve the "dirty" flags. */
+        if (obj_state->os_non_dynamic_dirty) {
+            obj_state->os_non_dynamic       = FALSE;
+            obj_state->os_non_dynamic_dirty = FALSE;
+        }
+        if (also_dynamic) {
+            if (obj_state->os_dynamic_dirty) {
+                obj_state->os_dynamic       = FALSE;
+                obj_state->os_dynamic_dirty = FALSE;
+            }
+        }
+
+        if (obj_state->os_non_dynamic || obj_state->os_dynamic) {
+            /* This obj-state is still alive. Keep it. */
+            continue;
+        }
+
+        if (obj_state->os_plobj && obj_state->os_nm_configured) {
+            nm_assert(obj_state->os_failedobj_prioq_idx == NM_PRIOQ_IDX_NULL);
+            c_list_link_tail(&self->priv.p->obj_state_zombie_lst_head, &obj_state->os_zombie_lst);
+            obj_state->os_zombie_count = ZOMBIE_COUNT_START;
+            _LOGD("obj-state: now zombie: %s",
+                  _obj_state_data_to_string(obj_state, sbuf, sizeof(sbuf)));
+            continue;
+        }
+
+        _LOGD("obj-state: untrack: %s", _obj_state_data_to_string(obj_state, sbuf, sizeof(sbuf)));
+        nm_prioq_remove(&self->priv.p->failedobj_prioq,
+                        obj_state,
+                        &obj_state->os_failedobj_prioq_idx);
+        g_hash_table_iter_remove(&h_iter);
+    }
+}
+
+static void
 _obj_states_update_all(NML3Cfg *self)
 {
     static const NMPObjectType obj_types[] = {
@@ -1007,21 +1157,13 @@ _obj_states_update_all(NML3Cfg *self)
         NMP_OBJECT_TYPE_IP4_ROUTE,
         NMP_OBJECT_TYPE_IP6_ROUTE,
     };
-    char          sbuf[NM_UTILS_TO_STRING_BUFFER_SIZE];
     ObjStateData *obj_state;
     int           i;
     gboolean      any_dirty = FALSE;
 
     nm_assert(NM_IS_L3CFG(self));
 
-    c_list_for_each_entry (obj_state, &self->priv.p->obj_state_lst_head, os_lst) {
-        if (!c_list_is_empty(&obj_state->os_zombie_lst)) {
-            /* we can ignore zombies. */
-            continue;
-        }
-        any_dirty           = TRUE;
-        obj_state->os_dirty = TRUE;
-    }
+    any_dirty = _obj_states_track_mark_dirty(self, FALSE);
 
     for (i = 0; i < (int) G_N_ELEMENTS(obj_types); i++) {
         const NMPObjectType obj_type = obj_types[i];
@@ -1039,59 +1181,24 @@ _obj_states_update_all(NML3Cfg *self)
                 /* this is a nodev route. We don't track an obj-state for this. */
                 continue;
             }
-
+            if (obj_type == NMP_OBJECT_TYPE_IP4_ROUTE
+                && NMP_OBJECT_CAST_IP4_ROUTE(obj)->weight > 0) {
+                /* this route weight is bigger than 0, that means we don't know
+                 * which kind of route this will be. It can only be determined during commit. */
+                continue;
+            }
             obj_state = g_hash_table_lookup(self->priv.p->obj_state_hash, &obj);
             if (!obj_state) {
-                obj_state =
-                    _obj_state_data_new(obj,
-                                        nm_platform_lookup_obj(self->priv.platform,
-                                                               NMP_CACHE_ID_TYPE_OBJECT_TYPE,
-                                                               obj));
-                c_list_link_tail(&self->priv.p->obj_state_lst_head, &obj_state->os_lst);
-                g_hash_table_add(self->priv.p->obj_state_hash, obj_state);
-                _LOGD("obj-state: track: %s",
-                      _obj_state_data_to_string(obj_state, sbuf, sizeof(sbuf)));
-                nm_assert_obj_state(self, obj_state);
+                _obj_states_track_new(self, obj, FALSE);
                 continue;
             }
 
-            if (_obj_state_data_update(obj_state, obj)) {
-                _LOGD("obj-state: update: %s",
-                      _obj_state_data_to_string(obj_state, sbuf, sizeof(sbuf)));
-            }
-
-            nm_assert_obj_state(self, obj_state);
+            _obj_states_track_update(self, obj_state, obj, FALSE);
         }
     }
 
-    if (any_dirty) {
-        GHashTableIter h_iter;
-
-        g_hash_table_iter_init(&h_iter, self->priv.p->obj_state_hash);
-        while (g_hash_table_iter_next(&h_iter, (gpointer *) &obj_state, NULL)) {
-            if (!c_list_is_empty(&obj_state->os_zombie_lst))
-                continue;
-            if (!obj_state->os_dirty)
-                continue;
-
-            if (obj_state->os_plobj && obj_state->os_nm_configured) {
-                nm_assert(obj_state->os_failedobj_prioq_idx == NM_PRIOQ_IDX_NULL);
-                c_list_link_tail(&self->priv.p->obj_state_zombie_lst_head,
-                                 &obj_state->os_zombie_lst);
-                obj_state->os_zombie_count = ZOMBIE_COUNT_START;
-                _LOGD("obj-state: now zombie: %s",
-                      _obj_state_data_to_string(obj_state, sbuf, sizeof(sbuf)));
-                continue;
-            }
-
-            _LOGD("obj-state: untrack: %s",
-                  _obj_state_data_to_string(obj_state, sbuf, sizeof(sbuf)));
-            nm_prioq_remove(&self->priv.p->failedobj_prioq,
-                            obj_state,
-                            &obj_state->os_failedobj_prioq_idx);
-            g_hash_table_iter_remove(&h_iter);
-        }
-    }
+    if (any_dirty)
+        _obj_states_track_prune_dirty(self, FALSE);
 }
 
 typedef struct {
@@ -1211,17 +1318,21 @@ _commit_collect_routes(NML3Cfg          *self,
         else {
             nm_assert(NMP_OBJECT_CAST_IP_ROUTE(obj)->ifindex == self->priv.ifindex);
 
-            if (!any_addrs) {
+            if (!any_addrs
+                && !nm_l3_config_data_get_allow_routes_without_address(
+                    self->priv.p->combined_l3cd_commited,
+                    addr_family)) {
                 /* This is a unicast route (or a similar route, which has an
                  * ifindex).
                  *
                  * However, during this commit we don't plan to configure any
-                 * IP addresses.  With `ipvx.method=manual` that should not be
-                 * possible. More likely, this is because the profile has
-                 * `ipvx.method=auto` and static routes.
+                 * IP addresses when the profile has `ipvx.method=auto` and
+                 * static routes.
                  *
                  * Don't configure any such routes before we also have at least
-                 * one IP address.
+                 * one IP address except for `ipvx.method=manual` where static
+                 * routes are allowed to configure even if the connection has
+                 * no addresses
                  *
                  * This code applies to IPv4 and IPv6, however for IPv6 we
                  * early on configure a link local address, so in practice the
@@ -1263,6 +1374,13 @@ loop_done:
         if (singlehop_routes) {
             for (i = 0; i < singlehop_routes->len; i++) {
                 const NMPObject *obj = singlehop_routes->pdata[i];
+                ObjStateData    *obj_state;
+
+                obj_state = g_hash_table_lookup(self->priv.p->obj_state_hash, &obj);
+                if (!obj_state)
+                    _obj_states_track_new(self, obj, TRUE);
+                else
+                    _obj_states_track_update(self, obj_state, obj, TRUE);
 
                 if (!_obj_states_sync_filter(self, obj, commit_type))
                     continue;
@@ -1403,8 +1521,8 @@ _load_link(NML3Cfg *self, gboolean initial)
         nacd_link_now_up = FALSE;
 
     nacd_changed   = FALSE;
-    nacd_old_valid = _acd_has_valid_link(obj_old, &nacd_old_addr, NULL);
-    nacd_new_valid = _acd_has_valid_link(obj, &nacd_new_addr, NULL);
+    nacd_old_valid = _acd_has_valid_link(self, obj_old, &nacd_old_addr, NULL);
+    nacd_new_valid = _acd_has_valid_link(self, obj, &nacd_new_addr, NULL);
     if (self->priv.p->nacd_instance_ensure_retry) {
         if (nacd_new_valid
             && (!nacd_old_valid
@@ -1461,7 +1579,7 @@ _nm_l3cfg_notify_platform_change_on_idle(NML3Cfg *self, guint32 obj_type_flags)
         _load_link(self, FALSE);
 
     notify_data.notify_type             = NM_L3_CONFIG_NOTIFY_TYPE_PLATFORM_CHANGE_ON_IDLE;
-    notify_data.platform_change_on_idle = (typeof(notify_data.platform_change_on_idle)){
+    notify_data.platform_change_on_idle = (typeof(notify_data.platform_change_on_idle)) {
         .obj_type_flags = obj_type_flags,
     };
     _nm_l3cfg_emit_signal_notify(self, &notify_data);
@@ -1505,7 +1623,7 @@ _nm_l3cfg_notify_platform_change(NML3Cfg                   *self,
     }
 
     notify_data.notify_type     = NM_L3_CONFIG_NOTIFY_TYPE_PLATFORM_CHANGE;
-    notify_data.platform_change = (typeof(notify_data.platform_change)){
+    notify_data.platform_change = (typeof(notify_data.platform_change)) {
         .obj         = obj,
         .change_type = change_type,
     };
@@ -1614,7 +1732,8 @@ _acd_data_find_track(const AcdData        *acd_data,
 /*****************************************************************************/
 
 static gboolean
-_acd_has_valid_link(const NMPObject *obj,
+_acd_has_valid_link(NML3Cfg         *self,
+                    const NMPObject *obj,
                     const guint8   **out_addr_bin,
                     gboolean        *out_acd_not_supported)
 {
@@ -1631,6 +1750,11 @@ _acd_has_valid_link(const NMPObject *obj,
 
     addr_bin = nmp_link_address_get(&link->l_address, &addr_len);
     if (addr_len != ACD_SUPPORTED_ETH_ALEN) {
+        NM_SET_OUT(out_acd_not_supported, TRUE);
+        return FALSE;
+    }
+
+    if (nm_platform_link_get_ifi_flags(self->priv.platform, self->priv.ifindex, IFF_NOARP)) {
         NM_SET_OUT(out_acd_not_supported, TRUE);
         return FALSE;
     }
@@ -1787,7 +1911,7 @@ _l3_acd_nacd_instance_ensure_retry_cb(gpointer user_data)
 
     nm_clear_g_source_inst(&self->priv.p->nacd_instance_ensure_retry);
 
-    _l3_changed_configs_set_dirty(self);
+    _l3_changed_configs_set_dirty(self, "nacd retry");
     nm_l3cfg_commit(self, NM_L3_CFG_COMMIT_TYPE_AUTO);
     return G_SOURCE_REMOVE;
 }
@@ -1810,7 +1934,7 @@ _l3_acd_nacd_instance_reset(NML3Cfg *self, NMTernary start_timer, gboolean acd_d
 
     switch (start_timer) {
     case NM_TERNARY_FALSE:
-        _l3_changed_configs_set_dirty(self);
+        _l3_changed_configs_set_dirty(self, "nacd reset");
         nm_l3cfg_commit_on_idle_schedule(self, NM_L3_CFG_COMMIT_TYPE_AUTO);
         break;
     case NM_TERNARY_TRUE:
@@ -1864,7 +1988,7 @@ again:
         return NULL;
     }
 
-    valid = _acd_has_valid_link(self->priv.plobj, &addr_bin, &acd_not_supported);
+    valid = _acd_has_valid_link(self, self->priv.plobj, &addr_bin, &acd_not_supported);
     if (!valid)
         goto failed_create_acd;
 
@@ -2035,7 +2159,7 @@ _l3_acd_data_add(NML3Cfg              *self,
         }
 
         acd_data  = g_slice_new(AcdData);
-        *acd_data = (AcdData){
+        *acd_data = (AcdData) {
             .info =
                 {
                     .l3cfg         = self,
@@ -2067,7 +2191,7 @@ _l3_acd_data_add(NML3Cfg              *self,
         }
         acd_track =
             (NML3AcdAddrTrackInfo *) &acd_data->info.track_infos[acd_data->info.n_track_infos++];
-        *acd_track = (NML3AcdAddrTrackInfo){
+        *acd_track = (NML3AcdAddrTrackInfo) {
             .l3cd                         = nm_l3_config_data_ref(l3cd),
             .obj                          = nmp_object_ref(obj),
             .tag                          = tag,
@@ -2169,7 +2293,7 @@ _l3_acd_data_timeout_schedule(AcdData *acd_data, gint64 timeout_msec)
      * expect timeouts in certain states.
      *
      * That means, scheduling a timeout is only correct if we are in a certain
-     * state, which allows to handle timeouts. This assert checks for that to
+     * state, which allows one to handle timeouts. This assert checks for that to
      * ensure we don't call a timeout in an unexpected state. */
     nm_assert(NM_IN_SET(acd_data->info.state,
                         NM_L3_ACD_ADDR_STATE_PROBING,
@@ -2222,7 +2346,7 @@ _nm_l3cfg_emit_signal_notify_acd_event(NML3Cfg *self, AcdData *acd_data)
     nm_assert(acd_data->info.n_track_infos > 0);
 
     notify_data.notify_type = NM_L3_CONFIG_NOTIFY_TYPE_ACD_EVENT;
-    notify_data.acd_event   = (typeof(notify_data.acd_event)){
+    notify_data.acd_event   = (typeof(notify_data.acd_event)) {
           .info = acd_data->info,
     };
 
@@ -2325,7 +2449,7 @@ _nm_printf(5, 6) static void _l3_acd_data_state_set_full(NML3Cfg         *self,
     if (changed && allow_commit) {
         /* The availability of an address just changed (and we are instructed to
          * trigger a new commit). Do it. */
-        _l3_changed_configs_set_dirty(self);
+        _l3_changed_configs_set_dirty(self, "acd state changed");
         nm_l3cfg_commit_on_idle_schedule(self, NM_L3_CFG_COMMIT_TYPE_AUTO);
     }
 }
@@ -2615,9 +2739,8 @@ handle_init:
             nm_utils_get_monotonic_timestamp_msec_cached(p_now_msec);
 
             if (acd_data->info.state == NM_L3_ACD_ADDR_STATE_PROBING) {
-                if ((*p_now_msec) > acd_data->probing_timestamp_msec
-                                        + ACD_WAIT_PROBING_EXTRA_TIME_MSEC
-                                        + ACD_WAIT_PROBING_EXTRA_TIME2_MSEC) {
+                if ((*p_now_msec)
+                    > acd_data->probing_timestamp_msec + ACD_WAIT_PROBING_EXTRA_TIME_MSEC) {
                     /* hm. We failed to create a new probe too long. Something is really wrong
                      * internally, but let's ignore the issue and assume the address is good. What
                      * else would we do? Assume the address is USED? */
@@ -2626,7 +2749,8 @@ handle_init:
                     goto handle_start_defending;
                 }
 
-                log_reason = "retry probing on timeout";
+                acd_data->probing_timeout_msec = acd_timeout_msec;
+                log_reason                     = "retry probing on timeout";
                 goto handle_start_probing;
             }
 
@@ -2822,7 +2946,7 @@ handle_init:
             nm_utils_get_monotonic_timestamp_msec_cached(p_now_msec);
 
             if (acd_data->probing_timestamp_msec + acd_data->probing_timeout_msec
-                    + ACD_WAIT_PROBING_EXTRA_TIME_MSEC + ACD_WAIT_PROBING_EXTRA_TIME2_MSEC
+                    + ACD_WAIT_PROBING_EXTRA_TIME_MSEC
                 >= (*p_now_msec)) {
                 /* The probing already started quite a while ago. We ignore the link event
                  * and let the probe come to it's natural end. */
@@ -2923,7 +3047,7 @@ handle_start_probing:
         if (!acd_data->nacd_probe) {
             _LOGT_acd(acd_data,
                       "probing currently %snot possible (timeout %u msec; %s, %s)",
-                      orig_state == NM_L3_ACD_ADDR_STATE_INIT ? "" : " still",
+                      orig_state == NM_L3_ACD_ADDR_STATE_INIT ? "" : "still ",
                       acd_data->probing_timeout_msec,
                       failure_reason,
                       log_reason);
@@ -2932,9 +3056,10 @@ handle_start_probing:
         }
 
         _LOGT_acd(acd_data,
-                  "%sstart probing (timeout %u msec, %s)",
+                  "%sstart probing (timeout %u msec, ebpf %s; %s)",
                   orig_state == NM_L3_ACD_ADDR_STATE_INIT ? "" : "re",
                   acd_data->probing_timeout_msec,
+                  n_acd_has_bpf(self->priv.p->nacd) ? "enabled" : "disabled",
                   log_reason);
         return;
     }
@@ -2972,8 +3097,7 @@ handle_start_defending:
                                         NM_L3_ACD_ADDR_STATE_READY,
                                         !NM_IN_SET(state_change_mode,
                                                    ACD_STATE_CHANGE_MODE_INIT,
-                                                   ACD_STATE_CHANGE_MODE_INIT_REAPPLY,
-                                                   ACD_STATE_CHANGE_MODE_POST_COMMIT),
+                                                   ACD_STATE_CHANGE_MODE_INIT_REAPPLY),
                                         "probe is ready, waiting for address to be configured");
         }
         return;
@@ -3016,15 +3140,25 @@ handle_start_defending:
              * warning and start a timer to retry. This way (of having a timer pending)
              * we also back off and are rate limited from retrying too frequently. */
             _LOGT_acd(acd_data, "start announcing failed to create probe (%s)", failure_reason);
+
+            if (!nm_platform_link_uses_arp(self->priv.platform, self->priv.ifindex)) {
+                _LOGT_acd(
+                    acd_data,
+                    "give up on ACD and never retry since interface '%s' is configured with NOARP",
+                    nmp_object_link_get_ifname(self->priv.plobj));
+                return;
+            }
+
             _l3_acd_data_timeout_schedule(acd_data, ACD_WAIT_TIME_ANNOUNCE_RESTART_MSEC);
             return;
         }
 
         _LOGT_acd(acd_data,
-                  "start announcing (defend=%s) (probe created)",
+                  "start announcing (defend=%s) (probe created with ebpf %s)",
                   _l3_acd_defend_type_to_string(acd_data->acd_defend_type_current,
                                                 sbuf256,
-                                                sizeof(sbuf256)));
+                                                sizeof(sbuf256)),
+                  n_acd_has_bpf(self->priv.p->nacd) ? "enabled" : "disabled");
         acd_data->acd_defend_type_is_active = FALSE;
         acd_data->nacd_probe                = probe;
         return;
@@ -3053,7 +3187,10 @@ _l3_acd_data_process_changes(NML3Cfg *self)
     AcdData *acd_data;
     gint64   now_msec = 0;
 
-    _l3_acd_data_prune(self, FALSE);
+    if (self->priv.p->acd_data_pruning_needed)
+        _l3_acd_data_prune(self, FALSE);
+
+    self->priv.p->acd_data_pruning_needed = FALSE;
 
     c_list_for_each_entry (acd_data, &self->priv.p->acd_lst_head, acd_lst) {
         _l3_acd_data_state_change(self,
@@ -3271,7 +3408,7 @@ nm_l3cfg_commit_on_idle_schedule(NML3Cfg *self, NML3CfgCommitType commit_type)
     if (self->priv.p->commit_on_idle_source) {
         if (self->priv.p->commit_on_idle_type < commit_type) {
             /* For multiple calls, we collect the maximum "commit-type". */
-            _LOGT("commit on idle (scheduled) (update to %s)",
+            _LOGT("schedule commit on idle (upgrade type to %s)",
                   _l3_cfg_commit_type_to_string(commit_type,
                                                 sbuf_commit_type,
                                                 sizeof(sbuf_commit_type)));
@@ -3280,7 +3417,7 @@ nm_l3cfg_commit_on_idle_schedule(NML3Cfg *self, NML3CfgCommitType commit_type)
         return FALSE;
     }
 
-    _LOGT("commit on idle (scheduled) (%s)",
+    _LOGT("schedule commit on idle (%s)",
           _l3_cfg_commit_type_to_string(commit_type, sbuf_commit_type, sizeof(sbuf_commit_type)));
     self->priv.p->commit_on_idle_source = nm_g_idle_add_source(_l3_commit_on_idle_cb, self);
     self->priv.p->commit_on_idle_type   = commit_type;
@@ -3471,7 +3608,7 @@ nm_l3cfg_add_config(NML3Cfg              *self,
 
     if (idx < 0) {
         l3_config_data  = nm_g_array_append_new(self->priv.p->l3_config_datas, L3ConfigData);
-        *l3_config_data = (L3ConfigData){
+        *l3_config_data = (L3ConfigData) {
             .tag_confdata              = tag,
             .l3cd                      = nm_l3_config_data_ref_and_seal(l3cd),
             .config_flags              = config_flags,
@@ -3553,7 +3690,7 @@ nm_l3cfg_add_config(NML3Cfg              *self,
     nm_assert(l3_config_data->acd_defend_type_confdata == acd_defend_type);
 
     if (changed) {
-        _l3_changed_configs_set_dirty(self);
+        _l3_changed_configs_set_dirty(self, "configuration added");
         nm_l3cfg_commit_on_idle_schedule(self, NM_L3_CFG_COMMIT_TYPE_AUTO);
     }
 
@@ -3590,7 +3727,7 @@ _l3cfg_remove_config(NML3Cfg              *self,
             continue;
         }
 
-        _l3_changed_configs_set_dirty(self);
+        _l3_changed_configs_set_dirty(self, "configuration removed");
         _l3_config_datas_remove_index_fast(self->priv.p->l3_config_datas, idx);
         changed = TRUE;
         if (l3cd) {
@@ -3761,6 +3898,215 @@ out_ip4_address:
     }
 }
 
+/*****************************************************************************/
+
+static gboolean
+_l3cfg_routed_dns_equal(GPtrArray *routes_old, GPtrArray *routes_new)
+{
+    guint i;
+
+    if (nm_g_ptr_array_len(routes_old) != nm_g_ptr_array_len(routes_new))
+        return FALSE;
+
+    if (routes_old) {
+        nm_platform_route_objs_sort(routes_old, NM_PLATFORM_IP_ROUTE_CMP_TYPE_SEMANTICALLY);
+    }
+
+    if (routes_new) {
+        nm_platform_route_objs_sort(routes_new, NM_PLATFORM_IP_ROUTE_CMP_TYPE_SEMANTICALLY);
+    }
+
+    for (i = 0; i < nm_g_ptr_array_len(routes_old); i++) {
+        if (nmp_object_cmp(routes_old->pdata[i], routes_new->pdata[i]) != 0)
+            return FALSE;
+    }
+
+    return TRUE;
+}
+
+static GPtrArray *
+_l3cfg_routed_dns_get_existing_routes(NML3Cfg *self, int addr_family)
+{
+    GPtrArray                   *routes = NULL;
+    NMPLookup                    lookup;
+    const NMDedupMultiHeadEntry *head_entry;
+    CList                       *iter;
+
+    nmp_lookup_init_object_by_ifindex(&lookup,
+                                      NMP_OBJECT_TYPE_IP_ROUTE(NM_IS_IPv4(addr_family)),
+                                      self->priv.ifindex);
+
+    head_entry = nm_platform_lookup(self->priv.platform, &lookup);
+    if (!head_entry)
+        return NULL;
+
+    c_list_for_each (iter, &head_entry->lst_entries_head) {
+        const NMPObject *obj = c_list_entry(iter, NMDedupMultiEntry, lst_entries)->obj;
+
+        if (nm_platform_route_table_uncoerce(obj->ipx_route.rx.table_coerced, FALSE)
+            != NM_DNS_ROUTES_FWMARK_TABLE_PRIO)
+            continue;
+
+        if (!routes)
+            routes = g_ptr_array_new_with_free_func((GDestroyNotify) nmp_object_unref);
+        g_ptr_array_add(routes, (gpointer) nmp_object_ref(obj));
+    }
+
+    return routes;
+}
+
+static void
+_l3cfg_routed_dns_apply(NML3Cfg *self, const NML3ConfigData *l3cd)
+{
+    if (!l3cd)
+        return;
+
+    for (int IS_IPv4 = 1; IS_IPv4 >= 0; IS_IPv4--) {
+        const char *const                *nameservers;
+        guint                             i;
+        guint                             len;
+        int                               addr_family;
+        nm_auto_unref_ptrarray GPtrArray *old_routes = NULL;
+        nm_auto_unref_ptrarray GPtrArray *new_routes = NULL;
+
+        addr_family = IS_IPv4 ? AF_INET : AF_INET6;
+
+        if (!nm_l3_config_data_get_routed_dns(l3cd, addr_family))
+            goto update_routes;
+
+        _LOGT("configuring IPv%c DNS routes", nm_utils_addr_family_to_char(addr_family));
+
+        new_routes = g_ptr_array_new_with_free_func((GDestroyNotify) nmp_object_unref);
+
+        nameservers = nm_l3_config_data_get_nameservers(l3cd, addr_family, &len);
+        for (i = 0; i < len; i++) {
+            nm_auto_nmpobj NMPObject *obj = NULL;
+            NMPObject                *obj_new;
+            const NMPlatformIPXRoute *route;
+            NMPlatformIPXRoute        route_new;
+            char                      addr_buf[INET6_ADDRSTRLEN];
+            char                      route_buf[128];
+            NMDnsServer               dns;
+            int                       r;
+
+            if (!nm_dns_uri_parse(addr_family, nameservers[i], &dns, NULL))
+                continue;
+
+            /* Find the gateway to the DNS over the current interface. When
+             * doing the lookup, we want to ignore existing DNS routes added
+             * before: use policy routing with a special fwmark that skips
+             * the table containing DNS routes. */
+            r = nm_platform_ip_route_get(self->priv.platform,
+                                         addr_family,
+                                         &dns.addr,
+                                         NM_DNS_ROUTES_FWMARK_TABLE_PRIO,
+                                         self->priv.ifindex,
+                                         &obj);
+            if (r < 0) {
+                _LOGD("could not get route to DNS server %s",
+                      nm_inet_ntop(addr_family, dns.addr.addr_ptr, addr_buf));
+                continue;
+            }
+
+            route = NMP_OBJECT_CAST_IPX_ROUTE(obj);
+
+            if (IS_IPv4) {
+                route_new.r4 = (NMPlatformIP4Route) {
+                    .ifindex    = self->priv.ifindex,
+                    .network    = dns.addr.addr4,
+                    .plen       = 32,
+                    .table_any  = FALSE,
+                    .metric_any = TRUE,
+                    .table_coerced =
+                        nm_platform_route_table_coerce(NM_DNS_ROUTES_FWMARK_TABLE_PRIO),
+                    .gateway   = route->r4.gateway,
+                    .rt_source = NM_IP_CONFIG_SOURCE_USER,
+                };
+
+                nm_platform_ip_route_normalize(addr_family, &route_new.rx);
+
+                _LOGT("route to DNS server %s: %s",
+                      nm_inet4_ntop(dns.addr.addr4, addr_buf),
+                      nm_platform_ip4_route_to_string(&route_new.r4, route_buf, sizeof(route_buf)));
+
+                obj_new = nmp_object_new(NMP_OBJECT_TYPE_IP4_ROUTE, &route_new);
+                g_ptr_array_add(new_routes, obj_new);
+            } else {
+                route_new.r6 = (NMPlatformIP6Route) {
+                    .ifindex    = self->priv.ifindex,
+                    .network    = dns.addr.addr6,
+                    .plen       = 128,
+                    .table_any  = FALSE,
+                    .metric_any = TRUE,
+                    .table_coerced =
+                        nm_platform_route_table_coerce(NM_DNS_ROUTES_FWMARK_TABLE_PRIO),
+                    .gateway   = route->r6.gateway,
+                    .rt_source = NM_IP_CONFIG_SOURCE_USER,
+                };
+
+                nm_platform_ip_route_normalize(addr_family, &route_new.rx);
+
+                _LOGT("route to DNS server %s: %s",
+                      nm_inet6_ntop(&dns.addr.addr6, addr_buf),
+                      nm_platform_ip6_route_to_string(&route_new.r6, route_buf, sizeof(route_buf)));
+
+                obj_new = nmp_object_new(NMP_OBJECT_TYPE_IP6_ROUTE, &route_new);
+                g_ptr_array_add(new_routes, obj_new);
+            }
+        }
+
+        if (new_routes->len > 0) {
+            NMPlatformRoutingRule rule;
+            NMPObject             rule_obj;
+
+            /* Add a routing rule that selects the table when not using the
+             * special fwmark. Note that the rule is shared between all
+             * devices that use DNS routes. There is no cleanup mechanism:
+             * once added the rule stays forever. */
+            rule = ((NMPlatformRoutingRule) {
+                .addr_family = addr_family,
+                .flags       = FIB_RULE_INVERT,
+                .priority    = NM_DNS_ROUTES_FWMARK_TABLE_PRIO,
+                .table       = NM_DNS_ROUTES_FWMARK_TABLE_PRIO,
+                .fwmark      = NM_DNS_ROUTES_FWMARK_TABLE_PRIO,
+                .fwmask      = 0xffffffff,
+                .action      = FR_ACT_TO_TBL,
+                .protocol    = RTPROT_STATIC,
+            });
+
+            nmp_object_stackinit(&rule_obj, NMP_OBJECT_TYPE_ROUTING_RULE, &rule);
+
+            if (!nm_platform_lookup_obj(self->priv.platform,
+                                        NMP_CACHE_ID_TYPE_OBJECT_TYPE,
+                                        &rule_obj)) {
+                _LOGT("adding rule to DNS routing table");
+                nm_platform_routing_rule_add(self->priv.platform, NMP_NLM_FLAG_ADD, &rule);
+            }
+        }
+
+update_routes:
+        old_routes = _l3cfg_routed_dns_get_existing_routes(self, addr_family);
+
+        if (!_l3cfg_routed_dns_equal(old_routes, new_routes)) {
+            if (old_routes) {
+                _LOGT("deleting old DNS routes");
+                for (i = 0; i < old_routes->len; i++) {
+                    nm_platform_object_delete(self->priv.platform, old_routes->pdata[i]);
+                }
+            }
+            if (new_routes) {
+                _LOGT("adding new DNS routes");
+                for (i = 0; i < new_routes->len; i++) {
+                    nm_platform_ip_route_add(self->priv.platform,
+                                             NMP_NLM_FLAG_REPLACE,
+                                             new_routes->pdata[i],
+                                             NULL);
+                }
+            }
+        }
+    }
+}
+
 static void
 _l3cfg_update_combined_config(NML3Cfg               *self,
                               gboolean               to_commit,
@@ -3782,6 +4128,9 @@ _l3cfg_update_combined_config(NML3Cfg               *self,
     nm_assert(!out_old || !*out_old);
 
     NM_SET_OUT(out_changed_combined_l3cd, FALSE);
+
+    if (to_commit)
+        self->priv.p->acd_data_pruning_needed = FALSE;
 
     if (!self->priv.p->changed_configs_configs) {
         if (!self->priv.p->changed_configs_acd_state)
@@ -3830,6 +4179,7 @@ _l3cfg_update_combined_config(NML3Cfg               *self,
         self->priv.p->changed_configs_acd_state = TRUE;
     } else {
         _l3_acd_data_add_all(self, l3_config_datas_arr, l3_config_datas_len, reapply);
+        self->priv.p->acd_data_pruning_needed   = TRUE;
         self->priv.p->changed_configs_acd_state = FALSE;
     }
 
@@ -3887,7 +4237,7 @@ _l3cfg_update_combined_config(NML3Cfg               *self,
                                                 nm_platform_ip6_address_init_loopback(&ax.a6));
             }
 
-            rx.r4 = (NMPlatformIP4Route){
+            rx.r4 = (NMPlatformIP4Route) {
                 .ifindex       = NM_LOOPBACK_IFINDEX,
                 .rt_source     = NM_IP_CONFIG_SOURCE_KERNEL,
                 .network       = NM_IPV4LO_ADDR1,
@@ -3934,11 +4284,6 @@ _l3cfg_update_combined_config(NML3Cfg               *self,
     self->priv.p->combined_l3cd_merged = nm_l3_config_data_seal(g_steal_pointer(&l3cd));
     merged_changed                     = TRUE;
 
-    _nm_l3cfg_emit_signal_notify_l3cd_changed(self,
-                                              l3cd_old,
-                                              self->priv.p->combined_l3cd_merged,
-                                              FALSE);
-
     if (!to_commit) {
         NM_SET_OUT(out_old, g_steal_pointer(&l3cd_old));
         NM_SET_OUT(out_changed_combined_l3cd, TRUE);
@@ -3952,11 +4297,6 @@ out:
         commited_changed = TRUE;
 
         _obj_states_update_all(self);
-
-        _nm_l3cfg_emit_signal_notify_l3cd_changed(self,
-                                                  l3cd_commited_old,
-                                                  self->priv.p->combined_l3cd_commited,
-                                                  TRUE);
 
         NM_SET_OUT(out_old, g_steal_pointer(&l3cd_commited_old));
         NM_SET_OUT(out_changed_combined_l3cd, TRUE);
@@ -4205,7 +4545,7 @@ _l3_commit_ndisc_params(NML3Cfg *self, NML3CfgCommitType commit_type)
     if (l3cd) {
         reachable_set = nm_l3_config_data_get_ndisc_reachable_time_msec(l3cd, &reachable);
         retrans_set   = nm_l3_config_data_get_ndisc_retrans_timer_msec(l3cd, &retrans);
-        hop_limit     = nm_l3_config_data_get_ndisc_hop_limit(l3cd, &hop_limit);
+        hop_limit_set = nm_l3_config_data_get_ndisc_hop_limit(l3cd, &hop_limit);
     }
     ifname = nm_l3cfg_get_ifname(self, TRUE);
 
@@ -4621,7 +4961,7 @@ next:
     }
 
 out:
-    nm_netns_watcher_remove_all(self->priv.netns, TAG, FALSE);
+    nm_netns_watcher_remove_dirty(self->priv.netns, TAG);
 }
 /*****************************************************************************/
 
@@ -4632,6 +4972,30 @@ _global_tracker_mptcp_untrack(NML3Cfg *self, int addr_family)
                                           _MPTCP_TAG(self, NM_IS_IPv4(addr_family)),
                                           FALSE,
                                           TRUE);
+}
+
+static void
+mptcp_ipv6_addr_cb(NMNetns                       *netns,
+                   NMNetnsWatcherType             watcher_type,
+                   const NMNetnsWatcherData      *watcher_data,
+                   gconstpointer                  tag,
+                   const NMNetnsWatcherEventData *event_data,
+                   gpointer                       user_data)
+{
+    NML3Cfg *self = user_data;
+
+    if (event_data->ip_addr.change_type == NM_PLATFORM_SIGNAL_REMOVED)
+        return;
+
+    nm_assert(NMP_OBJECT_GET_TYPE(event_data->ip_addr.obj) == NMP_OBJECT_TYPE_IP6_ADDRESS);
+
+    if (event_data->ip_addr.obj->ip6_address.n_ifa_flags & IFA_F_TENTATIVE)
+        return;
+
+    /* We are inside the handler for a platform event, we should not
+     * perform other operations on platform synchronously. Schedule a
+     * commit in a idle handler. */
+    nm_l3cfg_commit_on_idle_schedule(self, NM_L3_CFG_COMMIT_TYPE_AUTO);
 }
 
 static gboolean
@@ -4690,8 +5054,8 @@ _l3_commit_mptcp_af(NML3Cfg          *self,
             (NM_FLAGS_HAS(mptcp_flags, NM_MPTCP_FLAGS_SIGNAL) ? MPTCP_PM_ADDR_FLAG_SIGNAL : 0)
             | (NM_FLAGS_HAS(mptcp_flags, NM_MPTCP_FLAGS_SUBFLOW) ? MPTCP_PM_ADDR_FLAG_SUBFLOW : 0)
             | (NM_FLAGS_HAS(mptcp_flags, NM_MPTCP_FLAGS_BACKUP) ? MPTCP_PM_ADDR_FLAG_BACKUP : 0)
-            | (NM_FLAGS_HAS(mptcp_flags, NM_MPTCP_FLAGS_FULLMESH) ? MPTCP_PM_ADDR_FLAG_FULLMESH
-                                                                  : 0);
+            | (NM_FLAGS_HAS(mptcp_flags, NM_MPTCP_FLAGS_FULLMESH) ? MPTCP_PM_ADDR_FLAG_FULLMESH : 0)
+            | (NM_FLAGS_HAS(mptcp_flags, NM_MPTCP_FLAGS_LAMINAR) ? MPTCP_PM_ADDR_FLAG_LAMINAR : 0);
         NMPlatformMptcpAddr a = {
             .ifindex     = self->priv.ifindex,
             .id          = 0,
@@ -4712,6 +5076,8 @@ _l3_commit_mptcp_af(NML3Cfg          *self,
                                                         self->priv.p->combined_l3cd_commited,
                                                         addr_family,
                                                         (const NMPlatformIPAddress **) &addr) {
+                const NMPObject *obj;
+
                 /* We want to evaluate the  with-{loopback,link_local}-{4,6} flags based on the actual
                  * ifa_scope that the address will have once we configure it.
                  * "addr" is an address we want to configure, we expect that it will
@@ -4736,6 +5102,34 @@ _l3_commit_mptcp_af(NML3Cfg          *self,
                         }
                     }
                     break;
+                }
+
+                obj = nm_platform_ip_address_get(self->priv.platform,
+                                                 addr_family,
+                                                 self->priv.ifindex,
+                                                 addr);
+                if (!obj) {
+                    /* The address is not yet configured in platform, typically due to
+                     * IPv4 DAD; skip it for now otherwise the kernel will try to use
+                     * the endpoint, it will fail, and it will never try it again. */
+                    goto skip_addr;
+                }
+                if (!IS_IPv4 && (obj->ip6_address.n_ifa_flags & IFA_F_TENTATIVE)) {
+                    NMNetnsWatcherData watcher_data = {};
+
+                    /* The endpoint is not usable when the address is tentative.
+                     * Watch the address until it becomes non-tentative and then
+                     * schedule a new commit. */
+                    watcher_data.ip_addr.addr.addr_family = AF_INET6;
+                    watcher_data.ip_addr.addr.addr.addr6  = addr->a6.address;
+
+                    nm_netns_watcher_add(self->priv.netns,
+                                         NM_NETNS_WATCHER_TYPE_IP_ADDR,
+                                         &watcher_data,
+                                         _NETNS_WATCHER_MPTCP_IPV6_TAG(self),
+                                         mptcp_ipv6_addr_cb,
+                                         self);
+                    goto skip_addr;
                 }
 
                 a.addr = nm_ip_addr_init(addr_family, addr->ax.address_ptr);
@@ -4765,6 +5159,8 @@ skip_addr:
                 (void) 0;
             }
         }
+
+        nm_netns_watcher_remove_dirty(self->priv.netns, _NETNS_WATCHER_MPTCP_IPV6_TAG(self));
 
         if (!any_tracked) {
             /* We need to make it known that this ifindex is used. Track a dummy object. */
@@ -4814,7 +5210,6 @@ static void
 _l3_commit_one(NML3Cfg              *self,
                int                   addr_family,
                NML3CfgCommitType     commit_type,
-               gboolean              changed_combined_l3cd,
                const NML3ConfigData *l3cd_old)
 {
     const int                    IS_IPv4         = NM_IS_IPv4(addr_family);
@@ -4827,6 +5222,7 @@ _l3_commit_one(NML3Cfg              *self,
     NMIPRouteTableSyncMode       route_table_sync;
     char                         sbuf_commit_type[50];
     guint                        i;
+    gboolean                     any_dirty = FALSE;
 
     nm_assert(NM_IS_L3CFG(self));
     nm_assert(NM_IN_SET(commit_type,
@@ -4838,6 +5234,9 @@ _l3_commit_one(NML3Cfg              *self,
     _LOGT("committing IPv%c configuration (%s)",
           nm_utils_addr_family_to_char(addr_family),
           _l3_cfg_commit_type_to_string(commit_type, sbuf_commit_type, sizeof(sbuf_commit_type)));
+
+    if (IS_IPv4)
+        any_dirty = _obj_states_track_mark_dirty(self, TRUE);
 
     addresses = _commit_collect_addresses(self, addr_family, commit_type);
 
@@ -4861,7 +5260,10 @@ _l3_commit_one(NML3Cfg              *self,
     }
 
     if (route_table_sync == NM_IP_ROUTE_TABLE_SYNC_MODE_NONE)
-        route_table_sync = NM_IP_ROUTE_TABLE_SYNC_MODE_MAIN;
+        route_table_sync = NM_IP_ROUTE_TABLE_SYNC_MODE_MAIN_AND_NM_ROUTES;
+
+    if (any_dirty)
+        _obj_states_track_prune_dirty(self, TRUE);
 
     if (commit_type == NM_L3_CFG_COMMIT_TYPE_REAPPLY) {
         gs_unref_array GArray *ipv6_temp_addrs_keep = NULL;
@@ -4887,6 +5289,8 @@ _l3_commit_one(NML3Cfg              *self,
         }
 
         if (c_list_is_empty(&self->priv.p->blocked_lst_head_x[IS_IPv4])) {
+            gs_unref_ptrarray GPtrArray *routes_old = NULL;
+
             addresses_prune =
                 nm_platform_ip_address_get_prune_list(self->priv.platform,
                                                       addr_family,
@@ -4894,10 +5298,28 @@ _l3_commit_one(NML3Cfg              *self,
                                                       nm_g_array_data(ipv6_temp_addrs_keep),
                                                       nm_g_array_len(ipv6_temp_addrs_keep));
 
+            if (route_table_sync == NM_IP_ROUTE_TABLE_SYNC_MODE_MAIN_AND_NM_ROUTES) {
+                GHashTableIter h_iter;
+                ObjStateData  *obj_state;
+
+                /* Get list of all the routes that were configured by us */
+                routes_old = g_ptr_array_new_with_free_func((GDestroyNotify) nmp_object_unref);
+                g_hash_table_iter_init(&h_iter, self->priv.p->obj_state_hash);
+                while (g_hash_table_iter_next(&h_iter, (gpointer *) &obj_state, NULL)) {
+                    if (NMP_OBJECT_GET_TYPE(obj_state->obj) == NMP_OBJECT_TYPE_IP_ROUTE(IS_IPv4)
+                        && obj_state->os_nm_configured)
+                        g_ptr_array_add(routes_old, (gpointer) nmp_object_ref(obj_state->obj));
+                }
+
+                nm_platform_route_objs_sort(routes_old, NM_PLATFORM_IP_ROUTE_CMP_TYPE_SEMANTICALLY);
+            }
+
             routes_prune = nm_platform_ip_route_get_prune_list(self->priv.platform,
                                                                addr_family,
                                                                self->priv.ifindex,
-                                                               route_table_sync);
+                                                               route_table_sync,
+                                                               routes_old);
+
             _obj_state_zombie_lst_prune_all(self, addr_family);
         }
     } else {
@@ -5022,10 +5444,16 @@ _l3_commit(NML3Cfg *self, NML3CfgCommitType commit_type, gboolean is_idle)
                                   &l3cd_old,
                                   &changed_combined_l3cd);
 
-    _nm_l3cfg_emit_signal_notify_simple(self, NM_L3_CONFIG_NOTIFY_TYPE_PRE_COMMIT);
+    _nm_l3cfg_emit_signal_notify_commit(self,
+                                        NM_L3_CONFIG_NOTIFY_TYPE_PRE_COMMIT,
+                                        l3cd_old,
+                                        self->priv.p->combined_l3cd_commited,
+                                        changed_combined_l3cd);
 
-    _l3_commit_one(self, AF_INET, commit_type, changed_combined_l3cd, l3cd_old);
-    _l3_commit_one(self, AF_INET6, commit_type, changed_combined_l3cd, l3cd_old);
+    _l3_commit_one(self, AF_INET, commit_type, l3cd_old);
+    _l3_commit_one(self, AF_INET6, commit_type, l3cd_old);
+
+    _l3cfg_routed_dns_apply(self, self->priv.p->combined_l3cd_commited);
 
     _failedobj_reschedule(self, 0);
 
@@ -5036,7 +5464,11 @@ _l3_commit(NML3Cfg *self, NML3CfgCommitType commit_type, gboolean is_idle)
     nm_assert(self->priv.p->commit_reentrant_count == 1);
     self->priv.p->commit_reentrant_count--;
 
-    _nm_l3cfg_emit_signal_notify_simple(self, NM_L3_CONFIG_NOTIFY_TYPE_POST_COMMIT);
+    _nm_l3cfg_emit_signal_notify_commit(self,
+                                        NM_L3_CONFIG_NOTIFY_TYPE_POST_COMMIT,
+                                        l3cd_old,
+                                        self->priv.p->combined_l3cd_commited,
+                                        changed_combined_l3cd);
 }
 
 NML3CfgBlockHandle *
@@ -5249,6 +5681,30 @@ nm_l3cfg_get_best_default_route(NML3Cfg *self, int addr_family, gboolean get_com
     return nm_l3_config_data_get_best_default_route(l3cd, addr_family);
 }
 
+in_addr_t *
+nm_l3cfg_get_configured_ip4_addresses(NML3Cfg *self, gsize *out_len)
+{
+    GArray               *array = NULL;
+    NMDedupMultiIter      iter;
+    const NMPObject      *obj;
+    const NML3ConfigData *l3cd;
+
+    l3cd = nm_l3cfg_get_combined_l3cd(self, FALSE);
+
+    if (!l3cd)
+        return NULL;
+
+    array = g_array_new(FALSE, FALSE, sizeof(in_addr_t));
+
+    nm_l3_config_data_iter_obj_for_each (&iter, l3cd, &obj, NMP_OBJECT_TYPE_IP4_ADDRESS) {
+        in_addr_t tmp = NMP_OBJECT_CAST_IP4_ADDRESS(obj)->address;
+        nm_g_array_append_simple(array, tmp);
+    }
+
+    *out_len = array->len;
+    return NM_CAST_ALIGN(in_addr_t, g_array_free(array, FALSE));
+}
+
 /*****************************************************************************/
 
 gboolean
@@ -5442,12 +5898,9 @@ finalize(GObject *object)
     gboolean changed;
 
     if (self->priv.netns) {
-        nm_netns_watcher_remove_all(self->priv.netns,
-                                    _NETNS_WATCHER_IP_ADDR_TAG(self, AF_INET),
-                                    TRUE);
-        nm_netns_watcher_remove_all(self->priv.netns,
-                                    _NETNS_WATCHER_IP_ADDR_TAG(self, AF_INET6),
-                                    TRUE);
+        nm_netns_watcher_remove_all(self->priv.netns, _NETNS_WATCHER_IP_ADDR_TAG(self, AF_INET));
+        nm_netns_watcher_remove_all(self->priv.netns, _NETNS_WATCHER_IP_ADDR_TAG(self, AF_INET6));
+        nm_netns_watcher_remove_all(self->priv.netns, _NETNS_WATCHER_MPTCP_IPV6_TAG(self));
     }
 
     nm_prioq_destroy(&self->priv.p->failedobj_prioq);

@@ -26,8 +26,7 @@ struct prioq_item {
 
 struct Prioq {
         compare_func_t compare_func;
-        unsigned n_items, n_allocated;
-
+        unsigned n_items;
         struct prioq_item *items;
 };
 
@@ -48,6 +47,11 @@ Prioq *prioq_new(compare_func_t compare_func) {
 Prioq* prioq_free(Prioq *q) {
         if (!q)
                 return NULL;
+
+        /* Invalidate the index fields of any remaining objects */
+        FOREACH_ARRAY(item, q->items, q->n_items)
+                if (item->idx)
+                        *(item->idx) = PRIOQ_IDX_NULL;
 
         free(q->items);
         return mfree(q);
@@ -144,28 +148,18 @@ static unsigned shuffle_down(Prioq *q, unsigned idx) {
 }
 
 int prioq_put(Prioq *q, void *data, unsigned *idx) {
-        struct prioq_item *i;
         unsigned k;
 
         assert(q);
 
-        if (q->n_items >= q->n_allocated) {
-                unsigned n;
-                struct prioq_item *j;
-
-                n = MAX((q->n_items+1) * 2, 16u);
-                j = reallocarray(q->items, n, sizeof(struct prioq_item));
-                if (!j)
-                        return -ENOMEM;
-
-                q->items = j;
-                q->n_allocated = n;
-        }
+        if (!GREEDY_REALLOC(q->items, MAX(q->n_items + 1, 16u)))
+                return -ENOMEM;
 
         k = q->n_items++;
-        i = q->items + k;
-        i->data = data;
-        i->idx = idx;
+        q->items[k] = (struct prioq_item) {
+                .data = data,
+                .idx = idx,
+        };
 
         if (idx)
                 *idx = k;
@@ -191,6 +185,11 @@ static void remove_item(Prioq *q, struct prioq_item *i) {
         assert(q);
         assert(i);
 
+        /* Let's invalidate the index pointer stored in the user's object to indicate the item is now removed
+         * from the priority queue */
+        if (i->idx)
+                *(i->idx) = PRIOQ_IDX_NULL;
+
         l = q->items + q->n_items - 1;
 
         if (i == l)
@@ -202,6 +201,7 @@ static void remove_item(Prioq *q, struct prioq_item *i) {
                 /* Not last entry, let's replace the last entry with
                  * this one, and reshuffle */
 
+                assert(i >= q->items);
                 k = i - q->items;
 
                 i->data = l->data;
@@ -215,7 +215,7 @@ static void remove_item(Prioq *q, struct prioq_item *i) {
         }
 }
 
-_pure_ static struct prioq_item* find_item(Prioq *q, void *data, unsigned *idx) {
+static struct prioq_item* find_item(Prioq *q, void *data, unsigned *idx) {
         struct prioq_item *i;
 
         assert(q);
@@ -265,6 +265,7 @@ void prioq_reshuffle(Prioq *q, void *data, unsigned *idx) {
         if (!i)
                 return;
 
+        assert(i >= q->items);
         k = i - q->items;
         k = shuffle_down(q, k);
         shuffle_up(q, k);

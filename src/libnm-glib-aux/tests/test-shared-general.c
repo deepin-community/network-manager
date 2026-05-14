@@ -5,6 +5,8 @@
 
 #include "libnm-glib-aux/nm-default-glib-i18n-prog.h"
 
+#include <pwd.h>
+
 #include "libnm-std-aux/unaligned.h"
 #include "libnm-glib-aux/nm-random-utils.h"
 #include "libnm-glib-aux/nm-str-buf.h"
@@ -32,6 +34,13 @@ G_STATIC_ASSERT(_nm_alignof(NMEtherAddr) <= _nm_alignof(NMIPAddr));
 
 /*****************************************************************************/
 
+G_STATIC_ASSERT(_NM_INT_IS_SIGNED(1));
+G_STATIC_ASSERT(!_NM_INT_IS_SIGNED(1u));
+G_STATIC_ASSERT(_NM_INT_SAME_SIGNEDNESS((short) 1, 1l));
+G_STATIC_ASSERT(!_NM_INT_SAME_SIGNEDNESS((unsigned short) 1, 1l));
+
+/*****************************************************************************/
+
 static void
 test_nm_static_assert(void)
 {
@@ -53,6 +62,20 @@ test_nm_static_assert(void)
     (void) NM_STATIC_ASSERT_EXPR_1(2 > 1);
 
     NM_STATIC_ASSERT_EXPR_VOID(2 > 1);
+}
+
+/*****************************************************************************/
+
+static void
+test_max(void)
+{
+    /* Check that NM_MAX() of constant expressions is itself a constant. We
+     * build with -Wvla, so this is a constant! */
+    char buf1[NM_MAX(55, 40)];
+    char buf2[NM_MAX(1, NM_MAX(40, 55))];
+
+    G_STATIC_ASSERT(sizeof(buf1) == 55);
+    G_STATIC_ASSERT(sizeof(buf2) == 55);
 }
 
 /*****************************************************************************/
@@ -174,10 +197,7 @@ test_nm_random(void)
         if (begin >= end)
             continue;
 
-        if (begin == 0 && nmtst_get_rand_bool())
-            x = nm_random_u64_range(end);
-        else
-            x = nm_random_u64_range_full(begin, end, nmtst_get_rand_bool());
+        x = nm_random_u64_range(begin, end);
 
         g_assert_cmpuint(x, >=, begin);
         g_assert_cmpuint(x, <, end);
@@ -378,6 +398,53 @@ test_nm_ip4_addr_netmask_from_prefix(void)
 /*****************************************************************************/
 
 static void
+test_nm_ip6_addr_get_subnet_id(void)
+{
+#define check_subnet_id(_addrstr, _plen, _subnet_id)                              \
+    {                                                                             \
+        struct in6_addr addr;                                                     \
+                                                                                  \
+        addr = nmtst_inet6_from_string(_addrstr);                                 \
+        g_assert_cmpint(nm_ip6_addr_get_subnet_id(&addr, _plen), ==, _subnet_id); \
+    }
+
+    check_subnet_id("aaaa:bbbb:cccc:ffff::", 64, 0);
+    check_subnet_id("aaaa:bbbb:cccc:fffe::", 63, 0);
+    check_subnet_id("aaaa:bbbb:cccc:ffff::", 63, 1);
+    check_subnet_id("aaaa:bbbb:cccc:fffc::", 62, 0);
+    check_subnet_id("aaaa:bbbb:cccc:fffd::", 62, 1);
+    check_subnet_id("aaaa:bbbb:cccc:fffe::", 62, 2);
+    check_subnet_id("aaaa:bbbb:cccc:ffff::", 62, 3);
+    check_subnet_id("aaaa:bbbb:cccc:fff8::", 61, 0);
+    check_subnet_id("aaaa:bbbb:cccc:ffff::", 61, 7);
+    check_subnet_id("aaaa:bbbb:cccc:fff0::", 60, 0);
+    check_subnet_id("aaaa:bbbb:cccc:fff2::", 60, 2);
+    check_subnet_id("aaaa:bbbb:cccc:ffff::", 60, 15);
+    check_subnet_id("aaaa:bbbb:cccc:0000::", 48, 0);
+    check_subnet_id("aaaa:bbbb:cccc:f000::", 48, 61440);
+    check_subnet_id("aaaa:bbbb:cccc:ffff::", 48, 65535);
+    check_subnet_id("aaaa:bbbb:cccc:0000::", 46, 0);
+    check_subnet_id("aaaa:bbbb:cccc:0001::", 46, 1);
+    check_subnet_id("aaaa:bbbb:ccce:5555::", 46, 152917);
+    check_subnet_id("aaaa:bbbb:0000:0000::", 32, 0);
+    check_subnet_id("aaaa:bbbb:0000:0001::", 32, 1);
+    check_subnet_id("aaaa:bbbb:0001:0001::", 32, 65537);
+    check_subnet_id("aaaa:bbbb:ffff:ffff::", 32, 0xffffffff);
+    check_subnet_id("aaaa:bbb8:0000:0000::", 30, 0);
+    check_subnet_id("aaaa:bbb8:0000:0001::", 30, 1);
+    check_subnet_id("aaaa:bbb8:0001:0001::", 30, 65537);
+    check_subnet_id("aaaa:bbbb:0000:0000::", 30, 0x300000000ULL);
+    check_subnet_id("aaaa:bbbb:0001:0001::", 30, 0x300010001ULL);
+    check_subnet_id("aaaa:bbbb:0001:0001::", 8, 0xAABBBB00010001ULL);
+    check_subnet_id("abaa:bbbb:0001:0001::", 7, 0x1AABBBB00010001ULL);
+    check_subnet_id("abaa:bbbb:0001:0001::", 0, 0xABAABBBB00010001ULL);
+    check_subnet_id("abaa:bbbb:0001:0001:5555:5555:5555:5555", 0, 0xABAABBBB00010001ULL);
+    check_subnet_id("::", 0, 0);
+}
+
+/*****************************************************************************/
+
+static void
 test_unaligned(void)
 {
     int shift;
@@ -427,7 +494,7 @@ _strv_cmp_fuzz_input(const char *const  *in,
         if (l < 0)
             ss = g_strdupv((char **) in);
         else if (l == 0) {
-            ss = nmtst_get_rand_bool() ? NULL : g_new0(char *, 1);
+            ss = nmtst_get_rand_bool() ? NULL : nm_strv_empty_new();
         } else {
             ss = nm_memdup(in, sizeof(const char *) * l);
             for (i = 0; i < (gsize) l; i++)
@@ -1599,17 +1666,17 @@ test_parse_env_file(void)
     gs_free char      *arg2 = NULL;
     int                r;
 
-#define env_file_1                  \
-    "a=a\n"                         \
-    "a=b\n"                         \
-    "a=b\n"                         \
-    "a=a\n"                         \
-    "b=b\\\n"                       \
-    "c\n"                           \
-    "d= d\\\n"                      \
-    "e  \\\n"                       \
-    "f  \n"                         \
-    "g=g\\ \n"                      \
+#define env_file_1        \
+    "a=a\n"               \
+    "a=b\n"               \
+    "a=b\n"               \
+    "a=a\n"               \
+    "b=b\\\n"             \
+    "c\n"                 \
+    "d= d\\\n"            \
+    "e  \\\n"             \
+    "f  \n"               \
+    "g=g\\ \n"            \
     "h= ąęół\\ śćńźżµ \n" \
     "i=i\\"
     r = nm_parse_env_file_full(env_file_1, _env_file_push_cb, &data);
@@ -2573,6 +2640,258 @@ test_nm_prioq(void)
 
 /*****************************************************************************/
 
+static const char *
+_getpwuid_name(uid_t uid)
+{
+    static struct passwd *pw;
+
+    pw = getpwuid(uid);
+    return pw ? nm_str_not_empty(pw->pw_name) : NULL;
+}
+
+static void
+test_uid_to_name(void)
+{
+    int i;
+
+    for (i = 0; i < 20; i++) {
+        gs_free char          *name = NULL;
+        gs_free struct passwd *pw   = NULL;
+        uid_t                  uid;
+
+        if (i < 5)
+            uid = i;
+        else
+            uid = nmtst_get_rand_uint32() % 2000u;
+
+        name = nm_utils_uid_to_name(uid);
+        g_assert_cmpstr(name, ==, _getpwuid_name(uid));
+
+        pw = nm_getpwuid(uid);
+        g_assert_cmpstr(name, ==, nm_passwd_name(pw));
+    }
+}
+
+/*****************************************************************************/
+
+static void
+compare_ints(void)
+{
+    GVariant *value1, *value2;
+
+    value1 = g_variant_new_int32(5);
+    value2 = g_variant_new_int32(5);
+    g_assert(nm_g_variant_cmp(value1, value2) == 0);
+
+    g_variant_unref(value2);
+    value2 = g_variant_new_int32(10);
+    g_assert(nm_g_variant_cmp(value1, value2) < 0);
+
+    g_variant_unref(value2);
+    value2 = g_variant_new_int32(-1);
+    g_assert(nm_g_variant_cmp(value1, value2) > 0);
+
+    g_variant_unref(value1);
+    g_variant_unref(value2);
+}
+
+static void
+compare_strings(void)
+{
+    GVariant   *value1, *value2;
+    const char *str1 = "hello";
+    const char *str2 = "world";
+
+    value1 = g_variant_new_string(str1);
+    value2 = g_variant_new_string(str1);
+    g_assert(nm_g_variant_cmp(value1, value2) == 0);
+
+    g_variant_unref(value2);
+    value2 = g_variant_new_string(str2);
+    g_assert(nm_g_variant_cmp(value1, value2) < 0);
+
+    g_assert(nm_g_variant_cmp(value2, value1) > 0);
+
+    g_variant_unref(value1);
+    g_variant_unref(value2);
+}
+
+static void
+compare_strv(void)
+{
+    GVariant         *value1, *value2;
+    const char *const strv1[] = {"foo", "bar", "baz", NULL};
+    const char *const strv2[] = {"foo", "bar", "bar", NULL};
+    const char *const strv3[] = {"foo", "bar", NULL};
+    const char *const strv4[] = {"foo", "bar", "baz", "bam", NULL};
+
+    value1 = g_variant_new_strv(strv1, -1);
+    value2 = g_variant_new_strv(strv1, -1);
+    g_assert(nm_g_variant_cmp(value1, value2) == 0);
+
+    g_variant_unref(value2);
+    value2 = g_variant_new_strv(strv2, -1);
+    g_assert(nm_g_variant_cmp(value1, value2) != 0);
+
+    g_variant_unref(value2);
+    value2 = g_variant_new_strv(strv3, -1);
+    g_assert(nm_g_variant_cmp(value1, value2) != 0);
+
+    g_variant_unref(value2);
+    value2 = g_variant_new_strv(strv4, -1);
+    g_assert(nm_g_variant_cmp(value1, value2) != 0);
+
+    g_variant_unref(value1);
+    g_variant_unref(value2);
+}
+
+static void
+compare_arrays(void)
+{
+    GVariant *value1, *value2;
+    guint32   array[] = {0, 1, 2, 3, 4};
+
+    value1 = g_variant_new_fixed_array(G_VARIANT_TYPE_UINT32,
+                                       array,
+                                       G_N_ELEMENTS(array),
+                                       sizeof(guint32));
+    value2 = g_variant_new_fixed_array(G_VARIANT_TYPE_UINT32,
+                                       array,
+                                       G_N_ELEMENTS(array),
+                                       sizeof(guint32));
+
+    g_assert(nm_g_variant_cmp(value1, value2) == 0);
+
+    g_variant_unref(value2);
+    value2 = g_variant_new_fixed_array(G_VARIANT_TYPE_UINT32,
+                                       array + 1,
+                                       G_N_ELEMENTS(array) - 1,
+                                       sizeof(guint32));
+    g_assert(nm_g_variant_cmp(value1, value2) != 0);
+
+    array[0] = 7;
+    g_variant_unref(value2);
+    value2 = g_variant_new_fixed_array(G_VARIANT_TYPE_UINT32,
+                                       array,
+                                       G_N_ELEMENTS(array),
+                                       sizeof(guint32));
+    g_assert(nm_g_variant_cmp(value1, value2) != 0);
+
+    g_variant_unref(value1);
+    g_variant_unref(value2);
+}
+
+static void
+compare_str_hash(void)
+{
+    GVariant       *value1, *value2;
+    GVariantBuilder builder;
+
+    g_variant_builder_init(&builder, G_VARIANT_TYPE("a{ss}"));
+    g_variant_builder_add(&builder, "{ss}", "key1", "hello");
+    g_variant_builder_add(&builder, "{ss}", "key2", "world");
+    g_variant_builder_add(&builder, "{ss}", "key3", "!");
+    value1 = g_variant_builder_end(&builder);
+
+    g_variant_builder_init(&builder, G_VARIANT_TYPE("a{ss}"));
+    g_variant_builder_add(&builder, "{ss}", "key3", "!");
+    g_variant_builder_add(&builder, "{ss}", "key2", "world");
+    g_variant_builder_add(&builder, "{ss}", "key1", "hello");
+    value2 = g_variant_builder_end(&builder);
+
+    g_assert(nm_g_variant_cmp(value1, value2) != 0);
+
+    g_variant_unref(value1);
+    g_variant_builder_init(&builder, G_VARIANT_TYPE("a{sv}"));
+    g_variant_builder_add(&builder, "{sv}", "key1", g_variant_new_string("hello"));
+    g_variant_builder_add(&builder, "{sv}", "key2", g_variant_new_string("world"));
+    g_variant_builder_add(&builder, "{sv}", "key3", g_variant_new_string("!"));
+    value1 = g_variant_builder_end(&builder);
+
+    g_variant_unref(value2);
+    g_variant_builder_init(&builder, G_VARIANT_TYPE("a{sv}"));
+    g_variant_builder_add(&builder, "{sv}", "key1", g_variant_new_string("hello"));
+    g_variant_builder_add(&builder, "{sv}", "key2", g_variant_new_string("world"));
+    g_variant_builder_add(&builder, "{sv}", "key3", g_variant_new_string("!"));
+    value2 = g_variant_builder_end(&builder);
+
+    g_assert(nm_g_variant_cmp(value1, value2) == 0);
+
+    g_variant_unref(value2);
+    g_variant_builder_init(&builder, G_VARIANT_TYPE("a{ss}"));
+    g_variant_builder_add(&builder, "{ss}", "key1", "hello");
+    g_variant_builder_add(&builder, "{ss}", "key3", "!");
+    value2 = g_variant_builder_end(&builder);
+
+    g_assert(nm_g_variant_cmp(value1, value2) != 0);
+    g_assert(nm_g_variant_cmp(value2, value1) != 0);
+
+    g_variant_unref(value2);
+    g_variant_builder_init(&builder, G_VARIANT_TYPE("a{ss}"));
+    g_variant_builder_add(&builder, "{ss}", "key1", "hello");
+    g_variant_builder_add(&builder, "{ss}", "key2", "moon");
+    g_variant_builder_add(&builder, "{ss}", "key3", "!");
+    value2 = g_variant_builder_end(&builder);
+
+    g_assert(nm_g_variant_cmp(value1, value2) != 0);
+
+    g_variant_unref(value1);
+    g_variant_unref(value2);
+}
+
+static void
+compare_ip6_addresses(void)
+{
+    GVariant       *value1, *value2;
+    struct in6_addr addr1;
+    struct in6_addr addr2;
+    struct in6_addr addr3;
+    guint32         prefix1 = 64;
+    guint32         prefix2 = 64;
+    guint32         prefix3 = 0;
+
+    inet_pton(AF_INET6, "1:2:3:4:5:6:7:8", &addr1);
+    inet_pton(AF_INET6, "ffff:2:3:4:5:6:7:8", &addr2);
+    inet_pton(AF_INET6, "::", &addr3);
+
+    value1 = g_variant_new(
+        "(@ayu@ay)",
+        g_variant_new_fixed_array(G_VARIANT_TYPE_BYTE, (guint8 *) addr1.s6_addr, 16, 1),
+        prefix1,
+        g_variant_new_fixed_array(G_VARIANT_TYPE_BYTE, (guint8 *) addr3.s6_addr, 16, 1));
+
+    value2 = g_variant_new(
+        "(@ayu@ay)",
+        g_variant_new_fixed_array(G_VARIANT_TYPE_BYTE, (guint8 *) addr1.s6_addr, 16, 1),
+        prefix1,
+        g_variant_new_fixed_array(G_VARIANT_TYPE_BYTE, (guint8 *) addr3.s6_addr, 16, 1));
+
+    g_assert(nm_g_variant_cmp(value1, value2) == 0);
+
+    g_variant_unref(value2);
+    value2 = g_variant_new(
+        "(@ayu@ay)",
+        g_variant_new_fixed_array(G_VARIANT_TYPE_BYTE, (guint8 *) addr2.s6_addr, 16, 1),
+        prefix2,
+        g_variant_new_fixed_array(G_VARIANT_TYPE_BYTE, (guint8 *) addr3.s6_addr, 16, 1));
+
+    g_assert(nm_g_variant_cmp(value1, value2) != 0);
+
+    g_variant_unref(value2);
+    value2 = g_variant_new(
+        "(@ayu@ay)",
+        g_variant_new_fixed_array(G_VARIANT_TYPE_BYTE, (guint8 *) addr3.s6_addr, 16, 1),
+        prefix3,
+        g_variant_new_fixed_array(G_VARIANT_TYPE_BYTE, (guint8 *) addr3.s6_addr, 16, 1));
+
+    g_assert(nm_g_variant_cmp(value1, value2) != 0);
+
+    g_variant_unref(value1);
+    g_variant_unref(value2);
+}
+
+/*****************************************************************************/
+
 NMTST_DEFINE();
 
 int
@@ -2581,6 +2900,7 @@ main(int argc, char **argv)
     nmtst_init(&argc, &argv, TRUE);
 
     g_test_add_func("/general/test_nm_static_assert", test_nm_static_assert);
+    g_test_add_func("/general/test_max", test_max);
     g_test_add_func("/general/test_gpid", test_gpid);
     g_test_add_func("/general/test_monotonic_timestamp", test_monotonic_timestamp);
     g_test_add_func("/general/test_timespect_to", test_timespect_to);
@@ -2591,6 +2911,7 @@ main(int argc, char **argv)
     g_test_add_func("/general/test_nm_ip4_addr_is_loopback", test_nm_ip4_addr_is_loopback);
     g_test_add_func("/general/test_nm_ip4_addr_netmask_from_prefix",
                     test_nm_ip4_addr_netmask_from_prefix);
+    g_test_add_func("/general/test_nm_ip6_addr_get_subnet_id", test_nm_ip6_addr_get_subnet_id);
     g_test_add_func("/general/test_unaligned", test_unaligned);
     g_test_add_func("/general/test_strv_cmp", test_strv_cmp);
     g_test_add_func("/general/test_strstrip_avoid_copy", test_strstrip_avoid_copy);
@@ -2623,6 +2944,14 @@ main(int argc, char **argv)
     g_test_add_func("/general/test_garray", test_garray);
     g_test_add_func("/general/test_nm_prioq", test_nm_prioq);
     g_test_add_func("/general/test_nm_random", test_nm_random);
+    g_test_add_func("/general/test_uid_to_name", test_uid_to_name);
+
+    g_test_add_func("/libnm/compare/ints", compare_ints);
+    g_test_add_func("/libnm/compare/strings", compare_strings);
+    g_test_add_func("/libnm/compare/strv", compare_strv);
+    g_test_add_func("/libnm/compare/arrays", compare_arrays);
+    g_test_add_func("/libnm/compare/str_hash", compare_str_hash);
+    g_test_add_func("/libnm/compare/ip6_addresses", compare_ip6_addresses);
 
     return g_test_run();
 }

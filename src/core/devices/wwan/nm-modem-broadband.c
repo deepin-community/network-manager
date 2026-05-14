@@ -508,8 +508,9 @@ find_gsm_apn_cb(const char   *apn,
 static gboolean
 try_create_connect_properties(NMModemBroadband *self)
 {
-    NMModemBroadbandPrivate *priv = NM_MODEM_BROADBAND_GET_PRIVATE(self);
-    ConnectContext          *ctx  = priv->ctx;
+    NMModemBroadbandPrivate *priv        = NM_MODEM_BROADBAND_GET_PRIVATE(self);
+    ConnectContext          *ctx         = priv->ctx;
+    NMDeviceStateReason      fail_reason = NM_DEVICE_STATE_REASON_MODEM_INIT_FAILED;
 
     if (MODEM_CAPS_3GPP(ctx->caps)) {
         NMSettingGsm *s_gsm = nm_connection_get_setting_gsm(ctx->connection);
@@ -522,7 +523,7 @@ try_create_connect_properties(NMModemBroadband *self)
             if (s_gsm)
                 network_id = nm_setting_gsm_get_network_id(s_gsm);
             if (!network_id) {
-                if (mm_modem_get_state(self->_priv.modem_iface) < MM_MODEM_STATE_REGISTERED)
+                if (mm_modem_get_state(self->_priv.modem_iface) != MM_MODEM_STATE_REGISTERED)
                     return FALSE;
                 modem_3gpp = mm_object_get_modem_3gpp(priv->modem_object);
                 network_id = mm_modem_3gpp_get_operator_code(modem_3gpp);
@@ -530,6 +531,7 @@ try_create_connect_properties(NMModemBroadband *self)
             if (!network_id) {
                 _LOGW("failed to connect '%s': unable to determine the network id",
                       nm_connection_get_id(ctx->connection));
+                fail_reason = NM_DEVICE_STATE_REASON_MODEM_NO_OPERATOR_CODE;
                 goto out;
             }
 
@@ -558,7 +560,7 @@ try_create_connect_properties(NMModemBroadband *self)
     }
 
 out:
-    nm_modem_emit_prepare_result(NM_MODEM(self), FALSE, NM_DEVICE_STATE_REASON_MODEM_INIT_FAILED);
+    nm_modem_emit_prepare_result(NM_MODEM(self), FALSE, fail_reason);
     connect_context_clear(self);
     return TRUE;
 }
@@ -668,6 +670,8 @@ connect_context_step(NMModemBroadband *self)
             NMSettingGsm *s_gsm     = nm_connection_get_setting_gsm(ctx->connection);
             const char   *apn       = nm_setting_gsm_get_initial_eps_apn(s_gsm);
             gboolean      do_config = nm_setting_gsm_get_initial_eps_config(s_gsm);
+            const char   *username  = nm_setting_gsm_get_initial_eps_username(s_gsm);
+            const char   *password  = nm_setting_gsm_get_initial_eps_password(s_gsm);
 
             /* assume do_config is true if an APN is set */
             if (apn || do_config) {
@@ -690,9 +694,28 @@ connect_context_step(NMModemBroadband *self)
                     /* do nothing */
                     break;
                 }
-                if (apn)
-                    mm_bearer_properties_set_apn(config, apn);
+                if (apn) {
+                    MMBearerAllowedAuth allowed_auth = MM_BEARER_ALLOWED_AUTH_UNKNOWN;
 
+                    mm_bearer_properties_set_apn(config, apn);
+                    mm_bearer_properties_set_user(config, username);
+                    mm_bearer_properties_set_password(config, password);
+
+                    if (nm_setting_gsm_get_initial_eps_noauth(s_gsm))
+                        allowed_auth |= MM_BEARER_ALLOWED_AUTH_NONE;
+                    if (!nm_setting_gsm_get_initial_eps_refuse_pap(s_gsm))
+                        allowed_auth |= MM_BEARER_ALLOWED_AUTH_PAP;
+                    if (!nm_setting_gsm_get_initial_eps_refuse_chap(s_gsm))
+                        allowed_auth |= MM_BEARER_ALLOWED_AUTH_CHAP;
+                    if (!nm_setting_gsm_get_initial_eps_refuse_mschap(s_gsm))
+                        allowed_auth |= MM_BEARER_ALLOWED_AUTH_MSCHAP;
+                    if (!nm_setting_gsm_get_initial_eps_refuse_mschapv2(s_gsm))
+                        allowed_auth |= MM_BEARER_ALLOWED_AUTH_MSCHAPV2;
+                    if (!nm_setting_gsm_get_initial_eps_refuse_eap(s_gsm))
+                        allowed_auth |= MM_BEARER_ALLOWED_AUTH_EAP;
+
+                    mm_bearer_properties_set_allowed_auth(config, allowed_auth);
+                }
                 /*
                  * Setting the initial EPS bearer settings is a no-op in
                  * ModemManager if the desired configuration is already active.
@@ -896,8 +919,7 @@ complete_connection(NMModem             *modem,
                                   NULL,
                                   _("GSM connection"),
                                   NULL,
-                                  NULL,
-                                  FALSE); /* No IPv6 yet by default */
+                                  NULL);
 
         return TRUE;
     }
@@ -917,8 +939,7 @@ complete_connection(NMModem             *modem,
                                   NULL,
                                   _("CDMA connection"),
                                   NULL,
-                                  iface,
-                                  FALSE); /* No IPv6 yet by default */
+                                  iface);
 
         return TRUE;
     }
@@ -1116,7 +1137,7 @@ stage3_ip_config_start(NMModem *modem, int addr_family, NMModemIPMethod ip_metho
                                      ifindex,
                                      NM_IP_CONFIG_SOURCE_WWAN);
 
-        address = (NMPlatformIP4Address){
+        address = (NMPlatformIP4Address) {
             .address      = address_network,
             .peer_address = address_network,
             .plen         = mm_bearer_ip_config_get_prefix(self->_priv.ipv4_config),
@@ -1127,7 +1148,7 @@ stage3_ip_config_start(NMModem *modem, int addr_family, NMModemIPMethod ip_metho
 
         _LOGI("  address %s", nm_platform_ip4_address_to_string(&address, sbuf, sizeof(sbuf)));
 
-        route = (NMPlatformIP4Route){
+        route = (NMPlatformIP4Route) {
             .rt_source     = NM_IP_CONFIG_SOURCE_WWAN,
             .gateway       = gw,
             .table_any     = TRUE,
@@ -1141,7 +1162,7 @@ stage3_ip_config_start(NMModem *modem, int addr_family, NMModemIPMethod ip_metho
         dns = mm_bearer_ip_config_get_dns(self->_priv.ipv4_config);
         for (i = 0; dns && dns[i]; i++) {
             if (nm_inet_parse_bin(AF_INET, dns[i], NULL, &address_network) && address_network > 0) {
-                nm_l3_config_data_add_nameserver_detail(l3cd, AF_INET, &address_network, NULL);
+                nm_l3_config_data_add_nameserver_addr(l3cd, AF_INET, &address_network);
                 _LOGI("  DNS %s", dns[i]);
             }
         }
@@ -1155,6 +1176,8 @@ stage3_ip_config_start(NMModem *modem, int addr_family, NMModemIPMethod ip_metho
 #endif
     } else {
         NMPlatformIP6Address address;
+        NMPlatformIP6Address gw;
+        const char          *gw_string;
 
         address_string = mm_bearer_ip_config_get_address(self->_priv.ipv6_config);
         if (!address_string) {
@@ -1165,20 +1188,8 @@ stage3_ip_config_start(NMModem *modem, int addr_family, NMModemIPMethod ip_metho
                             NM_DEVICE_ERROR_INVALID_CONNECTION,
                             "(%s) retrieving IPv6 configuration failed: no address given",
                             nm_modem_get_uid(NM_MODEM(self)));
+                goto out;
             }
-            goto out;
-        }
-
-        address = (NMPlatformIP6Address){};
-
-        if (!inet_pton(AF_INET6, address_string, &address.address)) {
-            g_set_error(&error,
-                        NM_DEVICE_ERROR,
-                        NM_DEVICE_ERROR_INVALID_CONNECTION,
-                        "(%s) retrieving IPv6 configuration failed: invalid address given '%s'",
-                        nm_modem_get_uid(NM_MODEM(self)),
-                        address_string);
-            goto out;
         }
 
         data_port = mm_bearer_get_interface(self->_priv.bearer);
@@ -1202,43 +1213,57 @@ stage3_ip_config_start(NMModem *modem, int addr_family, NMModemIPMethod ip_metho
                                      NM_IP_CONFIG_SOURCE_WWAN);
         do_auto = TRUE;
 
-        address.plen = mm_bearer_ip_config_get_prefix(self->_priv.ipv6_config);
-        if (address.plen <= 128) {
-            if (IN6_IS_ADDR_LINKLOCAL(&address.address)) {
-                nm_utils_ipv6_interface_identifier_get_from_addr(&iid_data, &address.address);
-                iid = &iid_data;
-            } else
-                do_auto = FALSE;
-            nm_l3_config_data_add_address_6(l3cd, &address);
+        if (address_string) {
+            address = (NMPlatformIP6Address) {};
+
+            if (!inet_pton(AF_INET6, address_string, &address.address)) {
+                g_set_error(&error,
+                            NM_DEVICE_ERROR,
+                            NM_DEVICE_ERROR_INVALID_CONNECTION,
+                            "(%s) retrieving IPv6 configuration failed: invalid address given '%s'",
+                            nm_modem_get_uid(NM_MODEM(self)),
+                            address_string);
+                goto out;
+            }
+
+            address.plen = mm_bearer_ip_config_get_prefix(self->_priv.ipv6_config);
+            if (address.plen <= 128) {
+                if (IN6_IS_ADDR_LINKLOCAL(&address.address)) {
+                    nm_utils_ipv6_interface_identifier_get_from_addr(&iid_data, &address.address);
+                    iid = &iid_data;
+                } else
+                    do_auto = FALSE;
+                nm_l3_config_data_add_address_6(l3cd, &address);
+            }
+
+            _LOGI("  address %s", nm_platform_ip6_address_to_string(&address, sbuf, sizeof(sbuf)));
         }
 
-        _LOGI("  address %s (slaac %s)",
-              nm_platform_ip6_address_to_string(&address, sbuf, sizeof(sbuf)),
-              do_auto ? "enabled" : "disabled");
+        _LOGI("  slaac %s", do_auto ? "enabled" : "disabled");
 
-        address_string = mm_bearer_ip_config_get_gateway(self->_priv.ipv6_config);
-        if (address_string) {
-            if (inet_pton(AF_INET6, address_string, &address.address) != 1) {
+        gw_string = mm_bearer_ip_config_get_gateway(self->_priv.ipv6_config);
+        if (gw_string) {
+            if (inet_pton(AF_INET6, gw_string, &gw.address) != 1) {
                 g_set_error(&error,
                             NM_DEVICE_ERROR,
                             NM_DEVICE_ERROR_INVALID_CONNECTION,
                             "(%s) retrieving IPv6 configuration failed: invalid gateway given '%s'",
                             nm_modem_get_uid(NM_MODEM(self)),
-                            address_string);
+                            gw_string);
                 goto out;
             }
 
             {
                 const NMPlatformIP6Route r = {
                     .rt_source     = NM_IP_CONFIG_SOURCE_WWAN,
-                    .gateway       = address.address,
+                    .gateway       = gw.address,
                     .table_any     = TRUE,
                     .table_coerced = 0,
                     .metric_any    = TRUE,
                     .metric        = 0,
                 };
 
-                _LOGI("  gateway %s", address_string);
+                _LOGI("  gateway %s", gw_string);
                 nm_l3_config_data_add_route_6(l3cd, &r);
             }
         } else if (ip_method == NM_MODEM_IP_METHOD_STATIC) {
@@ -1256,7 +1281,7 @@ stage3_ip_config_start(NMModem *modem, int addr_family, NMModemIPMethod ip_metho
             struct in6_addr addr;
 
             if (inet_pton(AF_INET6, dns[i], &addr)) {
-                nm_l3_config_data_add_nameserver_detail(l3cd, AF_INET6, &addr, NULL);
+                nm_l3_config_data_add_nameserver_addr(l3cd, AF_INET6, &addr);
                 _LOGI("  DNS %s", dns[i]);
             }
         }
@@ -1626,6 +1651,8 @@ nm_modem_broadband_new(GObject *object, GError **error)
                         driver,
                         NM_MODEM_OPERATOR_CODE,
                         operator_code,
+                        NM_MODEM_DEVICE_UID,
+                        mm_modem_get_device(modem_iface),
                         NULL);
 }
 

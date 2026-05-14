@@ -6,43 +6,33 @@
 #include <stddef.h>
 
 #include "macro.h"
+#include "stat-util.h"
 #include "string-util.h"
 #include "strv.h"
 #include "time-util.h"
 
 #if 0 /* NM_IGNORED */
-#define PATH_SPLIT_SBIN_BIN(x) x "sbin:" x "bin"
-#define PATH_SPLIT_SBIN_BIN_NULSTR(x) x "sbin\0" x "bin\0"
+#define PATH_SPLIT_BIN(x) x "sbin:" x "bin"
+#define PATH_SPLIT_BIN_NULSTR(x) x "sbin\0" x "bin\0"
 
-#define PATH_NORMAL_SBIN_BIN(x) x "bin"
-#define PATH_NORMAL_SBIN_BIN_NULSTR(x) x "bin\0"
+#define PATH_MERGED_BIN(x) x "bin"
+#define PATH_MERGED_BIN_NULSTR(x) x "bin\0"
 
-#if HAVE_SPLIT_BIN
-#  define PATH_SBIN_BIN(x) PATH_SPLIT_SBIN_BIN(x)
-#  define PATH_SBIN_BIN_NULSTR(x) PATH_SPLIT_SBIN_BIN_NULSTR(x)
+#define DEFAULT_PATH_WITH_SBIN PATH_SPLIT_BIN("/usr/local/") ":" PATH_SPLIT_BIN("/usr/")
+#define DEFAULT_PATH_WITHOUT_SBIN PATH_MERGED_BIN("/usr/local/") ":" PATH_MERGED_BIN("/usr/")
+
+#define DEFAULT_PATH_COMPAT PATH_SPLIT_BIN("/usr/local/") ":" PATH_SPLIT_BIN("/usr/") ":" PATH_SPLIT_BIN("/")
+
+const char* default_PATH(void);
+
+static inline const char* default_user_PATH(void) {
+#ifdef DEFAULT_USER_PATH
+        return DEFAULT_USER_PATH;
 #else
-#  define PATH_SBIN_BIN(x) PATH_NORMAL_SBIN_BIN(x)
-#  define PATH_SBIN_BIN_NULSTR(x) PATH_NORMAL_SBIN_BIN_NULSTR(x)
+        return default_PATH();
 #endif
-
-#define DEFAULT_PATH_NORMAL PATH_SBIN_BIN("/usr/local/") ":" PATH_SBIN_BIN("/usr/")
-#define DEFAULT_PATH_NORMAL_NULSTR PATH_SBIN_BIN_NULSTR("/usr/local/") PATH_SBIN_BIN_NULSTR("/usr/")
-#define DEFAULT_PATH_SPLIT_USR DEFAULT_PATH_NORMAL ":" PATH_SBIN_BIN("/")
-#define DEFAULT_PATH_SPLIT_USR_NULSTR DEFAULT_PATH_NORMAL_NULSTR PATH_SBIN_BIN_NULSTR("/")
-#define DEFAULT_PATH_COMPAT PATH_SPLIT_SBIN_BIN("/usr/local/") ":" PATH_SPLIT_SBIN_BIN("/usr/") ":" PATH_SPLIT_SBIN_BIN("/")
-
-#if HAVE_SPLIT_USR
-#  define DEFAULT_PATH DEFAULT_PATH_SPLIT_USR
-#  define DEFAULT_PATH_NULSTR DEFAULT_PATH_SPLIT_USR_NULSTR
-#else
-#  define DEFAULT_PATH DEFAULT_PATH_NORMAL
-#  define DEFAULT_PATH_NULSTR DEFAULT_PATH_NORMAL_NULSTR
-#endif
+}
 #endif /* NM_IGNORED */
-
-#ifndef DEFAULT_USER_PATH
-#  define DEFAULT_USER_PATH DEFAULT_PATH
-#endif
 
 static inline bool is_path(const char *p) {
         if (!p) /* A NULL pointer is definitely not a path */
@@ -64,7 +54,7 @@ int safe_getcwd(char **ret);
 int path_make_absolute_cwd(const char *p, char **ret);
 int path_make_relative(const char *from, const char *to, char **ret);
 int path_make_relative_parent(const char *from_child, const char *to, char **ret);
-char *path_startswith_full(const char *path, const char *prefix, bool accept_dot_dot) _pure_;
+char* path_startswith_full(const char *path, const char *prefix, bool accept_dot_dot) _pure_;
 static inline char* path_startswith(const char *path, const char *prefix) {
         return path_startswith_full(path, prefix, true);
 }
@@ -79,29 +69,62 @@ static inline bool path_equal_filename(const char *a, const char *b) {
         return path_compare_filename(a, b) == 0;
 }
 
-bool path_equal_or_inode_same(const char *a, const char *b, int flags);
+int path_equal_or_inode_same_full(const char *a, const char *b, int flags);
+static inline bool path_equal_or_inode_same(const char *a, const char *b, int flags) {
+        return path_equal_or_inode_same_full(a, b, flags) > 0;
+}
 
 char* path_extend_internal(char **x, ...);
 #define path_extend(x, ...) path_extend_internal(x, __VA_ARGS__, POINTER_MAX)
 #define path_join(...) path_extend_internal(NULL, __VA_ARGS__, POINTER_MAX)
 
-char* path_simplify(char *path);
+static inline char* skip_leading_slash(const char *p) {
+        return skip_leading_chars(p, "/");
+}
 
-static inline bool path_equal_ptr(const char *a, const char *b) {
-        return !!a == !!b && (!a || path_equal(a, b));
+typedef enum PathSimplifyFlags {
+        PATH_SIMPLIFY_KEEP_TRAILING_SLASH = 1 << 0,
+} PathSimplifyFlags;
+
+char* path_simplify_full(char *path, PathSimplifyFlags flags);
+static inline char* path_simplify(char *path) {
+        return path_simplify_full(path, 0);
+}
+
+static inline int path_simplify_alloc(const char *path, char **ret) {
+        assert(ret);
+
+        if (!path) {
+                *ret = NULL;
+                return 0;
+        }
+
+        char *t = strdup(path);
+        if (!t)
+                return -ENOMEM;
+
+        *ret = path_simplify(t);
+        return 0;
 }
 
 /* Note: the search terminates on the first NULL item. */
 #define PATH_IN_SET(p, ...) path_strv_contains(STRV_MAKE(__VA_ARGS__), p)
 
-char* path_startswith_strv(const char *p, char **set);
+char* path_startswith_strv(const char *p, char * const *strv);
 #define PATH_STARTSWITH_SET(p, ...) path_startswith_strv(p, STRV_MAKE(__VA_ARGS__))
 
 int path_strv_make_absolute_cwd(char **l);
 char** path_strv_resolve(char **l, const char *root);
 char** path_strv_resolve_uniq(char **l, const char *root);
 
-int find_executable_full(const char *name, const char *root, char **exec_search_path, bool use_path_envvar, char **ret_filename, int *ret_fd);
+int open_and_check_executable(const char *name, const char *root, char **ret_path, int *ret_fd);
+int find_executable_full(
+                const char *name,
+                const char *root,
+                char * const *exec_search_path,
+                bool use_path_envvar,
+                char **ret_filename,
+                int *ret_fd);
 static inline int find_executable(const char *name, char **ret_filename) {
         return find_executable_full(name, /* root= */ NULL, NULL, true, ret_filename, NULL);
 }
@@ -142,7 +165,7 @@ int fsck_exists_for_fstype(const char *fstype);
                 char *_p, *_n;                                          \
                 size_t _l;                                              \
                 while (_path[0] == '/' && _path[1] == '/')              \
-                        _path ++;                                       \
+                        _path++;                                        \
                 if (isempty(_root))                                     \
                         _ret = _path;                                   \
                 else {                                                  \
@@ -161,10 +184,11 @@ int fsck_exists_for_fstype(const char *fstype);
 
 int path_find_first_component(const char **p, bool accept_dot_dot, const char **ret);
 int path_find_last_component(const char *path, bool accept_dot_dot, const char **next, const char **ret);
-const char *last_path_component(const char *path);
+const char* last_path_component(const char *path);
 int path_extract_filename(const char *path, char **ret);
 int path_extract_directory(const char *path, char **ret);
 
+bool filename_part_is_valid(const char *p) _pure_;
 bool filename_is_valid(const char *p) _pure_;
 bool path_is_valid_full(const char *p, bool accept_dot_dot) _pure_;
 static inline bool path_is_valid(const char *p) {
@@ -186,7 +210,9 @@ bool valid_device_allow_pattern(const char *path);
 
 bool dot_or_dot_dot(const char *path);
 
-static inline const char *skip_dev_prefix(const char *p) {
+bool path_implies_directory(const char *path);
+
+static inline const char* skip_dev_prefix(const char *p) {
         const char *e;
 
         /* Drop any /dev prefix if there is any */
@@ -197,11 +223,11 @@ static inline const char *skip_dev_prefix(const char *p) {
 }
 
 bool empty_or_root(const char *path);
-static inline const char *empty_to_root(const char *path) {
+static inline const char* empty_to_root(const char *path) {
         return isempty(path) ? "/" : path;
 }
 
-bool path_strv_contains(char **l, const char *path);
-bool prefixed_path_strv_contains(char **l, const char *path);
+bool path_strv_contains(char * const *l, const char *path);
+bool prefixed_path_strv_contains(char * const *l, const char *path);
 
 int path_glob_can_match(const char *pattern, const char *prefix, char **ret);

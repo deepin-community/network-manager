@@ -17,6 +17,7 @@ char* strv_find(char * const *l, const char *name) _pure_;
 char* strv_find_case(char * const *l, const char *name) _pure_;
 char* strv_find_prefix(char * const *l, const char *name) _pure_;
 char* strv_find_startswith(char * const *l, const char *name) _pure_;
+char* strv_find_closest(char * const *l, const char *name) _pure_;
 /* Given two vectors, the first a list of keys and the second a list of key-value pairs, returns the value
  * of the first key from the first vector that is found in the second vector. */
 char* strv_find_first_field(char * const *needles, char * const *haystack) _pure_;
@@ -32,14 +33,24 @@ char** strv_free_erase(char **l);
 DEFINE_TRIVIAL_CLEANUP_FUNC(char**, strv_free_erase);
 #define _cleanup_strv_free_erase_ _cleanup_(strv_free_erasep)
 
+void strv_free_many(char ***strvs, size_t n) _nonnull_if_nonzero_(1, 2);
+
 char** strv_copy_n(char * const *l, size_t n);
 static inline char** strv_copy(char * const *l) {
         return strv_copy_n(l, SIZE_MAX);
 }
+int strv_copy_unless_empty(char * const *l, char ***ret);
+
 size_t strv_length(char * const *l) _pure_;
 
 int strv_extend_strv(char ***a, char * const *b, bool filter_duplicates);
-int strv_extend_strv_concat(char ***a, char * const *b, const char *suffix);
+int strv_extend_strv_consume(char ***a, char **b, bool filter_duplicates);
+
+int strv_extend_strv_biconcat(char ***a, const char *prefix, const char* const *b, const char *suffix);
+static inline int strv_extend_strv_concat(char ***a, const char* const *b, const char *suffix) {
+        return strv_extend_strv_biconcat(a, NULL, b, suffix);
+}
+
 int strv_prepend(char ***l, const char *value);
 
 /* _with_size() are lower-level functions where the size can be provided externally,
@@ -51,8 +62,10 @@ static inline int strv_extend(char ***l, const char *value) {
         return strv_extend_with_size(l, NULL, value);
 }
 
+int strv_extend_many_internal(char ***l, const char *value, ...);
+#define strv_extend_many(l, ...) strv_extend_many_internal(l, __VA_ARGS__, POINTER_MAX)
+
 int strv_extendf(char ***l, const char *format, ...) _printf_(2,3);
-int strv_extend_front(char ***l, const char *value);
 
 int strv_push_with_size(char ***l, size_t *n, char *value);
 static inline int strv_push(char ***l, char *value) {
@@ -82,6 +95,8 @@ int strv_compare(char * const *a, char * const *b);
 static inline bool strv_equal(char * const *a, char * const *b) {
         return strv_compare(a, b) == 0;
 }
+
+bool strv_equal_ignore_order(char * const *a, char * const *b);
 
 char** strv_new_internal(const char *x, ...) _sentinel_;
 char** strv_new_ap(const char *x, va_list ap);
@@ -144,7 +159,7 @@ bool strv_overlap(char * const *a, char * const *b) _pure_;
         _STRV_FOREACH_BACKWARDS(s, l, UNIQ_T(h, UNIQ), UNIQ_T(i, UNIQ))
 
 #define _STRV_FOREACH_PAIR(x, y, l, i)                          \
-        for (typeof(*l) *x, *y, *i = (l);                       \
+        for (typeof(*(l)) *x, *y, *i = (l);                     \
              i && *(x = i) && *(y = i + 1);                     \
              i += 2)
 
@@ -152,10 +167,21 @@ bool strv_overlap(char * const *a, char * const *b) _pure_;
         _STRV_FOREACH_PAIR(x, y, l, UNIQ_T(i, UNIQ))
 
 char** strv_sort(char **l);
+char** strv_sort_uniq(char **l);
 void strv_print_full(char * const *l, const char *prefix);
 static inline void strv_print(char * const *l) {
         strv_print_full(l, NULL);
 }
+
+char* startswith_strv(const char *s, char * const *l);
+
+#define STARTSWITH_SET(p, ...)                                  \
+        startswith_strv(p, STRV_MAKE(__VA_ARGS__))
+
+char* endswith_strv(const char *s, char * const *l);
+
+#define ENDSWITH_SET(p, ...)                                    \
+        endswith_strv(p, STRV_MAKE(__VA_ARGS__))
 
 #define strv_from_stdarg_alloca(first)                          \
         ({                                                      \
@@ -200,18 +226,6 @@ static inline void strv_print(char * const *l) {
                 _x && strv_contains_case(STRV_MAKE(__VA_ARGS__), _x); \
         })
 
-#define ENDSWITH_SET(p, ...)                                    \
-        ({                                                      \
-                const char *_p = (p);                           \
-                char *_found = NULL;                            \
-                STRV_FOREACH(_i, STRV_MAKE(__VA_ARGS__)) {      \
-                        _found = endswith(_p, *_i);             \
-                        if (_found)                             \
-                                break;                          \
-                }                                               \
-                _found;                                         \
-        })
-
 #define _FOREACH_STRING(uniq, x, y, ...)                                \
         for (const char *x, * const*UNIQ_T(l, uniq) = STRV_MAKE_CONST(({ x = y; }), ##__VA_ARGS__); \
              x;                                                         \
@@ -227,7 +241,6 @@ bool strv_fnmatch_full(char* const* patterns, const char *s, int flags, size_t *
 static inline bool strv_fnmatch(char* const* patterns, const char *s) {
         return strv_fnmatch_full(patterns, s, 0, NULL);
 }
-
 static inline bool strv_fnmatch_or_empty(char* const* patterns, const char *s, int flags) {
         assert(s);
         return strv_isempty(patterns) ||
@@ -245,8 +258,15 @@ int fputstrv(FILE *f, char * const *l, const char *separator, bool *space);
 #define strv_free_and_replace(a, b)             \
         free_and_replace_full(a, b, strv_free)
 
-extern const struct hash_ops string_strv_hash_ops;
+void string_strv_hashmap_remove(Hashmap *h, const char *key, const char *value);
+static inline void string_strv_ordered_hashmap_remove(OrderedHashmap *h, const char *key, const char *value) {
+        string_strv_hashmap_remove(PLAIN_HASHMAP(h), key, value);
+}
 int _string_strv_hashmap_put(Hashmap **h, const char *key, const char *value  HASHMAP_DEBUG_PARAMS);
 int _string_strv_ordered_hashmap_put(OrderedHashmap **h, const char *key, const char *value  HASHMAP_DEBUG_PARAMS);
 #define string_strv_hashmap_put(h, k, v) _string_strv_hashmap_put(h, k, v  HASHMAP_DEBUG_SRC_ARGS)
 #define string_strv_ordered_hashmap_put(h, k, v) _string_strv_ordered_hashmap_put(h, k, v  HASHMAP_DEBUG_SRC_ARGS)
+
+int strv_rebreak_lines(char **l, size_t width, char ***ret);
+
+char** strv_filter_prefix(char * const *l, const char *prefix);

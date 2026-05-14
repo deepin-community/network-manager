@@ -15,6 +15,7 @@
 #include "libnm-base/nm-ethtool-base.h"
 #include "libnm-platform/nmp-object.h"
 #include "libnm-platform/nmp-netns.h"
+#include "libnm-platform/nmp-ethtool-ioctl.h"
 #include "libnm-platform/nm-platform-utils.h"
 
 #include "test-common.h"
@@ -27,7 +28,7 @@
 #define DUMMY_TYPEDESC "dummy"
 #define BOGUS_NAME     "nm-bogus-device"
 #define BOGUS_IFINDEX  INT_MAX
-#define SLAVE_NAME     "nm-test-slave"
+#define PORT_NAME      "nm-test-port"
 #define PARENT_NAME    "nm-test-parent"
 #define VLAN_ID        4077
 #define VLAN_FLAGS     0
@@ -122,7 +123,8 @@ software_add(NMLinkType link_type, const char *name)
         gboolean bond0_exists = !!nm_platform_link_get_by_ifname(NM_PLATFORM_GET, "bond0");
         int      r;
         const NMPlatformLnkBond nm_platform_lnk_bond_default = {
-            .mode = nmtst_rand_select(3, 1),
+            .mode        = nmtst_rand_select(3, 1),
+            .use_carrier = 1,
         };
 
         r = nm_platform_link_bond_add(NM_PLATFORM_GET, name, &nm_platform_lnk_bond_default, NULL);
@@ -174,7 +176,7 @@ software_add(NMLinkType link_type, const char *name)
             return NMTST_NM_ERR_SUCCESS(nm_platform_link_vlan_add(NM_PLATFORM_GET,
                                                                   name,
                                                                   parent_ifindex,
-                                                                  &((NMPlatformLnkVlan){
+                                                                  &((NMPlatformLnkVlan) {
                                                                       .id       = VLAN_ID,
                                                                       .protocol = ETH_P_8021Q,
                                                                   }),
@@ -228,17 +230,16 @@ test_port(int controller, int port_type, SignalData *controller_changed)
     SignalData *link_added = add_signal_ifname(NM_PLATFORM_SIGNAL_LINK_CHANGED,
                                                NM_PLATFORM_SIGNAL_ADDED,
                                                link_callback,
-                                               SLAVE_NAME);
+                                               PORT_NAME);
     SignalData *link_changed, *link_removed;
-    char       *value;
     NMLinkType  controller_type = nm_platform_link_get_type(NM_PLATFORM_GET, controller);
     gboolean    test_link_changed_signal_arg1;
     gboolean    test_link_changed_signal_arg2;
 
     g_assert(NM_IN_SET(controller_type, NM_LINK_TYPE_TEAM, NM_LINK_TYPE_BOND, NM_LINK_TYPE_BRIDGE));
 
-    g_assert(software_add(port_type, SLAVE_NAME));
-    ifindex_port = nm_platform_link_get_ifindex(NM_PLATFORM_GET, SLAVE_NAME);
+    g_assert(software_add(port_type, PORT_NAME));
+    ifindex_port = nm_platform_link_get_ifindex(NM_PLATFORM_GET, PORT_NAME);
     g_assert(ifindex_port > 0);
     link_changed = add_signal_ifindex(NM_PLATFORM_SIGNAL_LINK_CHANGED,
                                       NM_PLATFORM_SIGNAL_CHANGED,
@@ -261,8 +262,8 @@ test_port(int controller, int port_type, SignalData *controller_changed)
 
     /* Attach port */
     link_changed->ifindex = ifindex_port;
-    g_assert(nm_platform_link_enslave(NM_PLATFORM_GET, controller, ifindex_port));
-    g_assert_cmpint(nm_platform_link_get_master(NM_PLATFORM_GET, ifindex_port), ==, controller);
+    g_assert(nm_platform_link_attach_port(NM_PLATFORM_GET, controller, ifindex_port));
+    g_assert_cmpint(nm_platform_link_get_controller(NM_PLATFORM_GET, ifindex_port), ==, controller);
 
     accept_signals(link_changed, 1, 3);
     accept_signals(controller_changed, 0, 2);
@@ -280,7 +281,7 @@ test_port(int controller, int port_type, SignalData *controller_changed)
         const NMPlatformLink    *link;
         const NMPlatformLnkBond *lnk;
 
-        link = nmtstp_link_get_typed(NM_PLATFORM_GET, 0, SLAVE_NAME, NM_LINK_TYPE_DUMMY);
+        link = nmtstp_link_get_typed(NM_PLATFORM_GET, 0, PORT_NAME, NM_LINK_TYPE_DUMMY);
         g_assert(link);
 
         lnk = nm_platform_link_get_lnk_bond(NM_PLATFORM_GET, controller, NULL);
@@ -290,29 +291,51 @@ test_port(int controller, int port_type, SignalData *controller_changed)
         prio_supported = (lnk->mode == 1);
         prio_has       = nmtst_get_rand_bool() && prio_supported;
 
-        bond_port = (NMPlatformLinkBondPort){
+        bond_port = (NMPlatformLinkBondPort) {
             .queue_id = 5,
             .prio_has = prio_has,
             .prio     = prio_has ? 6 : 0,
         };
 
-        g_assert(nm_platform_link_change(NM_PLATFORM_GET, ifindex_port, NULL, &bond_port, 0));
+        g_assert(nm_platform_link_change(NM_PLATFORM_GET, ifindex_port, NULL, &bond_port, NULL, 0));
         accept_signals(link_changed, 1, 3);
 
-        link = nmtstp_link_get(NM_PLATFORM_GET, ifindex_port, SLAVE_NAME);
+        link = nmtstp_link_get(NM_PLATFORM_GET, ifindex_port, PORT_NAME);
         g_assert(link);
         g_assert_cmpint(link->port_data.bond.queue_id, ==, 5);
         g_assert(link->port_data.bond.prio_has || link->port_data.bond.prio == 0);
     } else if (controller_type == NM_LINK_TYPE_BRIDGE) {
         /* Skip this part for nm-fake-platform */
         if (nmtstp_is_root_test() && nmtstp_is_sysfs_writable()) {
-            g_assert(nm_platform_sysctl_slave_set_option(NM_PLATFORM_GET,
-                                                         ifindex_port,
-                                                         "priority",
-                                                         "614"));
-            value = nm_platform_sysctl_slave_get_option(NM_PLATFORM_GET, ifindex_port, "priority");
-            g_assert_cmpstr(value, ==, "614");
-            g_free(value);
+            NMPlatformLinkBridgePort   bridge_port;
+            const NMPlatformLink      *link;
+            const NMPlatformLnkBridge *lnk;
+
+            link = nmtstp_link_get_typed(NM_PLATFORM_GET, 0, PORT_NAME, NM_LINK_TYPE_DUMMY);
+            g_assert(link);
+
+            lnk = nm_platform_link_get_lnk_bridge(NM_PLATFORM_GET, controller, NULL);
+            g_assert(lnk);
+
+            bridge_port = (NMPlatformLinkBridgePort) {
+                .path_cost = 100,
+                .priority  = 614,
+                .hairpin   = 0,
+            };
+
+            g_assert(nm_platform_link_change(NM_PLATFORM_GET,
+                                             ifindex_port,
+                                             NULL,
+                                             NULL,
+                                             &bridge_port,
+                                             0));
+            accept_signals(link_changed, 1, 3);
+
+            link = nmtstp_link_get(NM_PLATFORM_GET, ifindex_port, PORT_NAME);
+            g_assert(link);
+            g_assert_cmpint(link->port_data.bridge.path_cost, ==, 100);
+            g_assert_cmpint(link->port_data.bridge.priority, ==, 614);
+            g_assert_cmpint(link->port_data.bridge.hairpin, ==, 0);
         }
     }
 
@@ -394,7 +417,7 @@ test_port(int controller, int port_type, SignalData *controller_changed)
      * Gracefully succeed if already attached port.
      */
     ensure_no_signal(link_changed);
-    g_assert(nm_platform_link_enslave(NM_PLATFORM_GET, controller, ifindex_port));
+    g_assert(nm_platform_link_attach_port(NM_PLATFORM_GET, controller, ifindex_port));
     accept_signals(link_changed, 0, 2);
     accept_signals(controller_changed, 0, 2);
 
@@ -402,8 +425,8 @@ test_port(int controller, int port_type, SignalData *controller_changed)
     ensure_no_signal(link_added);
     ensure_no_signal(link_changed);
     ensure_no_signal(link_removed);
-    g_assert(nm_platform_link_release(NM_PLATFORM_GET, controller, ifindex_port));
-    g_assert_cmpint(nm_platform_link_get_master(NM_PLATFORM_GET, ifindex_port), ==, 0);
+    g_assert(nm_platform_link_release_port(NM_PLATFORM_GET, controller, ifindex_port));
+    g_assert_cmpint(nm_platform_link_get_controller(NM_PLATFORM_GET, ifindex_port), ==, 0);
     if (link_changed->received_count > 0) {
         accept_signals(link_added, 0, 1);
         accept_signals(link_changed, 1, 5);
@@ -421,7 +444,7 @@ test_port(int controller, int port_type, SignalData *controller_changed)
 
     /* Release again */
     ensure_no_signal(link_changed);
-    g_assert(!nm_platform_link_release(NM_PLATFORM_GET, controller, ifindex_port));
+    g_assert(!nm_platform_link_release_port(NM_PLATFORM_GET, controller, ifindex_port));
 
     ensure_no_signal(controller_changed);
 
@@ -496,28 +519,29 @@ test_software(NMLinkType link_type, const char *link_typename)
     g_assert(nm_platform_link_uses_arp(NM_PLATFORM_GET, ifindex));
     accept_signal(link_changed);
 
-    /* Set master option */
+    /* Set controller option */
     if (nmtstp_is_root_test()) {
         switch (link_type) {
         case NM_LINK_TYPE_BRIDGE:
             if (nmtstp_is_sysfs_writable()) {
-                g_assert(nm_platform_sysctl_master_set_option(NM_PLATFORM_GET,
-                                                              ifindex,
-                                                              "forward_delay",
-                                                              "628"));
-                value =
-                    nm_platform_sysctl_master_get_option(NM_PLATFORM_GET, ifindex, "forward_delay");
+                g_assert(nm_platform_sysctl_controller_set_option(NM_PLATFORM_GET,
+                                                                  ifindex,
+                                                                  "forward_delay",
+                                                                  "628"));
+                value = nm_platform_sysctl_controller_get_option(NM_PLATFORM_GET,
+                                                                 ifindex,
+                                                                 "forward_delay");
                 g_assert_cmpstr(value, ==, "628");
                 g_free(value);
             }
             break;
         case NM_LINK_TYPE_BOND:
             if (nmtstp_is_sysfs_writable()) {
-                g_assert(nm_platform_sysctl_master_set_option(NM_PLATFORM_GET,
-                                                              ifindex,
-                                                              "mode",
-                                                              "active-backup"));
-                value = nm_platform_sysctl_master_get_option(NM_PLATFORM_GET, ifindex, "mode");
+                g_assert(nm_platform_sysctl_controller_set_option(NM_PLATFORM_GET,
+                                                                  ifindex,
+                                                                  "mode",
+                                                                  "active-backup"));
+                value = nm_platform_sysctl_controller_get_option(NM_PLATFORM_GET, ifindex, "mode");
                 /* When reading back, the output looks slightly different. */
                 g_assert(g_str_has_prefix(value, "active-backup"));
                 g_free(value);
@@ -528,7 +552,7 @@ test_software(NMLinkType link_type, const char *link_typename)
         }
     }
 
-    /* Enslave and release */
+    /* Attach port and release */
     switch (link_type) {
     case NM_LINK_TYPE_BRIDGE:
     case NM_LINK_TYPE_BOND:
@@ -702,7 +726,7 @@ test_bridge_addr(void)
     g_assert_cmpint(plink->l_address.len, ==, sizeof(addr));
     g_assert(!memcmp(plink->l_address.data, addr, sizeof(addr)));
 
-    info_data = (const NMPlatformLinkSetBridgeInfoData){
+    info_data = (const NMPlatformLinkSetBridgeInfoData) {
         .vlan_default_pvid_val = nmtst_rand_select(0, 5, 42, 1048),
         .vlan_default_pvid_has = nmtst_get_rand_bool(),
         .vlan_filtering_val    = nmtst_get_rand_bool(),
@@ -721,7 +745,7 @@ test_bridge_addr(void)
                       "/sys/class/net/" DEVICE_NAME "/bridge/vlan_filtering",
                       info_data.vlan_filtering_val && info_data.vlan_filtering_has ? "1" : "0");
 
-    info_data = (const NMPlatformLinkSetBridgeInfoData){
+    info_data = (const NMPlatformLinkSetBridgeInfoData) {
         .vlan_default_pvid_val = 55,
         .vlan_default_pvid_has = TRUE,
         .vlan_filtering_val    = !info_data.vlan_filtering_val,
@@ -1253,7 +1277,7 @@ _test_wireguard_change(NMPlatform *platform, int ifindex, int test_mode)
 
     peers = g_array_new(FALSE, TRUE, sizeof(NMPWireGuardPeer));
 
-    lnk_wireguard = (NMPlatformLnkWireGuard){
+    lnk_wireguard = (NMPlatformLnkWireGuard) {
         .listen_port = 50754,
         .fwmark      = 0x1102,
     };
@@ -1273,7 +1297,7 @@ _test_wireguard_change(NMPlatform *platform, int ifindex, int test_mode)
             NMPWireGuardAllowedIP *allowed_ips;
 
             if ((i % 2) == 1) {
-                endpoint = (NMSockAddrUnion){
+                endpoint = (NMSockAddrUnion) {
                     .in =
                         {
                             .sin_family = AF_INET,
@@ -1283,7 +1307,7 @@ _test_wireguard_change(NMPlatform *platform, int ifindex, int test_mode)
                         },
                 };
             } else {
-                endpoint = (NMSockAddrUnion){
+                endpoint = (NMSockAddrUnion) {
                     .in6 =
                         {
                             .sin6_family = AF_INET6,
@@ -1315,7 +1339,7 @@ _test_wireguard_change(NMPlatform *platform, int ifindex, int test_mode)
                 }
             }
 
-            peer = (NMPWireGuardPeer){
+            peer = (NMPWireGuardPeer) {
                 .persistent_keepalive_interval = 60 + i,
                 .endpoint                      = endpoint,
                 .allowed_ips                   = n_allowed_ips > 0 ? allowed_ips : NULL,
@@ -1403,6 +1427,8 @@ test_software_detect(gconstpointer user_data)
         lnk_bridge.mcast_query_interval          = 12000;
         lnk_bridge.mcast_query_response_interval = 5200;
         lnk_bridge.mcast_startup_query_interval  = 3000;
+        lnk_bridge.vlan_filtering                = FALSE;
+        lnk_bridge.default_pvid                  = 1;
 
         if (!nmtstp_link_bridge_add(NULL, ext, DEVICE_NAME, &lnk_bridge))
             g_error("Failed adding Bridge interface");
@@ -1779,7 +1805,7 @@ test_software_detect(gconstpointer user_data)
 
         switch (test_data->test_mode) {
         case 0:
-            lnk_tun = (NMPlatformLnkTun){
+            lnk_tun = (NMPlatformLnkTun) {
                 .type        = nmtst_get_rand_bool() ? IFF_TUN : IFF_TAP,
                 .owner       = owner_valid ? getuid() : 0,
                 .owner_valid = owner_valid,
@@ -2336,8 +2362,6 @@ test_vlan_set_xgress(void)
     ifindex =
         nmtstp_assert_wait_for_link(NM_PLATFORM_GET, DEVICE_NAME, NM_LINK_TYPE_VLAN, 100)->ifindex;
 
-    /* ingress-qos-map */
-
     g_assert(nm_platform_link_vlan_set_ingress_map(NM_PLATFORM_GET, ifindex, 4, 5));
     _assert_ingress_qos_mappings(ifindex, 1, 4, 5);
 
@@ -2362,14 +2386,11 @@ test_vlan_set_xgress(void)
     g_assert(nm_platform_link_vlan_set_ingress_map(NM_PLATFORM_GET, ifindex, 0, 5));
     _assert_ingress_qos_mappings(ifindex, 3, 0, 5, 3, 8, 4, 5);
 
-    /* Set invalid values: */
     g_assert(nm_platform_link_vlan_set_ingress_map(NM_PLATFORM_GET, ifindex, 8, 3));
     _assert_ingress_qos_mappings(ifindex, 3, 0, 5, 3, 8, 4, 5);
 
     g_assert(nm_platform_link_vlan_set_ingress_map(NM_PLATFORM_GET, ifindex, 9, 4));
     _assert_ingress_qos_mappings(ifindex, 3, 0, 5, 3, 8, 4, 5);
-
-    /* egress-qos-map */
 
     g_assert(nm_platform_link_vlan_set_egress_map(NM_PLATFORM_GET, ifindex, 7, 3));
     _assert_egress_qos_mappings(ifindex, 1, 7, 3);
@@ -2683,7 +2704,7 @@ test_link_set_properties(void)
     NMPlatformLinkChangeFlags flags;
     int                       ifindex;
 
-    props = (NMPlatformLinkProps){
+    props = (NMPlatformLinkProps) {
         .tx_queue_length  = 599,
         .gso_max_size     = 10001,
         .gso_max_segments = 512,
@@ -2692,7 +2713,7 @@ test_link_set_properties(void)
             | NM_PLATFORM_LINK_CHANGE_GSO_MAX_SEGMENTS;
 
     ifindex = nmtstp_link_dummy_add(NM_PLATFORM_GET, FALSE, "dummy1")->ifindex;
-    g_assert(nm_platform_link_change(NM_PLATFORM_GET, ifindex, &props, NULL, flags));
+    g_assert(nm_platform_link_change(NM_PLATFORM_GET, ifindex, &props, NULL, NULL, flags));
 
     link = nmtstp_link_get(NM_PLATFORM_GET, ifindex, "dummy1");
     g_assert(link);
@@ -2701,6 +2722,66 @@ test_link_set_properties(void)
     g_assert_cmpint(link->link_props.gso_max_segments, ==, 512);
 
     nmtstp_link_delete(NULL, -1, link->ifindex, "dummy1", TRUE);
+}
+
+/*****************************************************************************/
+
+static void
+test_link_get_bridge_fdb(void)
+{
+    const NMPlatformLink       *link;
+    nm_auto_freev NMEtherAddr **addrs = NULL;
+    int                         ifindex[2];
+    guint8                      expected[][6] = {
+        {0x00, 0x99, 0x00, 0x00, 0x00, 0x01},
+        {0x00, 0x99, 0x00, 0x00, 0x00, 0x02},
+        {0x00, 0x99, 0x00, 0x00, 0x00, 0x03},
+        {0x00, 0x99, 0x00, 0x00, 0x00, 0x05},
+    };
+    guint i;
+    guint j;
+
+    ifindex[0] =
+        nmtstp_link_bridge_add(NULL, -1, "br-test-1", &nm_platform_lnk_bridge_default)->ifindex;
+    ifindex[1] =
+        nmtstp_link_bridge_add(NULL, -1, "br-test-2", &nm_platform_lnk_bridge_default)->ifindex;
+
+    link = nmtstp_link_get(NULL, ifindex[0], "br-test-1");
+    g_assert(link);
+    link = nmtstp_link_get(NULL, ifindex[1], "br-test-2");
+    g_assert(link);
+
+    nmtstp_run_command_check("bridge fdb add dev br-test-1 00:99:00:00:00:01");
+    nmtstp_run_command_check("bridge fdb add dev br-test-1 00:99:00:00:00:02");
+    nmtstp_run_command_check("bridge fdb add dev br-test-1 00:99:00:00:00:03");
+    nmtstp_run_command_check("bridge fdb add dev br-test-2 00:99:00:00:00:01");
+    nmtstp_run_command_check("bridge fdb add dev br-test-2 00:99:00:00:00:05");
+
+    addrs = nm_linux_platform_get_bridge_fdb(NM_PLATFORM_GET, ifindex, 2);
+    g_assert(addrs);
+
+    /* Check for expected entries */
+    for (i = 0; i < G_N_ELEMENTS(expected); i++) {
+        gboolean found = FALSE;
+
+        for (j = 0; addrs[j]; j++) {
+            if (memcmp(addrs[j], expected[i], ETH_ALEN) == 0) {
+                found = TRUE;
+                break;
+            }
+        }
+        g_assert(found);
+    }
+
+    /* No dupes */
+    for (i = 0; addrs[i]; i++) {
+        for (j = i + 1; addrs[j]; j++) {
+            g_assert_cmpint(memcmp(addrs[i], addrs[j], ETH_ALEN), !=, 0);
+        }
+    }
+
+    nmtstp_link_delete(NULL, -1, ifindex[0], "br-test-1", TRUE);
+    nmtstp_link_delete(NULL, -1, ifindex[1], "br-test-2", TRUE);
 }
 
 /*****************************************************************************/
@@ -2887,7 +2968,7 @@ test_nl_bugs_spuroius_newlink(void)
         pllink = nm_platform_link_get(NM_PLATFORM_GET, ifindex_dummy0);
         g_assert(pllink);
         g_assert(!nm_platform_link_get_permanent_address(NM_PLATFORM_GET, pllink, &hw_perm_addr));
-        if (pllink->master == ifindex_bond0)
+        if (pllink->controller == ifindex_bond0)
             break;
     });
 
@@ -2944,7 +3025,7 @@ test_nl_bugs_spuroius_dellink(void)
         pllink = nm_platform_link_get(NM_PLATFORM_GET, ifindex_dummy0);
         g_assert(pllink);
         g_assert(!nm_platform_link_get_permanent_address(NM_PLATFORM_GET, pllink, &hw_perm_addr));
-        if (pllink->master == ifindex_bridge0)
+        if (pllink->controller == ifindex_bridge0)
             break;
     });
 
@@ -3164,10 +3245,10 @@ test_netns_general(gpointer fixture, gconstpointer test_data)
      * Work around that and skip asserts that are known to fail. */
     ethtool_support = nmtstp_run_command("ethtool -i dummy1_ > /dev/null") == 0;
     if (ethtool_support) {
-        g_assert(nmp_utils_ethtool_get_driver_info(
+        g_assert(nmp_ethtool_ioctl_get_driver_info(
             nmtstp_link_get_typed(platform_1, 0, "dummy1_", NM_LINK_TYPE_DUMMY)->ifindex,
             &driver_info));
-        g_assert(nmp_utils_ethtool_get_driver_info(
+        g_assert(nmp_ethtool_ioctl_get_driver_info(
             nmtstp_link_get_typed(platform_1, 0, "dummy2a", NM_LINK_TYPE_DUMMY)->ifindex,
             &driver_info));
         g_assert_cmpint(nmtstp_run_command("ethtool -i dummy1_ > /dev/null"), ==, 0);
@@ -3178,10 +3259,10 @@ test_netns_general(gpointer fixture, gconstpointer test_data)
     g_assert(nm_platform_netns_push(platform_2, &netns_tmp));
 
     if (ethtool_support) {
-        g_assert(nmp_utils_ethtool_get_driver_info(
+        g_assert(nmp_ethtool_ioctl_get_driver_info(
             nmtstp_link_get_typed(platform_2, 0, "dummy1_", NM_LINK_TYPE_DUMMY)->ifindex,
             &driver_info));
-        g_assert(nmp_utils_ethtool_get_driver_info(
+        g_assert(nmp_ethtool_ioctl_get_driver_info(
             nmtstp_link_get_typed(platform_2, 0, "dummy2b", NM_LINK_TYPE_DUMMY)->ifindex,
             &driver_info));
         g_assert_cmpint(nmtstp_run_command("ethtool -i dummy1_ > /dev/null"), ==, 0);
@@ -3795,7 +3876,7 @@ test_sysctl_set_async(void)
     cancellable   = g_cancellable_new();
     proc_writable = access(PATH, W_OK) == 0;
 
-    data = (SetAsyncData){
+    data = (SetAsyncData) {
         .loop             = loop,
         .path             = PATH,
         .expected_success = proc_writable,
@@ -3804,7 +3885,7 @@ test_sysctl_set_async(void)
 
     nm_platform_sysctl_set_async(PL,
                                  NMP_SYSCTL_PATHID_ABSOLUTE(PATH),
-                                 (const char *[]){"2", NULL},
+                                 (const char *[]) {"2", NULL},
                                  sysctl_set_async_cb,
                                  &data,
                                  cancellable);
@@ -3812,7 +3893,7 @@ test_sysctl_set_async(void)
     if (!nmtst_main_loop_run(loop, 1000))
         g_assert_not_reached();
 
-    data = (SetAsyncData){
+    data = (SetAsyncData) {
         .loop             = loop,
         .path             = PATH,
         .expected_success = proc_writable,
@@ -3821,7 +3902,7 @@ test_sysctl_set_async(void)
 
     nm_platform_sysctl_set_async(PL,
                                  NMP_SYSCTL_PATHID_ABSOLUTE(PATH),
-                                 (const char *[]){"2", "0", "1", "0", "1", NULL},
+                                 (const char *[]) {"2", "0", "1", "0", "1", NULL},
                                  sysctl_set_async_cb,
                                  &data,
                                  cancellable);
@@ -3848,7 +3929,7 @@ test_sysctl_set_async_fail(void)
     loop        = g_main_loop_new(NULL, FALSE);
     cancellable = g_cancellable_new();
 
-    data = (SetAsyncData){
+    data = (SetAsyncData) {
         .loop             = loop,
         .path             = PATH,
         .expected_success = FALSE,
@@ -3856,7 +3937,7 @@ test_sysctl_set_async_fail(void)
 
     nm_platform_sysctl_set_async(PL,
                                  NMP_SYSCTL_PATHID_ABSOLUTE(PATH),
-                                 (const char *[]){"2", NULL},
+                                 (const char *[]) {"2", NULL},
                                  sysctl_set_async_cb,
                                  &data,
                                  cancellable);
@@ -4012,7 +4093,7 @@ test_ethtool_features_get(void)
 
         _LOGT(">>> ethtool-features-get RUN %u (do-set=%s", i_run, do_set ? "set" : "reset");
 
-        features = nmp_utils_ethtool_get_features(IFINDEX);
+        features = nmp_ethtool_ioctl_get_features(IFINDEX);
         g_ptr_array_add(gfree_keeper, features);
 
         ethtool_features_dump(features);
@@ -4025,7 +4106,7 @@ test_ethtool_features_get(void)
             features  = gfree_keeper->pdata[i_run * 2 - 1];
         }
 
-        nmp_utils_ethtool_set_features(IFINDEX, features, requested, do_set);
+        nmp_ethtool_ioctl_set_features(IFINDEX, features, requested, do_set);
     }
 }
 
@@ -4043,10 +4124,10 @@ void
 _nmtstp_setup_tests(void)
 {
     nmtstp_link_delete(NM_PLATFORM_GET, -1, -1, DEVICE_NAME, FALSE);
-    nmtstp_link_delete(NM_PLATFORM_GET, -1, -1, SLAVE_NAME, FALSE);
+    nmtstp_link_delete(NM_PLATFORM_GET, -1, -1, PORT_NAME, FALSE);
     nmtstp_link_delete(NM_PLATFORM_GET, -1, -1, PARENT_NAME, FALSE);
     g_assert(!nm_platform_link_get_by_ifname(NM_PLATFORM_GET, DEVICE_NAME));
-    g_assert(!nm_platform_link_get_by_ifname(NM_PLATFORM_GET, SLAVE_NAME));
+    g_assert(!nm_platform_link_get_by_ifname(NM_PLATFORM_GET, PORT_NAME));
     g_assert(!nm_platform_link_get_by_ifname(NM_PLATFORM_GET, PARENT_NAME));
 
     g_test_add_func("/link/bogus", test_bogus);
@@ -4085,6 +4166,8 @@ _nmtstp_setup_tests(void)
         test_software_detect_add("/link/software/detect/wireguard/0", NM_LINK_TYPE_WIREGUARD, 0);
         test_software_detect_add("/link/software/detect/wireguard/1", NM_LINK_TYPE_WIREGUARD, 1);
         test_software_detect_add("/link/software/detect/wireguard/2", NM_LINK_TYPE_WIREGUARD, 2);
+
+        g_test_add_func("/link/get-bridge-fdb", test_link_get_bridge_fdb);
 
         g_test_add_func("/link/software/vlan/set-xgress", test_vlan_set_xgress);
 

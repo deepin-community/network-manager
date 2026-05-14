@@ -23,7 +23,12 @@
 
 /*****************************************************************************/
 
-#define _parse(ARGV, out_hostname, out_carrier_timeout_sec)                            \
+#define _parse(ARGV,                                                                   \
+               out_hostname,                                                           \
+               out_carrier_timeout_sec,                                                \
+               _out_global_dns_servers,                                                \
+               _out_dns_backend,                                                       \
+               _out_dns_resolve_mode)                                                  \
     ({                                                                                 \
         const char *const *const _ARGV                    = (ARGV);                    \
         char **const             _out_hostname            = (out_hostname);            \
@@ -34,26 +39,31 @@
                                                 TEST_INITRD_DIR "/sysfs",              \
                                                 _ARGV,                                 \
                                                 _out_hostname,                         \
-                                                _out_carrier_timeout_sec);             \
-                                                                                       \
+                                                _out_carrier_timeout_sec,              \
+                                                _out_global_dns_servers,               \
+                                                _out_dns_backend,                      \
+                                                _out_dns_resolve_mode);                \
         g_assert(_connections);                                                        \
                                                                                        \
         _connections;                                                                  \
     })
 
-#define _parse_cons(ARGV)                                                                    \
-    ({                                                                                       \
-        GHashTable   *_con_connections;                                                      \
-        gs_free char *_con_hostname            = NULL;                                       \
-        gint64        _con_carrier_timeout_sec = 0;                                          \
-                                                                                             \
-        _con_connections = _parse((ARGV),                                                    \
-                                  nmtst_get_rand_bool() ? &_con_hostname : NULL,             \
-                                  nmtst_get_rand_bool() ? &_con_carrier_timeout_sec : NULL); \
-        g_assert_cmpstr(_con_hostname, ==, NULL);                                            \
-        g_assert_cmpint(_con_carrier_timeout_sec, ==, 0);                                    \
-                                                                                             \
-        _con_connections;                                                                    \
+#define _parse_cons(ARGV)                                                                   \
+    ({                                                                                      \
+        GHashTable   *_con_connections;                                                     \
+        gs_free char *_con_hostname            = NULL;                                      \
+        gint64        _con_carrier_timeout_sec = 0;                                         \
+                                                                                            \
+        _con_connections = _parse((ARGV),                                                   \
+                                  nmtst_get_rand_bool() ? &_con_hostname : NULL,            \
+                                  nmtst_get_rand_bool() ? &_con_carrier_timeout_sec : NULL, \
+                                  NULL,                                                     \
+                                  NULL,                                                     \
+                                  NULL);                                                    \
+        g_assert_cmpstr(_con_hostname, ==, NULL);                                           \
+        g_assert_cmpint(_con_carrier_timeout_sec, ==, 0);                                   \
+                                                                                            \
+        _con_connections;                                                                   \
     })
 
 #define _parse_con(ARGV, connection_name)                                        \
@@ -154,7 +164,7 @@ test_dhcp_with_hostname(void)
     gs_free char                  *hostname            = NULL;
     gint64                         carrier_timeout_sec = 0;
 
-    connections = _parse(ARGV, &hostname, &carrier_timeout_sec);
+    connections = _parse(ARGV, &hostname, &carrier_timeout_sec, NULL, NULL, NULL);
     g_assert_cmpint(g_hash_table_size(connections), ==, 1);
     g_assert_cmpstr(hostname, ==, "host1");
     g_assert_cmpint(carrier_timeout_sec, ==, 0);
@@ -424,7 +434,7 @@ test_if_ip4_manual(void)
     gs_free char                  *hostname            = NULL;
     gint64                         carrier_timeout_sec = 0;
 
-    connections = _parse(ARGV, &hostname, &carrier_timeout_sec);
+    connections = _parse(ARGV, &hostname, &carrier_timeout_sec, NULL, NULL, NULL);
     g_assert_cmpint(g_hash_table_size(connections), ==, 2);
     g_assert_cmpstr(hostname, ==, "hostname1.example.com");
     g_assert_cmpint(carrier_timeout_sec, ==, 0);
@@ -505,7 +515,7 @@ test_if_ip4_auto(void)
     gs_free char                  *hostname            = NULL;
     gint64                         carrier_timeout_sec = 0;
 
-    connections = _parse(ARGV, &hostname, &carrier_timeout_sec);
+    connections = _parse(ARGV, &hostname, &carrier_timeout_sec, NULL, NULL, NULL);
     g_assert_cmpint(g_hash_table_size(connections), ==, 1);
     g_assert_cmpstr(hostname, ==, "myhostname");
     g_assert_cmpint(carrier_timeout_sec, ==, 0);
@@ -587,7 +597,7 @@ static void
 test_if_ip6_manual(void)
 {
     gs_unref_hashtable GHashTable *connections = NULL;
-    const char *const             *ARGV = NM_MAKE_STRV("ip=[2001:0db8::02]/64::[2001:0db8::01]::"
+    const char *const             *ARGV = NM_MAKE_STRV("ip=[2001:0db8::02]/56::[2001:0db8::01]::"
                                                        "hostname0.example.com:eth4::[2001:0db8::53]");
     NMConnection                  *connection;
     NMSettingIPConfig             *s_ip4;
@@ -596,7 +606,7 @@ test_if_ip6_manual(void)
     gs_free char                  *hostname            = NULL;
     gint64                         carrier_timeout_sec = 0;
 
-    connections = _parse(ARGV, &hostname, &carrier_timeout_sec);
+    connections = _parse(ARGV, &hostname, &carrier_timeout_sec, NULL, NULL, NULL);
     g_assert_cmpint(g_hash_table_size(connections), ==, 1);
     g_assert_cmpstr(hostname, ==, "hostname0.example.com");
     g_assert_cmpint(carrier_timeout_sec, ==, 0);
@@ -623,7 +633,7 @@ test_if_ip6_manual(void)
     ip_addr = nm_setting_ip_config_get_address(s_ip6, 0);
     g_assert(ip_addr);
     g_assert_cmpstr(nm_ip_address_get_address(ip_addr), ==, "2001:db8::2");
-    g_assert_cmpint(nm_ip_address_get_prefix(ip_addr), ==, 64);
+    g_assert_cmpint(nm_ip_address_get_prefix(ip_addr), ==, 56);
     g_assert_cmpstr(nm_setting_ip_config_get_gateway(s_ip6), ==, "2001:db8::1");
     g_assert_cmpstr(nm_setting_ip_config_get_dhcp_hostname(s_ip6), ==, NULL);
 }
@@ -684,7 +694,7 @@ test_if_mac_ifname(void)
     gs_free char                  *hostname            = NULL;
     gint64                         carrier_timeout_sec = 0;
 
-    connections = _parse(ARGV, &hostname, &carrier_timeout_sec);
+    connections = _parse(ARGV, &hostname, &carrier_timeout_sec, NULL, NULL, NULL);
     g_assert_cmpint(g_hash_table_size(connections), ==, 1);
     g_assert_cmpstr(hostname, ==, "hostname0");
     g_assert_cmpint(carrier_timeout_sec, ==, 0);
@@ -965,8 +975,8 @@ static void
 test_bond(void)
 {
     gs_unref_hashtable GHashTable *connections = NULL;
-    const char *const             *ARGV        = NM_MAKE_STRV("rd.route=192.0.2.53::bong0",
-                                           "bond=bong0:eth0,eth1:mode=balance-rr:9000",
+    const char *const             *ARGV        = NM_MAKE_STRV("rd.route=192.0.2.53::bond0",
+                                           "bond=bond0:eth0,eth1:mode=balance-rr:9000",
                                            "nameserver=203.0.113.53");
     NMConnection                  *connection;
     NMSettingConnection           *s_con;
@@ -975,19 +985,19 @@ test_bond(void)
     NMSettingBond                 *s_bond;
     NMSettingWired                *s_wired;
     NMIPRoute                     *ip_route;
-    const char                    *master_uuid;
+    const char                    *controller_uuid;
 
     connections = _parse_cons(ARGV);
     g_assert_cmpint(g_hash_table_size(connections), ==, 3);
 
-    connection = g_hash_table_lookup(connections, "bong0");
+    connection = g_hash_table_lookup(connections, "bond0");
     nmtst_assert_connection_verifies_without_normalization(connection);
     g_assert_cmpstr(nm_connection_get_connection_type(connection),
                     ==,
                     NM_SETTING_BOND_SETTING_NAME);
-    g_assert_cmpstr(nm_connection_get_id(connection), ==, "bong0");
-    master_uuid = nm_connection_get_uuid(connection);
-    g_assert(master_uuid);
+    g_assert_cmpstr(nm_connection_get_id(connection), ==, "bond0");
+    controller_uuid = nm_connection_get_uuid(connection);
+    g_assert(controller_uuid);
 
     s_wired = nm_connection_get_setting_wired(connection);
     g_assert(s_wired);
@@ -1031,8 +1041,8 @@ test_bond(void)
                     ==,
                     NM_SETTING_WIRED_SETTING_NAME);
     g_assert_cmpstr(nm_setting_connection_get_id(s_con), ==, "eth0");
-    g_assert_cmpstr(nm_setting_connection_get_slave_type(s_con), ==, NM_SETTING_BOND_SETTING_NAME);
-    g_assert_cmpstr(nm_setting_connection_get_master(s_con), ==, master_uuid);
+    g_assert_cmpstr(nm_setting_connection_get_port_type(s_con), ==, NM_SETTING_BOND_SETTING_NAME);
+    g_assert_cmpstr(nm_setting_connection_get_controller(s_con), ==, controller_uuid);
     g_assert_cmpint(nm_setting_connection_get_multi_connect(s_con),
                     ==,
                     NM_CONNECTION_MULTI_CONNECT_SINGLE);
@@ -1047,8 +1057,8 @@ test_bond(void)
                     ==,
                     NM_SETTING_WIRED_SETTING_NAME);
     g_assert_cmpstr(nm_setting_connection_get_id(s_con), ==, "eth1");
-    g_assert_cmpstr(nm_setting_connection_get_slave_type(s_con), ==, NM_SETTING_BOND_SETTING_NAME);
-    g_assert_cmpstr(nm_setting_connection_get_master(s_con), ==, master_uuid);
+    g_assert_cmpstr(nm_setting_connection_get_port_type(s_con), ==, NM_SETTING_BOND_SETTING_NAME);
+    g_assert_cmpstr(nm_setting_connection_get_controller(s_con), ==, controller_uuid);
     g_assert_cmpint(nm_setting_connection_get_multi_connect(s_con),
                     ==,
                     NM_CONNECTION_MULTI_CONNECT_SINGLE);
@@ -1069,7 +1079,7 @@ test_bond_ip(void)
     NMSettingWired      *s_wired;
     NMSettingBond       *s_bond;
     NMIPAddress         *ip_addr;
-    const char          *master_uuid;
+    const char          *controller_uuid;
 
     connections = _parse_cons(ARGV);
     g_assert_cmpint(g_hash_table_size(connections), ==, 3);
@@ -1080,8 +1090,8 @@ test_bond_ip(void)
                     ==,
                     NM_SETTING_BOND_SETTING_NAME);
     g_assert_cmpstr(nm_connection_get_id(connection), ==, "bond0");
-    master_uuid = nm_connection_get_uuid(connection);
-    g_assert(master_uuid);
+    controller_uuid = nm_connection_get_uuid(connection);
+    g_assert(controller_uuid);
 
     s_wired = nm_connection_get_setting_wired(connection);
     g_assert(s_wired);
@@ -1129,8 +1139,8 @@ test_bond_ip(void)
                     ==,
                     NM_SETTING_WIRED_SETTING_NAME);
     g_assert_cmpstr(nm_setting_connection_get_id(s_con), ==, "eth0");
-    g_assert_cmpstr(nm_setting_connection_get_slave_type(s_con), ==, NM_SETTING_BOND_SETTING_NAME);
-    g_assert_cmpstr(nm_setting_connection_get_master(s_con), ==, master_uuid);
+    g_assert_cmpstr(nm_setting_connection_get_port_type(s_con), ==, NM_SETTING_BOND_SETTING_NAME);
+    g_assert_cmpstr(nm_setting_connection_get_controller(s_con), ==, controller_uuid);
     g_assert_cmpint(nm_setting_connection_get_multi_connect(s_con),
                     ==,
                     NM_CONNECTION_MULTI_CONNECT_SINGLE);
@@ -1145,11 +1155,123 @@ test_bond_ip(void)
                     ==,
                     NM_SETTING_WIRED_SETTING_NAME);
     g_assert_cmpstr(nm_setting_connection_get_id(s_con), ==, "eth1");
-    g_assert_cmpstr(nm_setting_connection_get_slave_type(s_con), ==, NM_SETTING_BOND_SETTING_NAME);
-    g_assert_cmpstr(nm_setting_connection_get_master(s_con), ==, master_uuid);
+    g_assert_cmpstr(nm_setting_connection_get_port_type(s_con), ==, NM_SETTING_BOND_SETTING_NAME);
+    g_assert_cmpstr(nm_setting_connection_get_controller(s_con), ==, controller_uuid);
     g_assert_cmpint(nm_setting_connection_get_multi_connect(s_con),
                     ==,
                     NM_CONNECTION_MULTI_CONNECT_SINGLE);
+}
+
+static void
+test_bond_ip6_option(void)
+{
+    /* Test that IPv6 addresses within [] are parsed fine in different positions */
+
+    gs_unref_hashtable GHashTable *connections = NULL;
+    const char *const             *ARGV =
+        NM_MAKE_STRV("bond=bond0:eth0,eth1:arp_interval=100,ns_ip6_target=[fc08::1]",
+                     "bond=bond1:eth2,eth3:arp_interval=100,ns_ip6_target=[fc08::1]:9000",
+                     "bond=bond2:eth4,eth5:ns_ip6_target=[fc08::1],arp_interval=100");
+    NMConnection  *connection;
+    NMSettingBond *s_bond;
+
+    connections = _parse_cons(ARGV);
+    g_assert_cmpint(g_hash_table_size(connections), ==, 9);
+
+    connection = g_hash_table_lookup(connections, "bond0");
+    nmtst_assert_connection_verifies_without_normalization(connection);
+    s_bond = nm_connection_get_setting_bond(connection);
+    g_assert(s_bond);
+    g_assert_cmpint(nm_setting_bond_get_num_options(s_bond), ==, 3);
+    g_assert_cmpstr(nm_setting_bond_get_option_by_name(s_bond, "ns_ip6_target"), ==, "fc08::1");
+
+    connection = g_hash_table_lookup(connections, "bond1");
+    nmtst_assert_connection_verifies_without_normalization(connection);
+    s_bond = nm_connection_get_setting_bond(connection);
+    g_assert(s_bond);
+    g_assert_cmpint(nm_setting_bond_get_num_options(s_bond), ==, 3);
+    g_assert_cmpstr(nm_setting_bond_get_option_by_name(s_bond, "ns_ip6_target"), ==, "fc08::1");
+
+    connection = g_hash_table_lookup(connections, "bond2");
+    nmtst_assert_connection_verifies_without_normalization(connection);
+    s_bond = nm_connection_get_setting_bond(connection);
+    g_assert(s_bond);
+    g_assert_cmpint(nm_setting_bond_get_num_options(s_bond), ==, 3);
+    g_assert_cmpstr(nm_setting_bond_get_option_by_name(s_bond, "ns_ip6_target"), ==, "fc08::1");
+}
+
+static void
+test_bond_multi_values_option(void)
+{
+    /* Test that semicolon-separated multi-valued options are parsed fine in different positions */
+
+    gs_unref_hashtable GHashTable *connections = NULL;
+    const char *const             *ARGV =
+        NM_MAKE_STRV("bond=bond0:eth0,eth1:arp_interval=100,ns_ip6_target=[fc08::1];[fc08::2]",
+                     "bond=bond1:eth2,eth3:arp_interval=100,ns_ip6_target=[fc08::1];[fc08::2]:9000",
+                     "bond=bond2:eth4,eth5:ns_ip6_target=[fc08::1];[fc08::2],arp_interval=100",
+                     "bond=bond3:eth6,eth7:arp_interval=100,arp_ip_target=10.0.0.1;10.0.0.2",
+                     "bond=bond4:eth8,eth9:arp_interval=100,arp_ip_target=10.0.0.1;10.0.0.2:9000",
+                     "bond=bond5:eth10,eth11:arp_ip_target=10.0.0.1;10.0.0.2,arp_interval=100");
+    NMConnection  *connection;
+    NMSettingBond *s_bond;
+
+    connections = _parse_cons(ARGV);
+    g_assert_cmpint(g_hash_table_size(connections), ==, 18);
+
+    connection = g_hash_table_lookup(connections, "bond0");
+    nmtst_assert_connection_verifies_without_normalization(connection);
+    s_bond = nm_connection_get_setting_bond(connection);
+    g_assert(s_bond);
+    g_assert_cmpint(nm_setting_bond_get_num_options(s_bond), ==, 3);
+    g_assert_cmpstr(nm_setting_bond_get_option_by_name(s_bond, "ns_ip6_target"),
+                    ==,
+                    "fc08::1,fc08::2");
+
+    connection = g_hash_table_lookup(connections, "bond1");
+    nmtst_assert_connection_verifies_without_normalization(connection);
+    s_bond = nm_connection_get_setting_bond(connection);
+    g_assert(s_bond);
+    g_assert_cmpint(nm_setting_bond_get_num_options(s_bond), ==, 3);
+    g_assert_cmpstr(nm_setting_bond_get_option_by_name(s_bond, "ns_ip6_target"),
+                    ==,
+                    "fc08::1,fc08::2");
+
+    connection = g_hash_table_lookup(connections, "bond2");
+    nmtst_assert_connection_verifies_without_normalization(connection);
+    s_bond = nm_connection_get_setting_bond(connection);
+    g_assert(s_bond);
+    g_assert_cmpint(nm_setting_bond_get_num_options(s_bond), ==, 3);
+    g_assert_cmpstr(nm_setting_bond_get_option_by_name(s_bond, "ns_ip6_target"),
+                    ==,
+                    "fc08::1,fc08::2");
+
+    connection = g_hash_table_lookup(connections, "bond3");
+    nmtst_assert_connection_verifies_without_normalization(connection);
+    s_bond = nm_connection_get_setting_bond(connection);
+    g_assert(s_bond);
+    g_assert_cmpint(nm_setting_bond_get_num_options(s_bond), ==, 3);
+    g_assert_cmpstr(nm_setting_bond_get_option_by_name(s_bond, "arp_ip_target"),
+                    ==,
+                    "10.0.0.1,10.0.0.2");
+
+    connection = g_hash_table_lookup(connections, "bond4");
+    nmtst_assert_connection_verifies_without_normalization(connection);
+    s_bond = nm_connection_get_setting_bond(connection);
+    g_assert(s_bond);
+    g_assert_cmpint(nm_setting_bond_get_num_options(s_bond), ==, 3);
+    g_assert_cmpstr(nm_setting_bond_get_option_by_name(s_bond, "arp_ip_target"),
+                    ==,
+                    "10.0.0.1,10.0.0.2");
+
+    connection = g_hash_table_lookup(connections, "bond5");
+    nmtst_assert_connection_verifies_without_normalization(connection);
+    s_bond = nm_connection_get_setting_bond(connection);
+    g_assert(s_bond);
+    g_assert_cmpint(nm_setting_bond_get_num_options(s_bond), ==, 3);
+    g_assert_cmpstr(nm_setting_bond_get_option_by_name(s_bond, "arp_ip_target"),
+                    ==,
+                    "10.0.0.1,10.0.0.2");
 }
 
 static void
@@ -1162,7 +1284,7 @@ test_bond_default(void)
     NMSettingIPConfig             *s_ip4;
     NMSettingIPConfig             *s_ip6;
     NMSettingBond                 *s_bond;
-    const char                    *master_uuid;
+    const char                    *controller_uuid;
 
     connections = _parse_cons(ARGV);
     g_assert_cmpint(g_hash_table_size(connections), ==, 2);
@@ -1174,8 +1296,8 @@ test_bond_default(void)
                     ==,
                     NM_SETTING_BOND_SETTING_NAME);
     g_assert_cmpstr(nm_connection_get_id(connection), ==, "bond0");
-    master_uuid = nm_connection_get_uuid(connection);
-    g_assert(master_uuid);
+    controller_uuid = nm_connection_get_uuid(connection);
+    g_assert(controller_uuid);
 
     s_ip4 = nm_connection_get_setting_ip4_config(connection);
     g_assert(s_ip4);
@@ -1208,8 +1330,8 @@ test_bond_default(void)
                     ==,
                     NM_SETTING_WIRED_SETTING_NAME);
     g_assert_cmpstr(nm_setting_connection_get_id(s_con), ==, "eth0");
-    g_assert_cmpstr(nm_setting_connection_get_slave_type(s_con), ==, NM_SETTING_BOND_SETTING_NAME);
-    g_assert_cmpstr(nm_setting_connection_get_master(s_con), ==, master_uuid);
+    g_assert_cmpstr(nm_setting_connection_get_port_type(s_con), ==, NM_SETTING_BOND_SETTING_NAME);
+    g_assert_cmpstr(nm_setting_connection_get_controller(s_con), ==, controller_uuid);
     g_assert_cmpint(nm_setting_connection_get_multi_connect(s_con),
                     ==,
                     NM_CONNECTION_MULTI_CONNECT_SINGLE);
@@ -1228,7 +1350,7 @@ test_bridge(void)
     NMSettingIPConfig             *s_ip6;
     NMSettingBridge               *s_bridge;
     NMIPRoute                     *ip_route;
-    const char                    *master_uuid;
+    const char                    *controller_uuid;
 
     connections = _parse_cons(ARGV);
     g_assert_cmpint(g_hash_table_size(connections), ==, 3);
@@ -1239,8 +1361,8 @@ test_bridge(void)
                     ==,
                     NM_SETTING_BRIDGE_SETTING_NAME);
     g_assert_cmpstr(nm_connection_get_id(connection), ==, "bridge0");
-    master_uuid = nm_connection_get_uuid(connection);
-    g_assert(master_uuid);
+    controller_uuid = nm_connection_get_uuid(connection);
+    g_assert(controller_uuid);
 
     s_ip4 = nm_connection_get_setting_ip4_config(connection);
     g_assert(s_ip4);
@@ -1284,10 +1406,8 @@ test_bridge(void)
                     ==,
                     NM_SETTING_WIRED_SETTING_NAME);
     g_assert_cmpstr(nm_setting_connection_get_id(s_con), ==, "eth0");
-    g_assert_cmpstr(nm_setting_connection_get_slave_type(s_con),
-                    ==,
-                    NM_SETTING_BRIDGE_SETTING_NAME);
-    g_assert_cmpstr(nm_setting_connection_get_master(s_con), ==, master_uuid);
+    g_assert_cmpstr(nm_setting_connection_get_port_type(s_con), ==, NM_SETTING_BRIDGE_SETTING_NAME);
+    g_assert_cmpstr(nm_setting_connection_get_controller(s_con), ==, controller_uuid);
     g_assert_cmpint(nm_setting_connection_get_multi_connect(s_con),
                     ==,
                     NM_CONNECTION_MULTI_CONNECT_SINGLE);
@@ -1302,10 +1422,8 @@ test_bridge(void)
                     ==,
                     NM_SETTING_WIRED_SETTING_NAME);
     g_assert_cmpstr(nm_setting_connection_get_id(s_con), ==, "eth1");
-    g_assert_cmpstr(nm_setting_connection_get_slave_type(s_con),
-                    ==,
-                    NM_SETTING_BRIDGE_SETTING_NAME);
-    g_assert_cmpstr(nm_setting_connection_get_master(s_con), ==, master_uuid);
+    g_assert_cmpstr(nm_setting_connection_get_port_type(s_con), ==, NM_SETTING_BRIDGE_SETTING_NAME);
+    g_assert_cmpstr(nm_setting_connection_get_controller(s_con), ==, controller_uuid);
     g_assert_cmpint(nm_setting_connection_get_multi_connect(s_con),
                     ==,
                     NM_CONNECTION_MULTI_CONNECT_SINGLE);
@@ -1321,7 +1439,7 @@ test_bridge_default(void)
     NMSettingIPConfig             *s_ip4;
     NMSettingIPConfig             *s_ip6;
     NMSettingBridge               *s_bridge;
-    const char                    *master_uuid;
+    const char                    *controller_uuid;
 
     connections = _parse_cons(ARGV);
     g_assert_cmpint(g_hash_table_size(connections), ==, 2);
@@ -1333,8 +1451,8 @@ test_bridge_default(void)
                     ==,
                     NM_SETTING_BRIDGE_SETTING_NAME);
     g_assert_cmpstr(nm_connection_get_id(connection), ==, "br0");
-    master_uuid = nm_connection_get_uuid(connection);
-    g_assert(master_uuid);
+    controller_uuid = nm_connection_get_uuid(connection);
+    g_assert(controller_uuid);
 
     s_ip4 = nm_connection_get_setting_ip4_config(connection);
     g_assert(s_ip4);
@@ -1365,10 +1483,8 @@ test_bridge_default(void)
                     ==,
                     NM_SETTING_WIRED_SETTING_NAME);
     g_assert_cmpstr(nm_setting_connection_get_id(s_con), ==, "eth0");
-    g_assert_cmpstr(nm_setting_connection_get_slave_type(s_con),
-                    ==,
-                    NM_SETTING_BRIDGE_SETTING_NAME);
-    g_assert_cmpstr(nm_setting_connection_get_master(s_con), ==, master_uuid);
+    g_assert_cmpstr(nm_setting_connection_get_port_type(s_con), ==, NM_SETTING_BRIDGE_SETTING_NAME);
+    g_assert_cmpstr(nm_setting_connection_get_controller(s_con), ==, controller_uuid);
     g_assert_cmpint(nm_setting_connection_get_multi_connect(s_con),
                     ==,
                     NM_CONNECTION_MULTI_CONNECT_SINGLE);
@@ -1387,7 +1503,7 @@ test_bridge_ip(void)
     NMSettingIPConfig   *s_ip6;
     NMSettingWired      *s_wired;
     NMSettingBridge     *s_bridge;
-    const char          *master_uuid;
+    const char          *controller_uuid;
     guint                i;
 
     connections = _parse_cons(ARGV);
@@ -1399,8 +1515,8 @@ test_bridge_ip(void)
                     ==,
                     NM_SETTING_BRIDGE_SETTING_NAME);
     g_assert_cmpstr(nm_connection_get_id(connection), ==, "bridge123");
-    master_uuid = nm_connection_get_uuid(connection);
-    g_assert(master_uuid);
+    controller_uuid = nm_connection_get_uuid(connection);
+    g_assert(controller_uuid);
 
     s_wired = nm_connection_get_setting_wired(connection);
     g_assert(s_wired);
@@ -1433,10 +1549,10 @@ test_bridge_ip(void)
                         ==,
                         NM_SETTING_WIRED_SETTING_NAME);
         g_assert_cmpstr(nm_setting_connection_get_id(s_con), ==, ifname);
-        g_assert_cmpstr(nm_setting_connection_get_slave_type(s_con),
+        g_assert_cmpstr(nm_setting_connection_get_port_type(s_con),
                         ==,
                         NM_SETTING_BRIDGE_SETTING_NAME);
-        g_assert_cmpstr(nm_setting_connection_get_master(s_con), ==, master_uuid);
+        g_assert_cmpstr(nm_setting_connection_get_controller(s_con), ==, controller_uuid);
         g_assert_cmpint(nm_setting_connection_get_multi_connect(s_con),
                         ==,
                         NM_CONNECTION_MULTI_CONNECT_SINGLE);
@@ -1453,7 +1569,7 @@ test_team(void)
     NMSettingIPConfig             *s_ip4;
     NMSettingIPConfig             *s_ip6;
     NMSettingTeam                 *s_team;
-    const char                    *master_uuid;
+    const char                    *controller_uuid;
 
     connections = _parse_cons(ARGV);
     g_assert_cmpint(g_hash_table_size(connections), ==, 3);
@@ -1464,8 +1580,8 @@ test_team(void)
                     ==,
                     NM_SETTING_TEAM_SETTING_NAME);
     g_assert_cmpstr(nm_connection_get_id(connection), ==, "team0");
-    master_uuid = nm_connection_get_uuid(connection);
-    g_assert(master_uuid);
+    controller_uuid = nm_connection_get_uuid(connection);
+    g_assert(controller_uuid);
 
     s_ip4 = nm_connection_get_setting_ip4_config(connection);
     g_assert(s_ip4);
@@ -1499,8 +1615,8 @@ test_team(void)
                     ==,
                     NM_SETTING_WIRED_SETTING_NAME);
     g_assert_cmpstr(nm_setting_connection_get_id(s_con), ==, "eth0");
-    g_assert_cmpstr(nm_setting_connection_get_slave_type(s_con), ==, NM_SETTING_TEAM_SETTING_NAME);
-    g_assert_cmpstr(nm_setting_connection_get_master(s_con), ==, master_uuid);
+    g_assert_cmpstr(nm_setting_connection_get_port_type(s_con), ==, NM_SETTING_TEAM_SETTING_NAME);
+    g_assert_cmpstr(nm_setting_connection_get_controller(s_con), ==, controller_uuid);
     g_assert_cmpint(nm_setting_connection_get_multi_connect(s_con),
                     ==,
                     NM_CONNECTION_MULTI_CONNECT_SINGLE);
@@ -1515,8 +1631,8 @@ test_team(void)
                     ==,
                     NM_SETTING_WIRED_SETTING_NAME);
     g_assert_cmpstr(nm_setting_connection_get_id(s_con), ==, "eth1");
-    g_assert_cmpstr(nm_setting_connection_get_slave_type(s_con), ==, NM_SETTING_TEAM_SETTING_NAME);
-    g_assert_cmpstr(nm_setting_connection_get_master(s_con), ==, master_uuid);
+    g_assert_cmpstr(nm_setting_connection_get_port_type(s_con), ==, NM_SETTING_TEAM_SETTING_NAME);
+    g_assert_cmpstr(nm_setting_connection_get_controller(s_con), ==, controller_uuid);
     g_assert_cmpint(nm_setting_connection_get_multi_connect(s_con),
                     ==,
                     NM_CONNECTION_MULTI_CONNECT_SINGLE);
@@ -1731,6 +1847,66 @@ test_vlan_over_bond(void)
 }
 
 static void
+test_vlan_invalid(void)
+{
+    {
+        /* Case 1: Missing name */
+        const char *const             *ARGV0       = NM_MAKE_STRV("vlan=");
+        gs_unref_hashtable GHashTable *connections = NULL;
+
+        NMTST_EXPECT_NM_WARN("cmdline-reader: missing VLAN interface name");
+        connections = _parse_cons(ARGV0);
+        g_assert_cmpint(g_hash_table_size(connections), ==, 0);
+        g_test_assert_expected_messages();
+    }
+
+    {
+        /* Case 2: Missing parent */
+        const char *const             *ARGV0       = NM_MAKE_STRV("vlan=vlan12");
+        gs_unref_hashtable GHashTable *connections = NULL;
+
+        NMTST_EXPECT_NM_WARN("cmdline-reader: missing VLAN parent");
+        connections = _parse_cons(ARGV0);
+        g_assert_cmpint(g_hash_table_size(connections), ==, 0);
+        g_test_assert_expected_messages();
+    }
+
+    {
+        /* Case 3: Interface name without trailing digits should fail,
+         * not trigger a GLib assertion. */
+        const char *const             *ARGV0       = NM_MAKE_STRV("vlan=myvlan:eth0");
+        gs_unref_hashtable GHashTable *connections = NULL;
+
+        NMTST_EXPECT_NM_WARN("cmdline-reader: missing VLAN id in 'myvlan'");
+        connections = _parse_cons(ARGV0);
+        g_assert_cmpint(g_hash_table_size(connections), ==, 0);
+        g_test_assert_expected_messages();
+    }
+
+    {
+        /* Case 4: An invalid VLAN id should be rejected */
+        const char *const             *ARGV0       = NM_MAKE_STRV("vlan=myvlan4095:eth0");
+        gs_unref_hashtable GHashTable *connections = NULL;
+
+        NMTST_EXPECT_NM_WARN("cmdline-reader: invalid VLAN id '4095'");
+        connections = _parse_cons(ARGV0);
+        g_assert_cmpint(g_hash_table_size(connections), ==, 0);
+        g_test_assert_expected_messages();
+    }
+
+    {
+        /* Case 5: Extra arguments */
+        const char *const             *ARGV0 = NM_MAKE_STRV("vlan=eth0.80:eth0:reorder_hdr=on");
+        gs_unref_hashtable GHashTable *connections = NULL;
+
+        NMTST_EXPECT_NM_WARN("cmdline-reader: ignoring extra VLAN argument 'reorder_hdr=on'");
+        connections = _parse_cons(ARGV0);
+        g_assert_cmpint(g_hash_table_size(connections), ==, 2);
+        g_test_assert_expected_messages();
+    }
+}
+
+static void
 test_ibft_ip_dev(void)
 {
     const char *const            *ARGV = NM_MAKE_STRV("ip=eth0:ibft");
@@ -1846,7 +2022,7 @@ test_rd_znet(void)
     gs_free char *hostname            = NULL;
     gint64        carrier_timeout_sec = 0;
 
-    connections = _parse(ARGV, &hostname, &carrier_timeout_sec);
+    connections = _parse(ARGV, &hostname, &carrier_timeout_sec, NULL, NULL, NULL);
     g_assert_cmpint(g_hash_table_size(connections), ==, 2);
     g_assert_cmpstr(hostname, ==, "foo.example.com");
     g_assert_cmpint(carrier_timeout_sec, ==, 0);
@@ -1933,7 +2109,7 @@ test_rd_znet_legacy(void)
     gs_free char        *hostname            = NULL;
     gint64               carrier_timeout_sec = 0;
 
-    connections = _parse(ARGV, &hostname, &carrier_timeout_sec);
+    connections = _parse(ARGV, &hostname, &carrier_timeout_sec, NULL, NULL, NULL);
     g_assert_cmpint(g_hash_table_size(connections), ==, 2);
     g_assert_cmpstr(hostname, ==, "foo.example.com");
     g_assert_cmpint(carrier_timeout_sec, ==, 0);
@@ -2012,7 +2188,7 @@ test_rd_znet_ifnames(void)
     gint64               carrier_timeout_sec = 0;
     const char *const   *v_subchannels;
 
-    connections = _parse(ARGV, &hostname, &carrier_timeout_sec);
+    connections = _parse(ARGV, &hostname, &carrier_timeout_sec, NULL, NULL, NULL);
     g_assert_cmpint(g_hash_table_size(connections), ==, 2);
 
     connection = g_hash_table_lookup(connections, "zeth0");
@@ -2287,7 +2463,7 @@ test_nameserver(void)
     gs_free char      *hostname            = NULL;
     gint64             carrier_timeout_sec = 0;
 
-    connections = _parse(ARGV, &hostname, &carrier_timeout_sec);
+    connections = _parse(ARGV, &hostname, &carrier_timeout_sec, NULL, NULL, NULL);
     g_assert_cmpint(g_hash_table_size(connections), ==, 3);
     g_assert_cmpstr(hostname, ==, "foo.example.com");
     g_assert_cmpint(carrier_timeout_sec, ==, 0);
@@ -2358,6 +2534,33 @@ test_dhcp_vendor_class_id(void)
     connection = _parse_con(ARGV, "eno1");
     s_ip4      = NM_SETTING_IP4_CONFIG(nm_connection_get_setting_ip4_config(connection));
     g_assert(nm_setting_ip4_config_get_dhcp_vendor_class_identifier(s_ip4) == NULL);
+}
+
+static void
+test_dhcp_dscp(void)
+{
+    const char *const            *ARGV;
+    gs_unref_object NMConnection *connection = NULL;
+    NMSettingIPConfig            *s_ip4;
+
+    ARGV       = NM_MAKE_STRV("rd.net.dhcp.dscp=CS4", "ip=eno1:dhcp");
+    connection = _parse_con(ARGV, "eno1");
+    s_ip4      = NM_SETTING_IP_CONFIG(nm_connection_get_setting_ip4_config(connection));
+    g_assert_cmpstr(nm_setting_ip_config_get_dhcp_dscp(s_ip4), ==, "CS4");
+
+    g_clear_object(&connection);
+
+    ARGV       = NM_MAKE_STRV("rd.net.dhcp.dscp=CS0", "ip=eno1:dhcp");
+    connection = _parse_con(ARGV, "eno1");
+    s_ip4      = NM_SETTING_IP_CONFIG(nm_connection_get_setting_ip4_config(connection));
+    g_assert_cmpstr(nm_setting_ip_config_get_dhcp_dscp(s_ip4), ==, "CS0");
+
+    g_clear_object(&connection);
+
+    ARGV       = NM_MAKE_STRV("ip=eno1:dhcp");
+    connection = _parse_con(ARGV, "eno1");
+    s_ip4      = NM_SETTING_IP_CONFIG(nm_connection_get_setting_ip4_config(connection));
+    g_assert_cmpstr(nm_setting_ip_config_get_dhcp_dscp(s_ip4), ==, NULL);
 }
 
 static void
@@ -2439,10 +2642,47 @@ test_carrier_timeout(void)
     gs_free char                  *hostname            = NULL;
     gint64                         carrier_timeout_sec = 0;
 
-    connections = _parse(ARGV, &hostname, &carrier_timeout_sec);
+    connections = _parse(ARGV, &hostname, &carrier_timeout_sec, NULL, NULL, NULL);
     g_assert_cmpint(g_hash_table_size(connections), ==, 0);
     g_assert_cmpstr(hostname, ==, NULL);
     g_assert_cmpint(carrier_timeout_sec, ==, 20);
+}
+
+static void
+test_global_dns(void)
+{
+    gs_unref_hashtable GHashTable *connections        = NULL;
+    const char *const             *ARGV               = NM_MAKE_STRV("rd.net.dns=dns+tls://8.8.8.8",
+                                           "rd.net.dns=1.1.1.1",
+                                           "rd.net.dns=foobar",
+                                           "rd.net.dns=dns+tls://[fd01::1]:35#name",
+                                           "rd.net.dns-backend=dnsconfd",
+                                           "rd.net.dns-resolve-mode=exclusive");
+    gs_free char                  *hostname           = NULL;
+    gs_strfreev char             **global_dns_servers = NULL;
+    gs_free char                  *dns_backend        = NULL;
+    gs_free char                  *dns_resolve_mode   = NULL;
+    gint64                         carrier_timeout_sec = 0;
+
+    NMTST_EXPECT_NM_WARN("cmdline-reader: rd.net.dns: invalid server 'foobar':*");
+    connections = _parse(ARGV,
+                         &hostname,
+                         &carrier_timeout_sec,
+                         &global_dns_servers,
+                         &dns_backend,
+                         &dns_resolve_mode);
+    g_test_assert_expected_messages();
+
+    g_assert_cmpint(g_hash_table_size(connections), ==, 0);
+    g_assert_cmpstr(hostname, ==, NULL);
+    g_assert_cmpint(carrier_timeout_sec, ==, 0);
+    g_assert(global_dns_servers != NULL);
+    g_assert_cmpstr(global_dns_servers[0], ==, "dns+tls://8.8.8.8");
+    g_assert_cmpstr(global_dns_servers[1], ==, "1.1.1.1");
+    g_assert_cmpstr(global_dns_servers[2], ==, "dns+tls://[fd01::1]:35#name");
+    g_assert_cmpstr(global_dns_servers[3], ==, NULL);
+    g_assert_cmpstr(dns_backend, ==, "dnsconfd");
+    g_assert_cmpstr(dns_resolve_mode, ==, "exclusive");
 }
 
 #define _ethtool_check_inval(arg)                                 \
@@ -2606,6 +2846,149 @@ test_plain_equal_char(void)
 
 /*****************************************************************************/
 
+#define _dhcp_client_id_check_invalid(arg)                        \
+    G_STMT_START                                                  \
+    {                                                             \
+        gs_unref_hashtable GHashTable *_connections2 = NULL;      \
+                                                                  \
+        _connections2 = _parse_cons(NM_MAKE_STRV(arg));           \
+        g_test_assert_expected_messages();                        \
+        g_assert_cmpint(g_hash_table_size(_connections2), ==, 0); \
+    }                                                             \
+    G_STMT_END
+
+#define _dhcp_client_id_check_v(strv, exp_ifname, exp_client_id)                                 \
+    G_STMT_START                                                                                 \
+    {                                                                                            \
+        gs_unref_object NMConnection *_connection = NULL;                                        \
+        NMSettingIPConfig            *_s_ip4;                                                    \
+                                                                                                 \
+        _connection = _parse_con(strv, exp_ifname);                                              \
+                                                                                                 \
+        g_test_assert_expected_messages();                                                       \
+                                                                                                 \
+        g_assert(nm_connection_get_setting_connection(_connection));                             \
+        g_assert(nm_connection_is_type(_connection, NM_SETTING_WIRED_SETTING_NAME));             \
+        g_assert(nm_connection_get_setting_ip4_config(_connection));                             \
+        g_assert(nm_connection_get_setting_ip6_config(_connection));                             \
+        _s_ip4 = nm_connection_get_setting_ip4_config(_connection);                              \
+        g_assert(NM_IS_SETTING_IP_CONFIG(_s_ip4));                                               \
+                                                                                                 \
+        g_assert_cmpstr(nm_setting_ip4_config_get_dhcp_client_id(NM_SETTING_IP4_CONFIG(_s_ip4)), \
+                        ==,                                                                      \
+                        (exp_client_id));                                                        \
+    }                                                                                            \
+    G_STMT_END
+
+#define _dhcp_client_id_check(arg, exp_ifname, exp_client_id) \
+    _dhcp_client_id_check_v(NM_MAKE_STRV("" arg ""), (exp_ifname), (exp_client_id))
+
+#define DHCP_CLIENT_ID_INVALID_MSG(_id)                                                \
+    "cmdline-reader: "                                                                 \
+    "rd.net.dhcp.client-id: invalid client-id \"" _id "\". Must be hexadecimal bytes " \
+    "separated by dashes (for example \"00-01-02-03-04-05-06\"), or '@' followed by a string"
+
+static void
+test_rd_dhcp_client_id(void)
+{
+    NMTST_EXPECT_NM_WARN("cmdline-reader: rd.net.dhcp.client-id: missing interface");
+    _dhcp_client_id_check_invalid("rd.net.dhcp.client-id=");
+
+    NMTST_EXPECT_NM_WARN("cmdline-reader: rd.net.dhcp.client-id: missing interface");
+    _dhcp_client_id_check_invalid("rd.net.dhcp.client-id=:");
+
+    NMTST_EXPECT_NM_WARN("cmdline-reader: rd.net.dhcp.client-id: missing client-id");
+    _dhcp_client_id_check_invalid("rd.net.dhcp.client-id=eth0:");
+
+    NMTST_EXPECT_NM_WARN(DHCP_CLIENT_ID_INVALID_MSG("invalid"));
+    _dhcp_client_id_check_invalid("rd.net.dhcp.client-id=eth0:invalid");
+
+    NMTST_EXPECT_NM_WARN(DHCP_CLIENT_ID_INVALID_MSG("01:AA:BB:CC:DD:EE:FF"));
+    _dhcp_client_id_check_invalid("rd.net.dhcp.client-id=eth0:01:AA:BB:CC:DD:EE:FF");
+
+    NMTST_EXPECT_NM_WARN(DHCP_CLIENT_ID_INVALID_MSG("@"));
+    _dhcp_client_id_check_invalid("rd.net.dhcp.client-id=eth0:@");
+
+    NMTST_EXPECT_NM_WARN("cmdline-reader: rd.net.dhcp.client-id: invalid client-id \"01\". Must be "
+                         "at least two bytes");
+    _dhcp_client_id_check_invalid("rd.net.dhcp.client-id=eth0:01");
+
+    /* Client-id with hex string */
+    _dhcp_client_id_check("rd.net.dhcp.client-id=eth0:01-aa-BB-cc-dd-EE-ff",
+                          "eth0",
+                          "01:aa:bb:cc:dd:ee:ff");
+
+    /* Client-id with plain string */
+    _dhcp_client_id_check("rd.net.dhcp.client-id=eth0:@test.com",
+                          "eth0",
+                          "00:74:65:73:74:2e:63:6f:6d");
+
+    /* Minimal client-id, hex */
+    _dhcp_client_id_check("rd.net.dhcp.client-id=eth1:01-02", "eth1", "01:02");
+
+    /* Minimal client-id, string */
+    _dhcp_client_id_check("rd.net.dhcp.client-id=eth1:@1", "eth1", "00:31");
+
+    /* Long client-id */
+    _dhcp_client_id_check(
+        "rd.net.dhcp.client-id=enp1s0:"
+        "01-02-03-04-05-06-07-08-09-10-11-12-13-14-15-16-17-18-19-20-21-22-23-24-"
+        "25-26-27-28-29-30-31-32-33-34-35-36-37-38-39-40-41-42-43-44-45-46-47-48-"
+        "49-50-51-52-53-54-55-56-57-58-59-60-61-62-63-64-65-66-67-68-69-70-71-72",
+        "enp1s0",
+        "01:02:03:04:05:06:07:08:09:10:11:12:13:14:15:16:17:18:19:20:21:22:23:24:"
+        "25:26:27:28:29:30:31:32:33:34:35:36:37:38:39:40:41:42:43:44:45:46:47:48:"
+        "49:50:51:52:53:54:55:56:57:58:59:60:61:62:63:64:65:66:67:68:69:70:71:72");
+
+    /* Test ordering: client-id before ip= */
+    _dhcp_client_id_check_v(
+        NM_MAKE_STRV("rd.net.dhcp.client-id=eth0:aa-bb-cc-dd-ee-ff", "ip=eth0:dhcp"),
+        "eth0",
+        "aa:bb:cc:dd:ee:ff");
+
+    /* Test ordering: client-id after ip= */
+    _dhcp_client_id_check_v(
+        NM_MAKE_STRV("ip=eth2:dhcp", "rd.net.dhcp.client-id=eth2:ba-da-cc-dd-ee-ff"),
+        "eth2",
+        "ba:da:cc:dd:ee:ff");
+
+    /* Duplicate option: last wins */
+    _dhcp_client_id_check_v(NM_MAKE_STRV("ip=eth3:dhcp",
+                                         "rd.net.dhcp.client-id=eth3:01-02",
+                                         "rd.net.dhcp.client-id=eth3:01-03"),
+                            "eth3",
+                            "01:03");
+
+    /* Multiple connections */
+    {
+        gs_unref_hashtable GHashTable *connections = NULL;
+        NMConnection                  *connection;
+        NMSettingIP4Config            *s_ip4;
+
+        connections = _parse_cons(NM_MAKE_STRV("ip=eth0:dhcp",
+                                               "ip=eth1:dhcp",
+                                               "rd.net.dhcp.client-id=eth1:01-01-01",
+                                               "rd.net.dhcp.client-id=eth0:00-00-00"));
+
+        g_assert_nonnull(connections);
+        g_assert_cmpint(g_hash_table_size(connections), ==, 2);
+
+        connection = g_hash_table_lookup(connections, "eth0");
+        g_assert_nonnull(connection);
+        s_ip4 = (NMSettingIP4Config *) nm_connection_get_setting_ip4_config(connection);
+        g_assert_nonnull(s_ip4);
+        g_assert_cmpstr(nm_setting_ip4_config_get_dhcp_client_id(s_ip4), ==, "00:00:00");
+
+        connection = g_hash_table_lookup(connections, "eth1");
+        g_assert_nonnull(connection);
+        s_ip4 = (NMSettingIP4Config *) nm_connection_get_setting_ip4_config(connection);
+        g_assert_nonnull(s_ip4);
+        g_assert_cmpstr(nm_setting_ip4_config_get_dhcp_client_id(s_ip4), ==, "01:01:01");
+    }
+}
+
+/*****************************************************************************/
+
 NMTST_DEFINE();
 
 int
@@ -2633,11 +3016,14 @@ main(int argc, char **argv)
     g_test_add_func("/initrd/cmdline/bootdev", test_bootdev);
     g_test_add_func("/initrd/cmdline/bond", test_bond);
     g_test_add_func("/initrd/cmdline/bond/ip", test_bond_ip);
+    g_test_add_func("/initrd/cmdline/bond/ip6-option", test_bond_ip6_option);
+    g_test_add_func("/initrd/cmdline/bond/multi-values-option", test_bond_multi_values_option);
     g_test_add_func("/initrd/cmdline/bond/default", test_bond_default);
     g_test_add_func("/initrd/cmdline/team", test_team);
     g_test_add_func("/initrd/cmdline/vlan", test_vlan);
     g_test_add_func("/initrd/cmdline/vlan/dhcp-on-parent", test_vlan_with_dhcp_on_parent);
     g_test_add_func("/initrd/cmdline/vlan/over-bond", test_vlan_over_bond);
+    g_test_add_func("/initrd/cmdline/vlan/invalid", test_vlan_invalid);
     g_test_add_func("/initrd/cmdline/bridge", test_bridge);
     g_test_add_func("/initrd/cmdline/bridge/default", test_bridge_default);
     g_test_add_func("/initrd/cmdline/bridge/ip", test_bridge_ip);
@@ -2658,12 +3044,15 @@ main(int argc, char **argv)
     g_test_add_func("/initrd/cmdline/neednet/no_args", test_neednet_no_args);
     g_test_add_func("/initrd/cmdline/neednet/args", test_neednet_args);
     g_test_add_func("/initrd/cmdline/dhcp/vendor_class_id", test_dhcp_vendor_class_id);
+    g_test_add_func("/initrd/cmdline/dhcp/dscp", test_dhcp_dscp);
     g_test_add_func("/initrd/cmdline/infiniband/iface", test_infiniband_iface);
     g_test_add_func("/initrd/cmdline/infiniband/mac", test_infiniband_mac);
     g_test_add_func("/initrd/cmdline/infiniband/pkey", test_infiniband_pkey);
     g_test_add_func("/initrd/cmdline/carrier_timeout", test_carrier_timeout);
     g_test_add_func("/initrd/cmdline/rd_ethtool", test_rd_ethtool);
     g_test_add_func("/initrd/cmdline/plain_equal_char", test_plain_equal_char);
+    g_test_add_func("/initrd/cmdline/global_dns", test_global_dns);
+    g_test_add_func("/initrd/cmdline/rd_dhcp_client_id", test_rd_dhcp_client_id);
 
     return g_test_run();
 }

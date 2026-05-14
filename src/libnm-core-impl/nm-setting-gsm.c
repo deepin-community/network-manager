@@ -38,7 +38,17 @@ NM_GOBJECT_PROPERTIES_DEFINE_BASE(PROP_AUTO_CONFIG,
                                   PROP_SIM_OPERATOR_ID,
                                   PROP_MTU,
                                   PROP_INITIAL_EPS_CONFIG,
-                                  PROP_INITIAL_EPS_APN, );
+                                  PROP_INITIAL_EPS_APN,
+                                  PROP_INITIAL_EPS_USERNAME,
+                                  PROP_INITIAL_EPS_PASSWORD,
+                                  PROP_INITIAL_EPS_PASSWORD_FLAGS,
+                                  PROP_INITIAL_EPS_NOAUTH,
+                                  PROP_INITIAL_EPS_REFUSE_EAP,
+                                  PROP_INITIAL_EPS_REFUSE_PAP,
+                                  PROP_INITIAL_EPS_REFUSE_CHAP,
+                                  PROP_INITIAL_EPS_REFUSE_MSCHAP,
+                                  PROP_INITIAL_EPS_REFUSE_MSCHAPV2,
+                                  PROP_DEVICE_UID, );
 
 typedef struct {
     char   *number;
@@ -51,12 +61,22 @@ typedef struct {
     char   *network_id;
     char   *pin;
     char   *initial_eps_apn;
+    char   *initial_eps_username;
+    char   *initial_eps_password;
+    bool    initial_eps_noauth;
+    bool    initial_eps_refuse_eap;
+    bool    initial_eps_refuse_pap;
+    bool    initial_eps_refuse_chap;
+    bool    initial_eps_refuse_mschap;
+    bool    initial_eps_refuse_mschapv2;
     guint   password_flags;
+    guint   initial_eps_password_flags;
     guint   pin_flags;
     guint32 mtu;
     bool    auto_config;
     bool    home_only;
     bool    initial_eps_config;
+    char   *device_uid;
 } NMSettingGsmPrivate;
 
 /**
@@ -65,20 +85,17 @@ typedef struct {
  * GSM-based Mobile Broadband Settings
  */
 struct _NMSettingGsm {
-    NMSetting parent;
-    /* In the past, this struct was public API. Preserve ABI! */
+    NMSetting           parent;
+    NMSettingGsmPrivate _priv;
 };
 
 struct _NMSettingGsmClass {
     NMSettingClass parent;
-    /* In the past, this struct was public API. Preserve ABI! */
-    gpointer padding[4];
 };
 
 G_DEFINE_TYPE(NMSettingGsm, nm_setting_gsm, NM_TYPE_SETTING)
 
-#define NM_SETTING_GSM_GET_PRIVATE(o) \
-    (G_TYPE_INSTANCE_GET_PRIVATE((o), NM_TYPE_SETTING_GSM, NMSettingGsmPrivate))
+#define NM_SETTING_GSM_GET_PRIVATE(o) _NM_GET_PRIVATE(o, NMSettingGsm, NM_IS_SETTING_GSM, NMSetting)
 
 /*****************************************************************************/
 
@@ -320,6 +337,150 @@ nm_setting_gsm_get_initial_eps_apn(NMSettingGsm *setting)
     g_return_val_if_fail(NM_IS_SETTING_GSM(setting), NULL);
 
     return NM_SETTING_GSM_GET_PRIVATE(setting)->initial_eps_apn;
+}
+
+/**
+ * nm_setting_gsm_get_initial_eps_username:
+ * @setting: the #NMSettingGsm
+ *
+ * Returns: the #NMSettingGsm:initial-eps-bearer-username property of the setting
+ *
+ * Since: 1.52
+ **/
+const char *
+nm_setting_gsm_get_initial_eps_username(NMSettingGsm *setting)
+{
+    g_return_val_if_fail(NM_IS_SETTING_GSM(setting), NULL);
+
+    return NM_SETTING_GSM_GET_PRIVATE(setting)->initial_eps_username;
+}
+
+/**
+ * nm_setting_gsm_get_initial_eps_password:
+ * @setting: the #NMSettingGsm
+ *
+ * Returns: the #NMSettingGsm:initial-eps-bearer-password property of the setting
+ *
+ * Since: 1.52
+ **/
+const char *
+nm_setting_gsm_get_initial_eps_password(NMSettingGsm *setting)
+{
+    g_return_val_if_fail(NM_IS_SETTING_GSM(setting), NULL);
+
+    return NM_SETTING_GSM_GET_PRIVATE(setting)->initial_eps_password;
+}
+
+/**
+ * nm_setting_gsm_get_initial_eps_noauth:
+ * @setting: the #NMSettingGsm
+ *
+ * Returns: For LTE modems, the #NMSettingGsm:initial-eps-noauth property of the setting
+ *
+ * Since: 1.52
+ **/
+gboolean
+nm_setting_gsm_get_initial_eps_noauth(NMSettingGsm *setting)
+{
+    g_return_val_if_fail(NM_IS_SETTING_GSM(setting), FALSE);
+
+    return NM_SETTING_GSM_GET_PRIVATE(setting)->initial_eps_noauth;
+}
+
+/**
+ * nm_setting_gsm_get_initial_eps_refuse_eap:
+ * @setting: the #NMSettingGsm
+ *
+ * Returns: For LTE modems, the #NMSettingGsm:initial-eps-refuse-eap property of the setting
+ *
+ * Since: 1.52
+ **/
+gboolean
+nm_setting_gsm_get_initial_eps_refuse_eap(NMSettingGsm *setting)
+{
+    g_return_val_if_fail(NM_IS_SETTING_GSM(setting), FALSE);
+
+    return NM_SETTING_GSM_GET_PRIVATE(setting)->initial_eps_refuse_eap;
+}
+
+/**
+ * nm_setting_gsm_get_initial_eps_refuse_pap:
+ * @setting: the #NMSettingGsm
+ *
+ * Returns: For LTE modems, the #NMSettingGsm:initial-eps-refuse-pap property of the setting
+ *
+ * Since: 1.52
+ **/
+gboolean
+nm_setting_gsm_get_initial_eps_refuse_pap(NMSettingGsm *setting)
+{
+    g_return_val_if_fail(NM_IS_SETTING_GSM(setting), FALSE);
+
+    return NM_SETTING_GSM_GET_PRIVATE(setting)->initial_eps_refuse_pap;
+}
+
+/**
+ * nm_setting_gsm_get_initial_eps_refuse_chap:
+ * @setting: the #NMSettingGsm
+ *
+ * Returns: For LTE modems, the #NMSettingGsm:initial-eps-refuse-chap property of the setting
+ *
+ * Since: 1.52
+ **/
+gboolean
+nm_setting_gsm_get_initial_eps_refuse_chap(NMSettingGsm *setting)
+{
+    g_return_val_if_fail(NM_IS_SETTING_GSM(setting), FALSE);
+
+    return NM_SETTING_GSM_GET_PRIVATE(setting)->initial_eps_refuse_chap;
+}
+
+/**
+ * nm_setting_gsm_get_initial_eps_refuse_mschap:
+ * @setting: the #NMSettingGsm
+ *
+ * Returns: For LTE modems, the #NMSettingGsm:initial-eps-refuse-mschap property of the setting
+ *
+ * Since: 1.52
+ **/
+gboolean
+nm_setting_gsm_get_initial_eps_refuse_mschap(NMSettingGsm *setting)
+{
+    g_return_val_if_fail(NM_IS_SETTING_GSM(setting), FALSE);
+
+    return NM_SETTING_GSM_GET_PRIVATE(setting)->initial_eps_refuse_mschap;
+}
+
+/**
+ * nm_setting_gsm_get_initial_eps_refuse_mschapv2:
+ * @setting: the #NMSettingGsm
+ *
+ * Returns: For LTE modems, the #NMSettingGsm:initial-eps-refuse-mschapv2 property of the setting
+ *
+ * Since: 1.52
+ **/
+gboolean
+nm_setting_gsm_get_initial_eps_refuse_mschapv2(NMSettingGsm *setting)
+{
+    g_return_val_if_fail(NM_IS_SETTING_GSM(setting), FALSE);
+
+    return NM_SETTING_GSM_GET_PRIVATE(setting)->initial_eps_refuse_mschapv2;
+}
+
+/**
+ * nm_setting_gsm_get_device_uid:
+ * @setting: the #NMSettingGsm
+ *
+ * Returns: the #NMSettingGsm:device-uid property of the setting
+ *
+ * Since: 1.56
+ **/
+const char *
+nm_setting_gsm_get_device_uid(NMSettingGsm *setting)
+{
+    g_return_val_if_fail(NM_IS_SETTING_GSM(setting), NULL);
+
+    return NM_SETTING_GSM_GET_PRIVATE(setting)->device_uid;
 }
 
 static gboolean
@@ -565,8 +726,6 @@ nm_setting_gsm_class_init(NMSettingGsmClass *klass)
     NMSettingClass *setting_class       = NM_SETTING_CLASS(klass);
     GArray         *properties_override = _nm_sett_info_property_override_create_array();
 
-    g_type_class_add_private(klass, sizeof(NMSettingGsmPrivate));
-
     object_class->get_property = _nm_setting_property_get_property_direct;
     object_class->set_property = _nm_setting_property_set_property_direct;
 
@@ -607,7 +766,8 @@ nm_setting_gsm_class_init(NMSettingGsmClass *klass)
                                               NM_SETTING_PARAM_NONE,
                                               NMSettingGsmPrivate,
                                               number,
-                                              .is_deprecated = TRUE, );
+                                              .is_deprecated             = TRUE,
+                                              .direct_string_allow_empty = TRUE);
 
     /**
      * NMSettingGsm:username:
@@ -622,7 +782,8 @@ nm_setting_gsm_class_init(NMSettingGsmClass *klass)
                                               PROP_USERNAME,
                                               NM_SETTING_PARAM_NONE,
                                               NMSettingGsmPrivate,
-                                              username);
+                                              username,
+                                              .direct_string_allow_empty = TRUE);
 
     /**
      * NMSettingGsm:password:
@@ -637,7 +798,8 @@ nm_setting_gsm_class_init(NMSettingGsmClass *klass)
                                               PROP_PASSWORD,
                                               NM_SETTING_PARAM_SECRET,
                                               NMSettingGsmPrivate,
-                                              password);
+                                              password,
+                                              .direct_string_allow_empty = TRUE);
 
     /**
      * NMSettingGsm:password-flags:
@@ -660,6 +822,10 @@ nm_setting_gsm_class_init(NMSettingGsmClass *klass)
      * is important to use the correct APN for the user's mobile broadband plan.
      * The APN may only be composed of the characters a-z, 0-9, ., and - per GSM
      * 03.60 Section 14.9.
+     *
+     * If the APN is unset (the default) then it may be detected based on
+     * "auto-config" setting. The property can be explicitly set to the
+     * empty string to prevent that and use no APN.
      **/
     _nm_setting_property_define_direct_string(properties_override,
                                               obj_properties,
@@ -668,7 +834,8 @@ nm_setting_gsm_class_init(NMSettingGsmClass *klass)
                                               NM_SETTING_PARAM_NONE,
                                               NMSettingGsmPrivate,
                                               apn,
-                                              .direct_set_string_strip = TRUE);
+                                              .direct_set_string_strip   = TRUE,
+                                              .direct_string_allow_empty = TRUE);
 
     /**
      * NMSettingGsm:network-id:
@@ -686,7 +853,8 @@ nm_setting_gsm_class_init(NMSettingGsmClass *klass)
                                               NM_SETTING_PARAM_NONE,
                                               NMSettingGsmPrivate,
                                               network_id,
-                                              .direct_set_string_strip = TRUE);
+                                              .direct_set_string_strip   = TRUE,
+                                              .direct_string_allow_empty = TRUE);
 
     /**
      * NMSettingGsm:pin:
@@ -701,7 +869,8 @@ nm_setting_gsm_class_init(NMSettingGsmClass *klass)
                                               PROP_PIN,
                                               NM_SETTING_PARAM_SECRET,
                                               NMSettingGsmPrivate,
-                                              pin);
+                                              pin,
+                                              .direct_string_allow_empty = TRUE);
 
     /**
      * NMSettingGsm:pin-flags:
@@ -745,7 +914,8 @@ nm_setting_gsm_class_init(NMSettingGsmClass *klass)
                                               PROP_DEVICE_ID,
                                               NM_SETTING_PARAM_NONE,
                                               NMSettingGsmPrivate,
-                                              device_id);
+                                              device_id,
+                                              .direct_string_allow_empty = TRUE);
 
     /**
      * NMSettingGsm:sim-id:
@@ -763,7 +933,8 @@ nm_setting_gsm_class_init(NMSettingGsmClass *klass)
                                               PROP_SIM_ID,
                                               NM_SETTING_PARAM_NONE,
                                               NMSettingGsmPrivate,
-                                              sim_id);
+                                              sim_id,
+                                              .direct_string_allow_empty = TRUE);
 
     /**
      * NMSettingGsm:sim-operator-id:
@@ -782,7 +953,8 @@ nm_setting_gsm_class_init(NMSettingGsmClass *klass)
                                               PROP_SIM_OPERATOR_ID,
                                               NM_SETTING_PARAM_NONE,
                                               NMSettingGsmPrivate,
-                                              sim_operator_id);
+                                              sim_operator_id,
+                                              .direct_string_allow_empty = TRUE);
 
     /**
      * NMSettingGsm:mtu:
@@ -836,7 +1008,184 @@ nm_setting_gsm_class_init(NMSettingGsmClass *klass)
                                               PROP_INITIAL_EPS_APN,
                                               NM_SETTING_PARAM_NONE,
                                               NMSettingGsmPrivate,
-                                              initial_eps_apn);
+                                              initial_eps_apn,
+                                              .direct_string_allow_empty = TRUE);
+
+    /**
+     * NMSettingGsm:initial-eps-bearer-username:
+     *
+     * For LTE modems, this sets the username for the initial EPS bearer that is set
+     * up when attaching to the network.  Setting this parameter implies
+     * initial-eps-bearer-configure to be TRUE.
+     *
+     * Since: 1.52
+     **/
+    _nm_setting_property_define_direct_string(properties_override,
+                                              obj_properties,
+                                              NM_SETTING_GSM_INITIAL_EPS_BEARER_USERNAME,
+                                              PROP_INITIAL_EPS_USERNAME,
+                                              NM_SETTING_PARAM_NONE,
+                                              NMSettingGsmPrivate,
+                                              initial_eps_username,
+                                              .direct_string_allow_empty = TRUE);
+
+    /**
+     * NMSettingGsm:initial-eps-bearer-password:
+     *
+     * For LTE modems, this sets the password for the initial EPS bearer that is set
+     * up when attaching to the network.  Setting this parameter implies
+     * initial-eps-bearer-configure to be TRUE.
+     *
+     * Since: 1.52
+     **/
+    _nm_setting_property_define_direct_string(properties_override,
+                                              obj_properties,
+                                              NM_SETTING_GSM_INITIAL_EPS_BEARER_PASSWORD,
+                                              PROP_INITIAL_EPS_PASSWORD,
+                                              NM_SETTING_PARAM_SECRET,
+                                              NMSettingGsmPrivate,
+                                              initial_eps_password,
+                                              .direct_string_allow_empty = TRUE);
+
+    /**
+     * NMSettingGsm:initial-eps-bearer-password-flags:
+     *
+     * Flags indicating how to handle the #NMSettingGsm:initial-eps-bearer-password property.
+     *
+     * Since: 1.52
+     **/
+    _nm_setting_property_define_direct_secret_flags(
+        properties_override,
+        obj_properties,
+        NM_SETTING_GSM_INITIAL_EPS_BEARER_PASSWORD_FLAGS,
+        PROP_INITIAL_EPS_PASSWORD_FLAGS,
+        NMSettingGsmPrivate,
+        initial_eps_password_flags);
+
+    /**
+     * NMSettingGsm:initial-eps-bearer-noauth:
+     *
+     * For LTE modems, this sets NOAUTH authentication method for the initial EPS bearer that is set
+     * up when attaching to the network.
+     * If %TRUE, do not require the other side to authenticate itself to the client.
+     * If %FALSE, require authentication from the remote side.  In almost all cases,
+     * this should be %TRUE.
+     *
+     * Since: 1.52
+     **/
+    _nm_setting_property_define_direct_boolean(properties_override,
+                                               obj_properties,
+                                               NM_SETTING_GSM_INITIAL_EPS_BEARER_NOAUTH,
+                                               PROP_INITIAL_EPS_NOAUTH,
+                                               TRUE,
+                                               NM_SETTING_PARAM_NONE,
+                                               NMSettingGsmPrivate,
+                                               initial_eps_noauth);
+
+    /**
+     * NMSettingGsm:initial-eps-bearer-refuse-eap:
+     *
+     * For LTE modems, this disables EAP authentication method for the initial EPS bearer that is set
+     * up when attaching to the network.
+     *
+     * Since: 1.52
+     **/
+    _nm_setting_property_define_direct_boolean(properties_override,
+                                               obj_properties,
+                                               NM_SETTING_GSM_INITIAL_EPS_BEARER_REFUSE_EAP,
+                                               PROP_INITIAL_EPS_REFUSE_EAP,
+                                               FALSE,
+                                               NM_SETTING_PARAM_NONE,
+                                               NMSettingGsmPrivate,
+                                               initial_eps_refuse_eap);
+
+    /**
+     * NMSettingGsm:initial-eps-bearer-refuse-pap:
+     *
+     * For LTE modems, this disables PAP authentication method for the initial EPS bearer that is set
+     * up when attaching to the network.
+     *
+     * Since: 1.52
+     **/
+    _nm_setting_property_define_direct_boolean(properties_override,
+                                               obj_properties,
+                                               NM_SETTING_GSM_INITIAL_EPS_BEARER_REFUSE_PAP,
+                                               PROP_INITIAL_EPS_REFUSE_PAP,
+                                               FALSE,
+                                               NM_SETTING_PARAM_NONE,
+                                               NMSettingGsmPrivate,
+                                               initial_eps_refuse_pap);
+
+    /**
+     * NMSettingGsm:initial-eps-bearer-refuse-chap:
+     *
+     * For LTE modems, this disables CHAP authentication method for the initial EPS bearer that is set
+     * up when attaching to the network.
+     *
+     * Since: 1.52
+     **/
+    _nm_setting_property_define_direct_boolean(properties_override,
+                                               obj_properties,
+                                               NM_SETTING_GSM_INITIAL_EPS_BEARER_REFUSE_CHAP,
+                                               PROP_INITIAL_EPS_REFUSE_CHAP,
+                                               FALSE,
+                                               NM_SETTING_PARAM_NONE,
+                                               NMSettingGsmPrivate,
+                                               initial_eps_refuse_chap);
+
+    /**
+     * NMSettingGsm:initial-eps-bearer-refuse-mschap:
+     *
+     * For LTE modems, this disables MSCHAP authentication method for the initial EPS bearer that is set
+     * up when attaching to the network.
+     *
+     * Since: 1.52
+     **/
+    _nm_setting_property_define_direct_boolean(properties_override,
+                                               obj_properties,
+                                               NM_SETTING_GSM_INITIAL_EPS_BEARER_REFUSE_MSCHAP,
+                                               PROP_INITIAL_EPS_REFUSE_MSCHAP,
+                                               FALSE,
+                                               NM_SETTING_PARAM_NONE,
+                                               NMSettingGsmPrivate,
+                                               initial_eps_refuse_mschap);
+
+    /**
+     * NMSettingGsm:initial-eps-bearer-refuse-mschapv2:
+     *
+     * For LTE modems, this disables MSCHAPV2 authentication method for the initial EPS bearer that is set
+     * up when attaching to the network.
+     *
+     * Since: 1.52
+     **/
+    _nm_setting_property_define_direct_boolean(properties_override,
+                                               obj_properties,
+                                               NM_SETTING_GSM_INITIAL_EPS_BEARER_REFUSE_MSCHAPV2,
+                                               PROP_INITIAL_EPS_REFUSE_MSCHAPV2,
+                                               FALSE,
+                                               NM_SETTING_PARAM_NONE,
+                                               NMSettingGsmPrivate,
+                                               initial_eps_refuse_mschapv2);
+
+    /**
+     * NMSettingGsm:device-uid:
+     *
+     * The device UID (as given by the WWAN management service) which this
+     * connection applies to. In contrast to #NMSettingGsm:device-id, which is
+     * an inherent property of the connected device, this setting refers to
+     * a property set by a UDEV-rule. Refer to the "Common udev tags" ->
+     * "ID_MM_PHYSDEV_UID" documentation of ModemManager. If given, the
+     * connection will only apply to the specified device.
+     *
+     * Since: 1.56
+     **/
+    _nm_setting_property_define_direct_string(properties_override,
+                                              obj_properties,
+                                              NM_SETTING_GSM_DEVICE_UID,
+                                              PROP_DEVICE_UID,
+                                              NM_SETTING_PARAM_NONE,
+                                              NMSettingGsmPrivate,
+                                              device_uid);
 
     /* Ignore incoming deprecated properties */
     _nm_properties_override_dbus(properties_override,
@@ -854,5 +1203,5 @@ nm_setting_gsm_class_init(NMSettingGsmClass *klass)
                              NM_META_SETTING_TYPE_GSM,
                              NULL,
                              properties_override,
-                             NM_SETT_INFO_PRIVATE_OFFSET_FROM_CLASS);
+                             G_STRUCT_OFFSET(NMSettingGsm, _priv));
 }

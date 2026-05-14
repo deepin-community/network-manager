@@ -2,10 +2,11 @@
 #pragma once
 
 #include <inttypes.h>
-#include <linux/netlink.h>
 #include <linux/if_ether.h>
 #include <linux/if_infiniband.h>
 #include <linux/if_packet.h>
+#include <linux/netlink.h>
+#include <linux/vm_sockets.h>
 #include <netinet/in.h>
 #include <stdbool.h>
 #include <stddef.h>
@@ -19,6 +20,7 @@
 #include "macro.h"
 #include "missing_network.h"
 #include "missing_socket.h"
+#include "pidref.h"
 #include "sparse-endian.h"
 
 union sockaddr_union {
@@ -28,7 +30,7 @@ union sockaddr_union {
         /* The libc provided version that allocates "enough room" for every protocol */
         struct sockaddr_storage storage;
 
-        /* Protoctol-specific implementations */
+        /* Protocol-specific implementations */
         struct sockaddr_in in;
         struct sockaddr_in6 in6;
         struct sockaddr_un un;
@@ -115,7 +117,7 @@ int sockaddr_pretty(const struct sockaddr *_sa, socklen_t salen, bool translate_
 int getpeername_pretty(int fd, bool include_port, char **ret);
 int getsockname_pretty(int fd, char **ret);
 
-int socknameinfo_pretty(union sockaddr_union *sa, socklen_t salen, char **_ret);
+int socknameinfo_pretty(const struct sockaddr *sa, socklen_t salen, char **_ret);
 
 const char* socket_address_bind_ipv6_only_to_string(SocketAddressBindIPv6Only b) _const_;
 SocketAddressBindIPv6Only socket_address_bind_ipv6_only_from_string(const char *s) _pure_;
@@ -154,7 +156,31 @@ bool address_label_valid(const char *p);
 int getpeercred(int fd, struct ucred *ucred);
 int getpeersec(int fd, char **ret);
 int getpeergroups(int fd, gid_t **ret);
+int getpeerpidfd(int fd);
+int getpeerpidref(int fd, PidRef *ret);
 
+ssize_t send_many_fds_iov_sa(
+                int transport_fd,
+                int *fds_array, size_t n_fds_array,
+                const struct iovec *iov, size_t iovlen,
+                const struct sockaddr *sa, socklen_t len,
+                int flags);
+static inline ssize_t send_many_fds_iov(
+                int transport_fd,
+                int *fds_array, size_t n_fds_array,
+                const struct iovec *iov, size_t iovlen,
+                int flags) {
+
+        return send_many_fds_iov_sa(transport_fd, fds_array, n_fds_array, iov, iovlen, NULL, 0, flags);
+}
+static inline int send_many_fds(
+                int transport_fd,
+                int *fds_array,
+                size_t n_fds_array,
+                int flags) {
+
+        return send_many_fds_iov_sa(transport_fd, fds_array, n_fds_array, NULL, 0, NULL, 0, flags);
+}
 ssize_t send_one_fd_iov_sa(
                 int transport_fd,
                 int fd,
@@ -169,6 +195,8 @@ int send_one_fd_sa(int transport_fd,
 #define send_one_fd(transport_fd, fd, flags) send_one_fd_iov_sa(transport_fd, fd, NULL, 0, NULL, 0, flags)
 ssize_t receive_one_fd_iov(int transport_fd, struct iovec *iov, size_t iovlen, int flags, int *ret_fd);
 int receive_one_fd(int transport_fd, int flags);
+ssize_t receive_many_fds_iov(int transport_fd, struct iovec *iov, size_t iovlen, int **ret_fds_array, size_t *ret_n_fds_array, int flags);
+int receive_many_fds(int transport_fd, int **ret_fds_array, size_t *ret_n_fds_array, int flags);
 
 ssize_t next_datagram_size_fd(int fd);
 
@@ -181,7 +209,7 @@ int flush_accept(int fd);
  * at compile time, that the requested type has a smaller or same alignment as 'struct cmsghdr', and one
  * during runtime, that the actual pointer matches the alignment too. This is supposed to catch cases such as
  * 'struct timeval' is embedded into 'struct cmsghdr' on architectures where the alignment of the former is 8
- * bytes (because of a 64bit time_t), but of the latter is 4 bytes (because size_t is 32bit), such as
+ * bytes (because of a 64-bit time_t), but of the latter is 4 bytes (because size_t is 32 bits), such as
  * riscv32. */
 #define CMSG_TYPED_DATA(cmsg, type)                                     \
         ({                                                              \
@@ -212,62 +240,11 @@ void* cmsg_find_and_copy_data(struct msghdr *mh, int level, int type, void *buf,
                                     (size) == CMSG_ALIGN(size) ? 1 : -1]; \
         }
 
-/*
- * Certain hardware address types (e.g Infiniband) do not fit into sll_addr
- * (8 bytes) and run over the structure. This macro returns the correct size that
- * must be passed to kernel.
- */
-#define SOCKADDR_LL_LEN(sa)                                             \
-        ({                                                              \
-                const struct sockaddr_ll *_sa = &(sa);                  \
-                size_t _mac_len = sizeof(_sa->sll_addr);                \
-                assert(_sa->sll_family == AF_PACKET);                   \
-                if (be16toh(_sa->sll_hatype) == ARPHRD_ETHER)           \
-                        _mac_len = MAX(_mac_len, (size_t) ETH_ALEN);    \
-                if (be16toh(_sa->sll_hatype) == ARPHRD_INFINIBAND)      \
-                        _mac_len = MAX(_mac_len, (size_t) INFINIBAND_ALEN); \
-                offsetof(struct sockaddr_ll, sll_addr) + _mac_len;      \
-        })
+size_t sockaddr_ll_len(const struct sockaddr_ll *sa);
 
-/* Covers only file system and abstract AF_UNIX socket addresses, but not unnamed socket addresses. */
-#define SOCKADDR_UN_LEN(sa)                                             \
-        ({                                                              \
-                const struct sockaddr_un *_sa = &(sa);                  \
-                assert(_sa->sun_family == AF_UNIX);                     \
-                offsetof(struct sockaddr_un, sun_path) +                \
-                        (_sa->sun_path[0] == 0 ?                        \
-                         1 + strnlen(_sa->sun_path+1, sizeof(_sa->sun_path)-1) : \
-                         strnlen(_sa->sun_path, sizeof(_sa->sun_path))+1); \
-        })
+size_t sockaddr_un_len(const struct sockaddr_un *sa);
 
-#define SOCKADDR_LEN(saddr)                                             \
-        ({                                                              \
-                const union sockaddr_union *__sa = &(saddr);            \
-                size_t _len;                                            \
-                switch (__sa->sa.sa_family) {                           \
-                case AF_INET:                                           \
-                        _len = sizeof(struct sockaddr_in);              \
-                        break;                                          \
-                case AF_INET6:                                          \
-                        _len = sizeof(struct sockaddr_in6);             \
-                        break;                                          \
-                case AF_UNIX:                                           \
-                        _len = SOCKADDR_UN_LEN(__sa->un);               \
-                        break;                                          \
-                case AF_PACKET:                                         \
-                        _len = SOCKADDR_LL_LEN(__sa->ll);               \
-                        break;                                          \
-                case AF_NETLINK:                                        \
-                        _len = sizeof(struct sockaddr_nl);              \
-                        break;                                          \
-                case AF_VSOCK:                                          \
-                        _len = sizeof(struct sockaddr_vm);              \
-                        break;                                          \
-                default:                                                \
-                        assert_not_reached();                           \
-                }                                                       \
-                _len;                                                   \
-        })
+size_t sockaddr_len(const union sockaddr_union *sa);
 
 int socket_ioctl_fd(void);
 
@@ -296,7 +273,9 @@ static inline int getsockopt_int(int fd, int level, int optname, int *ret) {
 int socket_bind_to_ifname(int fd, const char *ifname);
 int socket_bind_to_ifindex(int fd, int ifindex);
 
-/* Define a 64bit version of timeval/timespec in any case, even on 32bit userspace. */
+int socket_autobind(int fd, char **ret_name);
+
+/* Define a 64-bit version of timeval/timespec in any case, even on 32-bit userspace. */
 struct timeval_large {
         uint64_t tvl_sec, tvl_usec;
 };
@@ -304,9 +283,9 @@ struct timespec_large {
         uint64_t tvl_sec, tvl_nsec;
 };
 
-/* glibc duplicates timespec/timeval on certain 32bit archs, once in 32bit and once in 64bit.
+/* glibc duplicates timespec/timeval on certain 32-bit arches, once in 32-bit and once in 64-bit.
  * See __convert_scm_timestamps() in glibc source code. Hence, we need additional buffer space for them
- * to prevent from recvmsg_safe() returning -EXFULL. */
+ * to prevent truncating control msg (recvmsg() MSG_CTRUNC). */
 #define CMSG_SPACE_TIMEVAL                                              \
         ((sizeof(struct timeval) == sizeof(struct timeval_large)) ?     \
          CMSG_SPACE(sizeof(struct timeval)) :                           \
@@ -353,6 +332,14 @@ int socket_get_mtu(int fd, int af, size_t *ret);
 
 int connect_unix_path(int fd, int dir_fd, const char *path);
 
+static inline bool VSOCK_CID_IS_REGULAR(unsigned cid) {
+        /* 0, 1, 2, UINT32_MAX are special, refuse those */
+        return cid > 2 && cid < UINT32_MAX;
+}
+
+int vsock_parse_port(const char *s, unsigned *ret);
+int vsock_parse_cid(const char *s, unsigned *ret);
+
 /* Parses AF_UNIX and AF_VSOCK addresses. AF_INET[6] require some netlink calls, so it cannot be in
  * src/basic/ and is done from 'socket_local_address from src/shared/. Return -EPROTO in case of
  * protocol mismatch. */
@@ -360,8 +347,12 @@ int socket_address_parse_unix(SocketAddress *ret_address, const char *s);
 int socket_address_parse_vsock(SocketAddress *ret_address, const char *s);
 
 /* libc's SOMAXCONN is defined to 128 or 4096 (at least on glibc). But actually, the value can be much
- * larger. In our codebase we want to set it to the max usually, since noawadays socket memory is properly
+ * larger. In our codebase we want to set it to the max usually, since nowadays socket memory is properly
  * tracked by memcg, and hence we don't need to enforce extra limits here. Moreover, the kernel caps it to
  * /proc/sys/net/core/somaxconn anyway, thus by setting this to unbounded we just make that sysctl file
  * authoritative. */
 #define SOMAXCONN_DELUXE INT_MAX
+
+int vsock_get_local_cid(unsigned *ret);
+
+int netlink_socket_get_multicast_groups(int fd, size_t *ret_len, uint32_t **ret_groups);

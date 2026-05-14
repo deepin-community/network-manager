@@ -12,11 +12,6 @@
 
 /*****************************************************************************/
 
-/* strerror() is not thread-safe. Patch systemd-sources via a define. */
-#define strerror(errsv) nm_strerror_native(errsv)
-
-/*****************************************************************************/
-
 /* systemd detects whether compiler supports "-Wstringop-truncation" to disable
  * the warning at particular places. Since we anyway build with -Wno-pragma,
  * we don't do that and just let systemd call
@@ -119,6 +114,11 @@ raw_getpid(void)
 
 #ifndef ALTIFNAMSIZ
 #define ALTIFNAMSIZ 128
+#endif
+
+/* kernel cb12fd8e0dabb9a1c8aef55a6a41e2c255fcdf4b (6.8) */
+#ifndef PID_FS_MAGIC
+#define PID_FS_MAGIC 0x50494446
 #endif
 
 #define HAVE_LINUX_TIME_TYPES_H 0

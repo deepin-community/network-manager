@@ -46,11 +46,13 @@ struct _NMGlobalDnsDomain {
 };
 
 struct _NMGlobalDnsConfig {
-    char       **searches;
-    char       **options;
-    GHashTable  *domains;
-    const char **domain_list;
-    gboolean     internal;
+    char           **searches;
+    char           **options;
+    GHashTable      *domains;
+    const char     **domain_list;
+    char            *cert_authority;
+    NMDnsResolveMode resolve_mode;
+    gboolean         internal;
 };
 
 /*****************************************************************************/
@@ -62,6 +64,7 @@ NM_GOBJECT_PROPERTIES_DEFINE_BASE(PROP_CONFIG_MAIN_FILE,
                                   PROP_CONNECTIVITY_ENABLED,
                                   PROP_CONNECTIVITY_URI,
                                   PROP_CONNECTIVITY_INTERVAL,
+                                  PROP_CONNECTIVITY_TIMEOUT,
                                   PROP_CONNECTIVITY_RESPONSE,
                                   PROP_NO_AUTO_DEFAULT, );
 
@@ -86,6 +89,7 @@ typedef struct {
         char    *uri;
         char    *response;
         guint    interval;
+        guint    timeout;
     } connectivity;
 
     int autoconnect_retries_default;
@@ -304,6 +308,14 @@ nm_config_data_get_connectivity_interval(const NMConfigData *self)
     return NM_CONFIG_DATA_GET_PRIVATE(self)->connectivity.interval;
 }
 
+guint
+nm_config_data_get_connectivity_timeout(const NMConfigData *self)
+{
+    g_return_val_if_fail(self, 0);
+
+    return NM_CONFIG_DATA_GET_PRIVATE(self)->connectivity.timeout;
+}
+
 const char *
 nm_config_data_get_connectivity_response(const NMConfigData *self)
 {
@@ -373,8 +385,8 @@ nm_config_data_get_iwd_config_path(const NMConfigData *self)
 
 gboolean
 nm_config_data_get_ignore_carrier_for_port(const NMConfigData *self,
-                                           const char         *master,
-                                           const char         *slave_type)
+                                           const char         *controller,
+                                           const char         *port_type)
 {
     const char           *value;
     gboolean              has_match;
@@ -383,15 +395,15 @@ nm_config_data_get_ignore_carrier_for_port(const NMConfigData *self,
 
     g_return_val_if_fail(NM_IS_CONFIG_DATA(self), FALSE);
 
-    if (!master || !slave_type)
+    if (!controller || !port_type)
         goto out_default;
 
-    if (!nm_utils_ifname_valid_kernel(master, NULL))
+    if (!nm_utils_ifname_valid_kernel(controller, NULL))
         goto out_default;
 
-    match_data = (NMMatchSpecDeviceData){
-        .interface_name = master,
-        .device_type    = slave_type,
+    match_data = (NMMatchSpecDeviceData) {
+        .interface_name = controller,
+        .device_type    = port_type,
     };
 
     value = _config_data_get_device_config(self,
@@ -412,7 +424,7 @@ nm_config_data_get_ignore_carrier_for_port(const NMConfigData *self,
         return m;
 
 out_default:
-    /* if ignore-carrier is not explicitly or detected for the master, then we assume it's
+    /* if ignore-carrier is not explicitly or detected for the controller, then we assume it's
      * enabled. This is in line with nm_config_data_get_ignore_carrier_by_device(), where
      * ignore-carrier is enabled based on nm_device_ignore_carrier_by_default().
      */
@@ -849,7 +861,7 @@ nm_config_data_log(const NMConfigData  *self,
                     /* We require that the default values are grouped by their "group".
                      * That is, all default values for a certain "group" are close to
                      * each other in the list. Assert for that. */
-                    for (g2 = g + 1; g2 < groups_full->len; g2++) {
+                    for (g2 = g + 1; g2 < G_N_ELEMENTS(default_values); g2++) {
                         nm_assert(!nm_streq(default_values[g - 1].group, default_values[g2].group));
                     }
                 }
@@ -929,6 +941,14 @@ next:
 
 /*****************************************************************************/
 
+gboolean
+nm_global_dns_has_global_dns_section(const NMGlobalDnsConfig *dns_config)
+{
+    g_return_val_if_fail(dns_config, FALSE);
+
+    return dns_config->searches != NULL || dns_config->options != NULL;
+}
+
 const char *const *
 nm_global_dns_config_get_searches(const NMGlobalDnsConfig *dns_config)
 {
@@ -943,6 +963,22 @@ nm_global_dns_config_get_options(const NMGlobalDnsConfig *dns_config)
     g_return_val_if_fail(dns_config, NULL);
 
     return (const char *const *) dns_config->options;
+}
+
+const char *
+nm_global_dns_config_get_certification_authority(const NMGlobalDnsConfig *dns_config)
+{
+    g_return_val_if_fail(dns_config, NULL);
+
+    return (const char *) dns_config->cert_authority;
+}
+
+guint
+nm_global_dns_config_get_resolve_mode(const NMGlobalDnsConfig *dns_config)
+{
+    g_return_val_if_fail(dns_config, 0);
+
+    return dns_config->resolve_mode;
 }
 
 guint
@@ -1145,6 +1181,9 @@ nm_global_dns_config_free(NMGlobalDnsConfig *dns_config)
         g_free(dns_config->domain_list);
         if (dns_config->domains)
             g_hash_table_unref(dns_config->domains);
+        if (dns_config->cert_authority) {
+            g_free(dns_config->cert_authority);
+        }
         g_free(dns_config);
     }
 }
@@ -1170,6 +1209,29 @@ global_dns_config_seal_domains(NMGlobalDnsConfig *dns_config)
         dns_config->domain_list = nm_strdict_get_keys(dns_config->domains, TRUE, NULL);
 }
 
+static const char *
+nm_dns_resolve_mode_to_string(const NMDnsResolveMode mode)
+{
+    const char *to_string[3] = {"backup", "prefer", "exclusive"};
+
+    nm_assert(mode < _NM_NUM_DNS_RESOLVE_MODES);
+
+    return to_string[mode];
+}
+
+static NMDnsResolveMode
+nm_dns_resolve_mode_from_string(const char *string)
+{
+    if (nm_streq0(string, "backup")) {
+        return NM_DNS_RESOLVE_MODE_BACKUP;
+    } else if (nm_streq0(string, "prefer")) {
+        return NM_DNS_RESOLVE_MODE_PREFER;
+    } else if (nm_streq0(string, "exclusive")) {
+        return NM_DNS_RESOLVE_MODE_EXCLUSIVE;
+    }
+    return _NM_NUM_DNS_RESOLVE_MODES;
+}
+
 static NMGlobalDnsConfig *
 load_global_dns(GKeyFile *keyfile, gboolean internal)
 {
@@ -1179,6 +1241,10 @@ load_global_dns(GKeyFile *keyfile, gboolean internal)
     int                g, i, j, domain_prefix_len;
     gboolean           default_found = FALSE;
     char             **strv;
+    gs_free char      *cert_authority = NULL;
+    gs_free char      *resolve_mode   = NULL;
+    NMDnsResolveMode   parsed_resolve_mode;
+    gboolean           has_global_dns_section;
 
     if (internal) {
         group         = NM_CONFIG_KEYFILE_GROUP_INTERN_GLOBAL_DNS;
@@ -1192,7 +1258,31 @@ load_global_dns(GKeyFile *keyfile, gboolean internal)
     if (!nm_config_keyfile_has_global_dns_config(keyfile, internal))
         return NULL;
 
-    dns_config          = g_malloc0(sizeof(NMGlobalDnsConfig));
+    dns_config = g_malloc0(sizeof(NMGlobalDnsConfig));
+
+    cert_authority = g_key_file_get_string(keyfile,
+                                           group,
+                                           NM_CONFIG_KEYFILE_KEY_GLOBAL_DNS_CERTIFICATION_AUTHORITY,
+                                           NULL);
+    if (cert_authority) {
+        dns_config->cert_authority = g_steal_pointer(&cert_authority);
+    }
+
+    resolve_mode =
+        g_key_file_get_string(keyfile, group, NM_CONFIG_KEYFILE_KEY_GLOBAL_DNS_RESOLVE_MODE, NULL);
+
+    if (resolve_mode) {
+        parsed_resolve_mode = nm_dns_resolve_mode_from_string(resolve_mode);
+        if (parsed_resolve_mode == _NM_NUM_DNS_RESOLVE_MODES) {
+            nm_log_dbg(LOGD_CORE,
+                       "%s global DNS configuration has invalid value '%s', assuming backup",
+                       internal ? "internal" : "user",
+                       NM_CONFIG_KEYFILE_KEY_GLOBAL_DNS_RESOLVE_MODE);
+        } else {
+            dns_config->resolve_mode = parsed_resolve_mode;
+        }
+    }
+
     dns_config->domains = g_hash_table_new_full(nm_str_hash,
                                                 g_str_equal,
                                                 g_free,
@@ -1219,7 +1309,7 @@ load_global_dns(GKeyFile *keyfile, gboolean internal)
     if (strv) {
         nm_strv_cleanup(strv, TRUE, TRUE, TRUE);
         for (i = 0, j = 0; strv[i]; i++) {
-            if (_nm_utils_dns_option_validate(strv[i], NULL, NULL, TRUE, NULL))
+            if (_nm_utils_dns_option_validate(strv[i], NULL, NULL, AF_UNSPEC, NULL))
                 strv[j++] = strv[i];
             else
                 g_free(strv[i]);
@@ -1249,10 +1339,19 @@ load_global_dns(GKeyFile *keyfile, gboolean internal)
         if (strv) {
             nm_strv_cleanup(strv, TRUE, TRUE, TRUE);
             for (i = 0, j = 0; strv[i]; i++) {
-                if (nm_inet_is_valid(AF_INET, strv[i]) || nm_inet_is_valid(AF_INET6, strv[i]))
-                    strv[j++] = strv[i];
-                else
+                gs_free char *to_free = NULL;
+
+                if (nm_dns_uri_normalize(AF_UNSPEC, strv[i], &to_free)) {
+                    if (to_free) {
+                        g_free(strv[i]);
+                        strv[j++] = g_steal_pointer(&to_free);
+                    } else {
+                        strv[j++] = strv[i];
+                    }
+                } else {
+                    nm_log_dbg(LOGD_CORE, "invalid global name server \"%s\"", strv[i]);
                     g_free(strv[i]);
+                }
             }
             if (j == 0)
                 g_free(strv);
@@ -1296,6 +1395,22 @@ load_global_dns(GKeyFile *keyfile, gboolean internal)
         return NULL;
     }
 
+    /* Defining [global-dns-domain-*] implies defining [global-dns] too (maybe empty) */
+    if (default_found)
+        has_global_dns_section = TRUE;
+    else
+        has_global_dns_section = g_key_file_has_group(keyfile, group);
+
+    /* If there exist a [global-dns] section, always initialize "searches" and "options" so
+     * they appear in D-Bus. Clients can use this to know if it's defined, so they can know
+     * if DNS configs from connections are relevant or not. */
+    if (has_global_dns_section) {
+        if (!dns_config->searches)
+            dns_config->searches = nm_strv_empty_new();
+        if (!dns_config->options)
+            dns_config->options = nm_strv_empty_new();
+    }
+
     dns_config->internal = internal;
     global_dns_config_seal_domains(dns_config);
     return dns_config;
@@ -1323,6 +1438,21 @@ nm_global_dns_config_to_dbus(const NMGlobalDnsConfig *dns_config, GValue *value)
                               "{sv}",
                               "options",
                               g_variant_new_strv((const char *const *) dns_config->options, -1));
+    }
+
+    if (dns_config->cert_authority) {
+        g_variant_builder_add(&conf_builder,
+                              "{sv}",
+                              "certification-authority",
+                              g_variant_new("s", dns_config->cert_authority));
+    }
+
+    if (dns_config->resolve_mode) {
+        g_variant_builder_add(
+            &conf_builder,
+            "{sv}",
+            "resolve-mode",
+            g_variant_new("s", nm_dns_resolve_mode_to_string(dns_config->resolve_mode)));
     }
 
     g_variant_builder_init(&domains_builder, G_VARIANT_TYPE("a{sv}"));
@@ -1425,6 +1555,7 @@ nm_global_dns_config_from_dbus(const GValue *value, GError **error)
     GVariantIter       iter;
     char             **strv, *key;
     int                i, j;
+    gs_free char      *resolve_mode_buffer = NULL;
 
     if (!G_VALUE_HOLDS_VARIANT(value)) {
         g_set_error(error, NM_MANAGER_ERROR, NM_MANAGER_ERROR_FAILED, "invalid value type");
@@ -1453,7 +1584,7 @@ nm_global_dns_config_from_dbus(const GValue *value, GError **error)
             nm_strv_cleanup(strv, TRUE, TRUE, TRUE);
 
             for (i = 0, j = 0; strv && strv[i]; i++) {
-                if (_nm_utils_dns_option_validate(strv[i], NULL, NULL, TRUE, NULL))
+                if (_nm_utils_dns_option_validate(strv[i], NULL, NULL, AF_UNSPEC, NULL))
                     strv[j++] = strv[i];
                 else
                     g_free(strv[i]);
@@ -1480,19 +1611,24 @@ nm_global_dns_config_from_dbus(const GValue *value, GError **error)
                 }
                 g_variant_unref(v);
             }
+        } else if (nm_streq0(key, "resolve-mode")
+                   && g_variant_is_of_type(val, G_VARIANT_TYPE("s"))) {
+            g_variant_get(val, "s", &resolve_mode_buffer);
+            dns_config->resolve_mode = nm_dns_resolve_mode_from_string(resolve_mode_buffer);
+            if (dns_config->resolve_mode == _NM_NUM_DNS_RESOLVE_MODES) {
+                g_set_error_literal(error,
+                                    NM_MANAGER_ERROR,
+                                    NM_MANAGER_ERROR_FAILED,
+                                    "Global DNS configuration contains invalid resolve-mode");
+                nm_global_dns_config_free(dns_config);
+                return NULL;
+            }
+        } else if (nm_streq0(key, "certification-authority")
+                   && g_variant_is_of_type(val, G_VARIANT_TYPE("s"))) {
+            g_variant_get(val, "s", &dns_config->cert_authority);
         }
-        g_variant_unref(val);
-    }
 
-    /* An empty value is valid and clears the internal configuration */
-    if (!nm_global_dns_config_is_empty(dns_config)
-        && !nm_global_dns_config_lookup_domain(dns_config, "*")) {
-        g_set_error_literal(error,
-                            NM_MANAGER_ERROR,
-                            NM_MANAGER_ERROR_FAILED,
-                            "Global DNS configuration is missing the default domain");
-        nm_global_dns_config_free(dns_config);
-        return NULL;
+        g_variant_unref(val);
     }
 
     global_dns_config_seal_domains(dns_config);
@@ -1869,7 +2005,7 @@ _match_section_info_init(MatchSectionInfo *connection_info,
         if (!value)
             continue;
 
-        vals[j++] = (NMUtilsNamedValue){
+        vals[j++] = (NMUtilsNamedValue) {
             .name      = g_steal_pointer(&key),
             .value_str = value,
         };
@@ -2006,6 +2142,8 @@ nm_config_data_diff(NMConfigData *old_data, NMConfigData *new_data)
             != nm_config_data_get_connectivity_enabled(new_data)
         || nm_config_data_get_connectivity_interval(old_data)
                != nm_config_data_get_connectivity_interval(new_data)
+        || nm_config_data_get_connectivity_timeout(old_data)
+               != nm_config_data_get_connectivity_timeout(new_data)
         || !nm_streq0(nm_config_data_get_connectivity_uri(old_data),
                       nm_config_data_get_connectivity_uri(new_data))
         || !nm_streq0(nm_config_data_get_connectivity_response(old_data),
@@ -2078,6 +2216,9 @@ get_property(GObject *object, guint prop_id, GValue *value, GParamSpec *pspec)
         break;
     case PROP_CONNECTIVITY_INTERVAL:
         g_value_set_uint(value, nm_config_data_get_connectivity_interval(self));
+        break;
+    case PROP_CONNECTIVITY_TIMEOUT:
+        g_value_set_uint(value, nm_config_data_get_connectivity_timeout(self));
         break;
     case PROP_CONNECTIVITY_RESPONSE:
         g_value_set_string(value, nm_config_data_get_connectivity_response(self));
@@ -2219,6 +2360,15 @@ constructed(GObject *object)
                                      0,
                                      G_MAXUINT,
                                      NM_CONFIG_DEFAULT_CONNECTIVITY_INTERVAL);
+    g_free(str);
+
+    /* On missing or invalid config value, fallback to 20. */
+    str = g_key_file_get_string(priv->keyfile,
+                                NM_CONFIG_KEYFILE_GROUP_CONNECTIVITY,
+                                NM_CONFIG_KEYFILE_KEY_CONNECTIVITY_TIMEOUT,
+                                NULL);
+    priv->connectivity.timeout =
+        _nm_utils_ascii_str_to_int64(str, 10, 0, G_MAXUINT, NM_CONFIG_DEFAULT_CONNECTIVITY_TIMEOUT);
     g_free(str);
 
     priv->dns_mode   = nm_strstrip(g_key_file_get_string(priv->keyfile,
@@ -2420,6 +2570,15 @@ nm_config_data_class_init(NMConfigDataClass *config_class)
                           0,
                           G_PARAM_READABLE | G_PARAM_STATIC_STRINGS);
 
+    obj_properties[PROP_CONNECTIVITY_TIMEOUT] =
+        g_param_spec_uint(NM_CONFIG_DATA_CONNECTIVITY_TIMEOUT,
+                          "",
+                          "",
+                          0,
+                          G_MAXUINT,
+                          0,
+                          G_PARAM_READABLE | G_PARAM_STATIC_STRINGS);
+
     obj_properties[PROP_CONNECTIVITY_RESPONSE] =
         g_param_spec_string(NM_CONFIG_DATA_CONNECTIVITY_RESPONSE,
                             "",
@@ -2435,4 +2594,51 @@ nm_config_data_class_init(NMConfigDataClass *config_class)
                            G_PARAM_WRITABLE | G_PARAM_CONSTRUCT_ONLY | G_PARAM_STATIC_STRINGS);
 
     g_object_class_install_properties(object_class, _PROPERTY_ENUMS_LAST, obj_properties);
+}
+
+static NMGlobalDnsDomain *
+nm_global_dns_domain_clone(NMGlobalDnsDomain *old_domain)
+{
+    if (old_domain) {
+        NMGlobalDnsDomain *new_domain = g_malloc0(sizeof(NMGlobalDnsDomain));
+        new_domain->name              = g_strdup(old_domain->name);
+        new_domain->servers           = (char **) nm_strv_dup(old_domain->servers, -1, TRUE);
+        new_domain->options           = (char **) nm_strv_dup(old_domain->options, -1, TRUE);
+        return new_domain;
+    } else {
+        return NULL;
+    }
+}
+
+NMGlobalDnsConfig *
+nm_global_dns_config_clone(NMGlobalDnsConfig *old_dns_config)
+{
+    NMGlobalDnsConfig *new_dns_config;
+    gpointer           key, value;
+    NMGlobalDnsDomain *old_domain;
+    GHashTableIter     iter;
+
+    new_dns_config           = g_malloc0(sizeof(NMGlobalDnsConfig));
+    new_dns_config->internal = TRUE;
+
+    if (old_dns_config) {
+        new_dns_config->internal = old_dns_config->internal;
+        new_dns_config->searches = nm_strv_dup(old_dns_config->searches, -1, TRUE);
+        new_dns_config->options  = nm_strv_dup(old_dns_config->options, -1, TRUE);
+        new_dns_config->domains  = g_hash_table_new_full(nm_str_hash,
+                                                        g_str_equal,
+                                                        g_free,
+                                                        (GDestroyNotify) global_dns_domain_free);
+        if (old_dns_config->domains) {
+            g_hash_table_iter_init(&iter, old_dns_config->domains);
+            while (g_hash_table_iter_next(&iter, &key, &value)) {
+                old_domain = value;
+                g_hash_table_insert(new_dns_config->domains,
+                                    g_strdup(key),
+                                    nm_global_dns_domain_clone(old_domain));
+            }
+        }
+        global_dns_config_seal_domains(new_dns_config);
+    }
+    return new_dns_config;
 }

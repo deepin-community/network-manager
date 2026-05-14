@@ -159,8 +159,7 @@ complete_connection(NMDevice            *device,
         NULL,
         _("InfiniBand connection"),
         NULL,
-        nm_setting_infiniband_get_mac_address(s_infiniband) ? NULL : nm_device_get_iface(device),
-        TRUE);
+        nm_setting_infiniband_get_mac_address(s_infiniband) ? NULL : nm_device_get_iface(device));
 
     if (!nm_setting_infiniband_get_transport_mode(s_infiniband))
         g_object_set(G_OBJECT(s_infiniband),
@@ -362,8 +361,16 @@ static const NMDBusInterfaceInfoExtended interface_info_device_infiniband = {
     .parent = NM_DEFINE_GDBUS_INTERFACE_INFO_INIT(
         NM_DBUS_INTERFACE_DEVICE_INFINIBAND,
         .properties = NM_DEFINE_GDBUS_PROPERTY_INFOS(
-            NM_DEFINE_DBUS_PROPERTY_INFO_EXTENDED_READABLE("HwAddress", "s", NM_DEVICE_HW_ADDRESS),
-            NM_DEFINE_DBUS_PROPERTY_INFO_EXTENDED_READABLE("Carrier", "b", NM_DEVICE_CARRIER), ), ),
+            NM_DEFINE_DBUS_PROPERTY_INFO_EXTENDED_READABLE(
+                "HwAddress",
+                "s",
+                NM_DEVICE_HW_ADDRESS,
+                .annotations = NM_GDBUS_ANNOTATION_INFO_LIST_DEPRECATED(), ),
+            NM_DEFINE_DBUS_PROPERTY_INFO_EXTENDED_READABLE(
+                "Carrier",
+                "b",
+                NM_DEVICE_CARRIER,
+                .annotations = NM_GDBUS_ANNOTATION_INFO_LIST_DEPRECATED(), ), ), ),
 };
 
 static void
@@ -456,9 +463,10 @@ get_connection_parent(NMDeviceFactory *factory, NMConnection *connection)
                          NULL);
 
     s_infiniband = nm_connection_get_setting_infiniband(connection);
-    g_assert(s_infiniband);
-
-    return nm_setting_infiniband_get_parent(s_infiniband);
+    if (s_infiniband)
+        return nm_setting_infiniband_get_parent(s_infiniband);
+    else
+        return NULL;
 }
 
 static char *
@@ -469,17 +477,19 @@ get_connection_iface(NMDeviceFactory *factory, NMConnection *connection, const c
     g_return_val_if_fail(nm_connection_is_type(connection, NM_SETTING_INFINIBAND_SETTING_NAME),
                          NULL);
 
-    s_infiniband = nm_connection_get_setting_infiniband(connection);
-    g_assert(s_infiniband);
-
     if (!parent_iface)
         return NULL;
 
-    g_return_val_if_fail(g_strcmp0(parent_iface, nm_setting_infiniband_get_parent(s_infiniband))
-                             == 0,
-                         NULL);
+    s_infiniband = nm_connection_get_setting_infiniband(connection);
+    if (s_infiniband) {
+        g_return_val_if_fail(g_strcmp0(parent_iface, nm_setting_infiniband_get_parent(s_infiniband))
+                                 == 0,
+                             NULL);
 
-    return g_strdup(nm_setting_infiniband_get_virtual_interface_name(s_infiniband));
+        return g_strdup(nm_setting_infiniband_get_virtual_interface_name(s_infiniband));
+    } else {
+        return NULL;
+    }
 }
 
 NM_DEVICE_FACTORY_DEFINE_INTERNAL(

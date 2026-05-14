@@ -31,6 +31,37 @@ _DEFAULT_ARG = object()
 ###############################################################################
 
 
+class AliasedProperty:
+    def __init__(self, old_name, new_name):
+        self.old_name = old_name
+        self.new_name = new_name
+
+
+ALIASED_PROPERTIES = {
+    NM.SETTING_CONNECTION_SETTING_NAME: [
+        AliasedProperty(
+            NM.SETTING_CONNECTION_MASTER,
+            "controller",  # NM.SETTING_CONNECTION_CONTROLLER
+        ),
+        AliasedProperty(
+            NM.SETTING_CONNECTION_SLAVE_TYPE,
+            "port-type",  # NM.SETTING_CONNECTION_PORT_TYPE
+        ),
+        AliasedProperty(NM.SETTING_CONNECTION_AUTOCONNECT_SLAVES, "autoconnect-ports"),
+    ],
+    NM.SETTING_WIRELESS_SETTING_NAME: [
+        AliasedProperty(
+            NM.SETTING_WIRELESS_MAC_ADDRESS_BLACKLIST, "mac-address-denylist"
+        )
+    ],
+    NM.SETTING_WIRED_SETTING_NAME: [
+        AliasedProperty(NM.SETTING_WIRED_MAC_ADDRESS_BLACKLIST, "mac-address-denylist")
+    ],
+}
+
+###############################################################################
+
+
 class Global:
     pass
 
@@ -50,7 +81,6 @@ class TestError(AssertionError):
 
 
 class Util:
-
     PY3 = sys.version_info[0] == 3
 
     @staticmethod
@@ -399,6 +429,7 @@ IFACE_AGENT = "org.freedesktop.NetworkManager.SecretAgent"
 IFACE_WIRED = "org.freedesktop.NetworkManager.Device.Wired"
 IFACE_MODEM = "org.freedesktop.NetworkManager.Device.Modem"
 IFACE_VLAN = "org.freedesktop.NetworkManager.Device.Vlan"
+IFACE_MACVLAN = "org.freedesktop.NetworkManager.Device.Macvlan"
 IFACE_WIFI_AP = "org.freedesktop.NetworkManager.AccessPoint"
 IFACE_ACTIVE_CONNECTION = "org.freedesktop.NetworkManager.Connection.Active"
 IFACE_VPN_CONNECTION = "org.freedesktop.NetworkManager.VPN.Connection"
@@ -509,7 +540,6 @@ class BusErr:
 class NmUtil:
     @staticmethod
     def con_hash_to_connection(con_hash, do_verify=False, do_normalize=False):
-
         x_con = []
         for v_setting_name, v_setting in list(con_hash.items()):
             if isinstance(v_setting_name, (dbus.String, str)):
@@ -582,6 +612,8 @@ class NmUtil:
         t = s_con[NM.SETTING_CONNECTION_TYPE]
         if t not in [
             NM.SETTING_GSM_SETTING_NAME,
+            NM.SETTING_MACVLAN_SETTING_NAME,
+            NM.SETTING_OVS_INTERFACE_SETTING_NAME,
             NM.SETTING_VLAN_SETTING_NAME,
             NM.SETTING_VPN_SETTING_NAME,
             NM.SETTING_WIMAX_SETTING_NAME,
@@ -628,7 +660,6 @@ class NmUtil:
 
 
 class ExportedObj(dbus.service.Object):
-
     DBusInterface = collections.namedtuple("DBusInterface", ["dbus_iface", "props"])
 
     @staticmethod
@@ -817,15 +848,14 @@ PRP_DEVICE_DEVICE_TYPE = "DeviceType"
 PRP_DEVICE_AVAILABLE_CONNECTIONS = "AvailableConnections"
 PRP_DEVICE_LLDP_NEIGHBORS = "LldpNeighbors"
 PRP_DEVICE_INTERFACE_FLAGS = "InterfaceFlags"
+PRP_DEVICE_HW_ADDRESS = "HwAddress"
 
 
 class Device(ExportedObj):
-
     path_counter_next = 1
     path_prefix = "/org/freedesktop/NetworkManager/Devices/"
 
-    def __init__(self, iface, devtype, ident=None):
-
+    def __init__(self, iface, devtype, ident=None, hwaddr=None):
         if ident is None:
             ident = iface
 
@@ -837,8 +867,9 @@ class Device(ExportedObj):
         self.dhcp4_config = None
         self.dhcp6_config = None
         self.activation_state_change_delay_ms = 50
+        self.hwaddr = hwaddr is None if "" else hwaddr
 
-        self.prp_state = NM.DeviceState.UNAVAILABLE
+        self.prp_state = NM.DeviceState.DISCONNECTED
 
         if devtype == NM.DeviceType.MODEM:
             udi = "/org/freedesktop/ModemManager1/Modem/0"
@@ -864,6 +895,7 @@ class Device(ExportedObj):
             PRP_DEVICE_DEVICE_TYPE: dbus.UInt32(devtype),
             PRP_DEVICE_AVAILABLE_CONNECTIONS: ExportedObj.to_path_array([]),
             PRP_DEVICE_INTERFACE_FLAGS: dbus.UInt32(3),  # up,lower-up
+            PRP_DEVICE_HW_ADDRESS: dbus.String(self.hwaddr),
             PRP_DEVICE_LLDP_NEIGHBORS: dbus.Array(
                 [
                     dbus.Dictionary(
@@ -1140,10 +1172,11 @@ PRP_WIRED_S390_SUBCHANNELS = "S390Subchannels"
 
 class WiredDevice(Device):
     def __init__(self, iface, mac=None, subchannels=None, ident=None):
-        Device.__init__(self, iface, NM.DeviceType.ETHERNET, ident)
-
         if mac is None:
-            mac = Util.random_mac(self.ident)
+            mac = Util.random_mac(iface if ident is None else ident)
+
+        Device.__init__(self, iface, NM.DeviceType.ETHERNET, ident, hwaddr=mac)
+
         if subchannels is None:
             subchannels = dbus.Array(signature="s")
 
@@ -1180,14 +1213,23 @@ class ModemDevice(Device):
 
 ###############################################################################
 
+
+class MacvlanDevice(Device):
+    def __init__(self, iface, mac=None):
+        Device.__init__(self, iface, NM.DeviceType.MACVLAN, hwaddr=mac)
+        self.dbus_interface_add(IFACE_MACVLAN, {})
+
+
+###############################################################################
+
 PRP_VLAN_HW_ADDRESS = "HwAddress"
 PRP_VLAN_CARRIER = "Carrier"
 PRP_VLAN_VLAN_ID = "VlanId"
 
 
 class VlanDevice(Device):
-    def __init__(self, iface, ident=None):
-        Device.__init__(self, iface, NM.DeviceType.VLAN, ident)
+    def __init__(self, iface, mac=None, ident=None):
+        Device.__init__(self, iface, NM.DeviceType.VLAN, ident, hwaddr=mac)
 
         props = {
             PRP_VLAN_HW_ADDRESS: Util.random_mac(self.ident),
@@ -1210,10 +1252,10 @@ PRP_WIFI_AP_MODE = "Mode"
 PRP_WIFI_AP_MAX_BITRATE = "MaxBitrate"
 PRP_WIFI_AP_STRENGTH = "Strength"
 PRP_WIFI_AP_LAST_SEEN = "LastSeen"
+PRP_WIFI_AP_BANDWIDTH = "Bandwidth"
 
 
 class WifiAp(ExportedObj):
-
     path_counter_next = 1
     path_prefix = "/org/freedesktop/NetworkManager/AccessPoint/"
 
@@ -1228,7 +1270,6 @@ class WifiAp(ExportedObj):
         strength=None,
         ident=None,
     ):
-
         ExportedObj.__init__(self, ExportedObj.create_path(WifiAp), ident)
 
         NM_AP_FLAGS = getattr(NM, "80211ApSecurityFlags")
@@ -1268,6 +1309,7 @@ class WifiAp(ExportedObj):
             PRP_WIFI_AP_MAX_BITRATE: dbus.UInt32(54000),
             PRP_WIFI_AP_STRENGTH: dbus.Byte(strength),
             PRP_WIFI_AP_LAST_SEEN: dbus.Int32(NM.utils_get_timestamp_msec() / 1000),
+            PRP_WIFI_AP_BANDWIDTH: dbus.UInt32(40),
         }
 
         self.dbus_interface_add(IFACE_WIFI_AP, props)
@@ -1287,10 +1329,10 @@ PRP_WIFI_LAST_SCAN = "LastScan"
 
 class WifiDevice(Device):
     def __init__(self, iface, mac=None, ident=None):
-        Device.__init__(self, iface, NM.DeviceType.WIFI, ident)
-
         if mac is None:
-            mac = Util.random_mac(self.ident)
+            mac = Util.random_mac(iface if ident is None else ident)
+
+        Device.__init__(self, iface, NM.DeviceType.WIFI, ident, hwaddr=mac)
 
         self.aps = []
         self.scan_cb_id = None
@@ -1402,12 +1444,10 @@ PRP_VPN_CONNECTION_BANNER = "Banner"
 
 
 class ActiveConnection(ExportedObj):
-
     path_counter_next = 1
     path_prefix = "/org/freedesktop/NetworkManager/ActiveConnection/"
 
     def __init__(self, device, con_inst, specific_object):
-
         ExportedObj.__init__(self, ExportedObj.create_path(ActiveConnection))
 
         self.device = device
@@ -1627,30 +1667,16 @@ class NetworkManager(ExportedObj):
             raise BusErr.UnknownConnectionException("Connection not found")
 
         con_hash = con_inst.con_hash
-        con_type = NmUtil.con_hash_get_type(con_hash)
 
-        device = self.find_device_first(path=devpath)
-        if not device:
-            if con_type == NM.SETTING_WIRED_SETTING_NAME:
-                device = self.find_device_first(dev_type=WiredDevice)
-            elif con_type == NM.SETTING_WIRELESS_SETTING_NAME:
-                device = self.find_device_first(dev_type=WifiDevice)
-            elif con_type == NM.SETTING_VLAN_SETTING_NAME:
-                ifname = con_hash[NM.SETTING_CONNECTION_SETTING_NAME]["interface-name"]
-                device = VlanDevice(ifname)
+        device = self.find_device(devpath, con_hash)
+        if device is None:
+            device = self.create_device(con_hash)
+            if device:
+                # Just created the device, it can start activating right away
+                device.activation_state_change_delay_ms = 0
                 self.add_device(device)
-            elif con_type == NM.SETTING_VPN_SETTING_NAME:
-                for ac in self.active_connections:
-                    if ac.is_vpn:
-                        continue
-                    if ac.device:
-                        device = ac.device
-                        break
-
-        if not device:
-            raise BusErr.UnknownDeviceException(
-                "No device found for the requested iface."
-            )
+        if device is None:
+            raise BusErr.UnknownDeviceException("Device not found")
 
         # See if we need secrets. For the moment, we only support WPA
         if "802-11-wireless-security" in con_hash:
@@ -1709,11 +1735,16 @@ class NetworkManager(ExportedObj):
         out_signature="ooa{sv}",
     )
     def AddAndActivateConnection2(self, con_hash, devpath, specific_object, options):
-        device = self.find_device_first(
-            path=devpath, require=BusErr.UnknownDeviceException
-        )
-        conpath = gl.settings.AddConnection(con_hash)
-        return (conpath, self.ActivateConnection(conpath, devpath, specific_object), [])
+        conpath = gl.settings.add_connection(con_hash)
+        try:
+            return (
+                conpath,
+                self.ActivateConnection(conpath, devpath, specific_object),
+                [],
+            )
+        except:
+            gl.settings.delete_connection(conpath)
+            raise
 
     @dbus.service.method(dbus_interface=IFACE_NM, in_signature="o", out_signature="")
     def DeactivateConnection(self, active_connection):
@@ -1783,6 +1814,7 @@ class NetworkManager(ExportedObj):
         iface=_DEFAULT_ARG,
         ip_iface=_DEFAULT_ARG,
         dev_type=_DEFAULT_ARG,
+        hwaddr=_DEFAULT_ARG,
     ):
         r = None
         for d in self.devices:
@@ -1802,6 +1834,9 @@ class NetworkManager(ExportedObj):
             if dev_type is not _DEFAULT_ARG:
                 if not isinstance(d, dev_type):
                     continue
+            if hwaddr is not _DEFAULT_ARG:
+                if d.hwaddr.lower() != hwaddr.lower():
+                    continue
             yield d
 
     def find_device_first(
@@ -1811,11 +1846,17 @@ class NetworkManager(ExportedObj):
         iface=_DEFAULT_ARG,
         ip_iface=_DEFAULT_ARG,
         dev_type=_DEFAULT_ARG,
+        hwaddr=_DEFAULT_ARG,
         require=None,
     ):
         r = None
         for d in self.find_devices(
-            ident=ident, path=path, iface=iface, ip_iface=ip_iface, dev_type=dev_type
+            ident=ident,
+            path=path,
+            iface=iface,
+            ip_iface=ip_iface,
+            dev_type=dev_type,
+            hwaddr=hwaddr,
         ):
             r = d
             break
@@ -1824,6 +1865,107 @@ class NetworkManager(ExportedObj):
                 raise TestError("Device not found")
             raise BusErr.UnknownDeviceException("Device not found")
         return r
+
+    def find_device(self, devpath, con_hash):
+        device = self.find_device_first(path=devpath)
+        if device:
+            return device
+
+        con_type = NmUtil.con_hash_get_type(con_hash)
+
+        if con_type == NM.SETTING_WIRED_SETTING_NAME:
+            return self.find_device_first(dev_type=WiredDevice)
+
+        if con_type == NM.SETTING_WIRELESS_SETTING_NAME:
+            return self.find_device_first(dev_type=WifiDevice)
+
+        if con_type == NM.SETTING_VPN_SETTING_NAME:
+            for ac in self.active_connections:
+                if ac.is_vpn:
+                    continue
+                if ac.device:
+                    return ac.device
+
+        return None
+
+    def create_device(self, con_hash):
+        con_type = NmUtil.con_hash_get_type(con_hash)
+
+        if con_type == NM.SETTING_VLAN_SETTING_NAME:
+            iface = con_hash[NM.SETTING_CONNECTION_SETTING_NAME].get("interface-name")
+            parent_iface = con_hash[NM.SETTING_VLAN_SETTING_NAME].get("parent")
+
+            if NM.SETTING_WIRED_SETTING_NAME in con_hash:
+                mac = con_hash[NM.SETTING_WIRED_SETTING_NAME].get("mac-address")
+            else:
+                mac = None
+            if mac is not None:
+                parent_hwaddr = "%02X:%02X:%02X:%02X:%02X:%02X" % (
+                    mac[0],
+                    mac[1],
+                    mac[2],
+                    mac[3],
+                    mac[4],
+                    mac[5],
+                )
+            else:
+                parent_hwaddr = _DEFAULT_ARG
+
+            parent_ident = parent_iface if parent_iface is not None else _DEFAULT_ARG
+            parent_device = self.find_device_first(
+                dev_type=WiredDevice, hwaddr=parent_hwaddr, ident=parent_ident
+            )
+            if parent_device is None:
+                parent_device = self.find_device_first(
+                    dev_type=MacvlanDevice, hwaddr=parent_hwaddr, ident=parent_ident
+                )
+            if parent_device is None:
+                raise BusErr.UnknownDeviceException("Parent device not found")
+
+            if parent_hwaddr is None:
+                parent_hwaddr = parent_device.hwaddr
+
+            if NM.SETTING_WIRED_SETTING_NAME in con_hash:
+                mac = con_hash[NM.SETTING_WIRED_SETTING_NAME].get("cloned-mac-address")
+            else:
+                mac = None
+            if mac is not None:
+                hwaddr = "%02X:%02X:%02X:%02X:%02X:%02X" % (
+                    mac[0],
+                    mac[1],
+                    mac[2],
+                    mac[3],
+                    mac[4],
+                    mac[5],
+                )
+            else:
+                hwaddr = None
+
+            if parent_iface is None:
+                parent_iface = parent_device.ident
+
+            if iface is None:
+                iface = "%s.%d" % (
+                    parent_iface,
+                    con_hash[NM.SETTING_VLAN_SETTING_NAME]["id"],
+                )
+
+            return VlanDevice(iface, mac=hwaddr)
+
+        if con_type == NM.SETTING_MACVLAN_SETTING_NAME:
+            ifname = con_hash[NM.SETTING_CONNECTION_SETTING_NAME]["interface-name"]
+            mac = con_hash[NM.SETTING_WIRED_SETTING_NAME]["cloned-mac-address"]
+            hwaddr = "%02X:%02X:%02X:%02X:%02X:%02X" % (
+                mac[0],
+                mac[1],
+                mac[2],
+                mac[3],
+                mac[4],
+                mac[5],
+            )
+            return MacvlanDevice(ifname, hwaddr)
+
+        return None
 
     def add_device(self, device):
         if self.find_device_first(ident=device.ident, path=device.path) is not None:
@@ -2034,7 +2176,6 @@ PRP_CONNECTION_FILENAME = "Filename"
 
 class Connection(ExportedObj):
     def __init__(self, path_counter, con_hash, do_verify_strict=True):
-
         path = "/org/freedesktop/NetworkManager/Settings/Connection/%s" % (path_counter)
 
         ExportedObj.__init__(self, path)
@@ -2077,7 +2218,6 @@ class Connection(ExportedObj):
         return self.get_type() == NM.SETTING_VPN_SETTING_NAME
 
     def update_connection(self, con_hash, do_verify_strict):
-
         NmUtil.con_hash_verify(con_hash, do_verify_strict=do_verify_strict)
 
         old_uuid = self.get_uuid()
@@ -2113,7 +2253,7 @@ class Connection(ExportedObj):
         dbus_interface=IFACE_CONNECTION, in_signature="", out_signature=""
     )
     def Delete(self):
-        gl.settings.delete_connection(self)
+        gl.settings.delete_connection(self.path)
 
     @dbus.service.method(
         dbus_interface=IFACE_CONNECTION, in_signature="a{sa{sv}}", out_signature=""
@@ -2127,6 +2267,13 @@ class Connection(ExportedObj):
         out_signature="a{sv}",
     )
     def Update2(self, con_hash, flags, args):
+        for setting_name in ALIASED_PROPERTIES.keys():
+            if setting_name in con_hash:
+                setting = con_hash[setting_name]
+                for pty in ALIASED_PROPERTIES[setting_name]:
+                    if pty.new_name in setting and pty.old_name in setting:
+                        del setting[pty.new_name]
+
         self.update_connection(con_hash, True)
         return []
 
@@ -2238,7 +2385,7 @@ class Settings(ExportedObj):
             def cb():
                 if hasattr(con_inst, "_remove_next_connection_cb"):
                     del con_inst._remove_next_connection_cb
-                    self.delete_connection(con_inst)
+                    self.delete_connection(con_inst.path)
                 return False
 
             # We will delete the connection right away on an idle handler. However,
@@ -2255,8 +2402,9 @@ class Settings(ExportedObj):
             raise BusErr.UnknownConnectionException("Connection not found")
         self.connections[path].update_connection(con_hash, do_verify_strict)
 
-    def delete_connection(self, con_inst):
-        del self.connections[con_inst.path]
+    def delete_connection(self, path):
+        con_inst = self.get_connection(path)
+        del self.connections[path]
         self._dbus_property_set(
             IFACE_SETTINGS,
             PRP_SETTINGS_CONNECTIONS,
@@ -2301,7 +2449,6 @@ PRP_IP4_CONFIG_WINSSERVERS = "WinsServers"
 
 
 class IP4Config(ExportedObj):
-
     path_counter_next = 1
     path_prefix = "/org/freedesktop/NetworkManager/IP4Config/"
 
@@ -2339,12 +2486,16 @@ class IP4Config(ExportedObj):
                 a = {
                     "dest": Util.random_ip(seed, net="192.168.0.0/16")[0],
                     "prefix": Util.random_int(seed, 17, 32),
-                    "next-hop": None
-                    if (Util.random_int(seed) % 3 == 0)
-                    else Util.random_ip(seed, net="192.168.0.0/16")[0],
-                    "metric": -1
-                    if (Util.random_int(seed) % 3 == 0)
-                    else Util.random_int(seed, 0, 0xFFFFFFFF),
+                    "next-hop": (
+                        None
+                        if (Util.random_int(seed) % 3 == 0)
+                        else Util.random_ip(seed, net="192.168.0.0/16")[0]
+                    ),
+                    "metric": (
+                        -1
+                        if (Util.random_int(seed) % 3 == 0)
+                        else Util.random_int(seed, 0, 0xFFFFFFFF)
+                    ),
                 }
                 routes.append(a)
 
@@ -2500,7 +2651,6 @@ PRP_IP6_CONFIG_DNSPRIORITY = "DnsPriority"
 
 
 class IP6Config(ExportedObj):
-
     path_counter_next = 1
     path_prefix = "/org/freedesktop/NetworkManager/IP6Config/"
 
@@ -2538,12 +2688,16 @@ class IP6Config(ExportedObj):
                 a = {
                     "dest": Util.random_ip(seed, net="2001:a::/64")[0],
                     "prefix": Util.random_int(seed, 65, 128),
-                    "next-hop": None
-                    if (Util.random_int(seed) % 3 == 0)
-                    else Util.random_ip(seed, net="2001:a::/64")[0],
-                    "metric": -1
-                    if (Util.random_int(seed) % 3 == 0)
-                    else Util.random_int(seed, 0, 0xFFFFFFFF),
+                    "next-hop": (
+                        None
+                        if (Util.random_int(seed) % 3 == 0)
+                        else Util.random_ip(seed, net="2001:a::/64")[0]
+                    ),
+                    "metric": (
+                        -1
+                        if (Util.random_int(seed) % 3 == 0)
+                        else Util.random_int(seed, 0, 0xFFFFFFFF)
+                    ),
                 }
                 routes.append(a)
 
@@ -2674,7 +2828,6 @@ PRP_DHCP4_CONFIG_OPTIONS = "Options"
 
 
 class Dhcp4Config(ExportedObj):
-
     path_counter_next = 1
     path_prefix = "/org/freedesktop/NetworkManager/DHCP4Config/"
 
@@ -2715,7 +2868,6 @@ PRP_DHCP6_CONFIG_OPTIONS = "Options"
 
 
 class Dhcp6Config(ExportedObj):
-
     path_counter_next = 1
     path_prefix = "/org/freedesktop/NetworkManager/DHCP6Config/"
 

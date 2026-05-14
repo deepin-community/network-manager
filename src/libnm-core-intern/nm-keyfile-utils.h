@@ -6,7 +6,7 @@
 #ifndef __NM_KEYFILE_UTILS_H__
 #define __NM_KEYFILE_UTILS_H__
 
-#if !((NETWORKMANAGER_COMPILATION) &NM_NETWORKMANAGER_COMPILATION_WITH_LIBNM_CORE_INTERNAL)
+#if !((NETWORKMANAGER_COMPILATION) & NM_NETWORKMANAGER_COMPILATION_WITH_LIBNM_CORE_INTERNAL)
 #error Cannot use this header.
 #endif
 
@@ -87,7 +87,5 @@ nm_keyfile_plugin_kf_has_key(GKeyFile *kf, const char *group, const char *key, G
 const char *nm_keyfile_key_encode(const char *name, char **out_to_free);
 
 const char *nm_keyfile_key_decode(const char *key, char **out_to_free);
-
-void nm_keyfile_add_group(GKeyFile *keyfile, const char *group);
 
 #endif /* __NM_KEYFILE_UTILS_H__ */

@@ -167,6 +167,9 @@ test_config_simple(void)
     g_assert_cmpint(nm_config_data_get_connectivity_interval(nm_config_get_data_orig(config)),
                     ==,
                     100);
+    g_assert_cmpint(nm_config_data_get_connectivity_timeout(nm_config_get_data_orig(config)),
+                    ==,
+                    42);
 
     plugins = nm_config_data_get_plugins(nm_config_get_data_orig(config), FALSE);
     g_assert_cmpint(g_strv_length((char **) plugins), ==, 3);
@@ -384,7 +387,27 @@ test_config_global_dns(void)
     g_assert(dns);
     g_object_unref(config);
 
-    /* Check that a file with a domain domain, but without a default one gives a NULL configuration */
+    /* Check that a file with an empty global-dns section gives a good configuration.
+     * Check also that searches and options are not NULL, as this is how we expose to
+     * D-Bus that global-dns is defined. */
+    config =
+        setup_config(NULL, TEST_DIR "/global-dns-empty.conf", "", NULL, "/no/such/dir", "", NULL);
+    dns = nm_config_data_get_global_dns_config(nm_config_get_data_orig(config));
+    g_assert(dns);
+    g_assert(nm_global_dns_config_get_searches(dns));
+    g_assert(nm_global_dns_config_get_options(dns));
+    g_object_unref(config);
+
+    /* Check that a file with a domain, but no global-dns, assumes an implicit empty global-dns */
+    config =
+        setup_config(NULL, TEST_DIR "/global-dns-not-set.conf", "", NULL, "/no/such/dir", "", NULL);
+    dns = nm_config_data_get_global_dns_config(nm_config_get_data_orig(config));
+    g_assert(dns);
+    g_assert(nm_global_dns_config_get_searches(dns));
+    g_assert(nm_global_dns_config_get_options(dns));
+    g_object_unref(config);
+
+    /* Check that a file with a domain, but without a default one, gives a NULL configuration */
     config =
         setup_config(NULL, TEST_DIR "/global-dns-invalid.conf", "", NULL, "/no/such/dir", "", NULL);
     dns = nm_config_data_get_global_dns_config(nm_config_get_data_orig(config));
@@ -962,7 +985,8 @@ _set_values_user_atomic_section_1_set(NMConfig            *config,
     g_key_file_set_string(keyfile, "atomic-prefix-1.section-b", "key1", "user-value1");
     g_key_file_set_string(keyfile, "non-atomic-prefix-1.section-a", "nap1-key1", "user-value1");
     g_key_file_set_string(keyfile, "non-atomic-prefix-1.section-a", "nap1-key2", "user-value2");
-    *out_expected_changes = NM_CONFIG_CHANGE_VALUES | NM_CONFIG_CHANGE_VALUES_USER;
+    *out_expected_changes =
+        NM_CONFIG_CHANGE_VALUES | NM_CONFIG_CHANGE_VALUES_USER | NM_CONFIG_CHANGE_CONFIG_FILES;
 }
 
 static void
@@ -973,7 +997,9 @@ _set_values_user_atomic_section_1_check(NMConfig           *config,
                                         NMConfigData       *old_data)
 {
     if (is_change_event)
-        g_assert(changes == (NM_CONFIG_CHANGE_VALUES | NM_CONFIG_CHANGE_VALUES_USER));
+        g_assert(changes
+                 == (NM_CONFIG_CHANGE_VALUES | NM_CONFIG_CHANGE_VALUES_USER
+                     | NM_CONFIG_CHANGE_CONFIG_FILES));
     assert_config_value(config_data, "atomic-prefix-1.section-a", "key1", "user-value1");
     assert_config_value(config_data, "atomic-prefix-1.section-a", "key2", "user-value2");
     assert_config_value(config_data, "atomic-prefix-1.section-b", "key1", "user-value1");
@@ -1076,7 +1102,7 @@ _set_values_intern_atomic_section_2_set(NMConfig            *config,
     g_key_file_set_value(keyfile,
                          NM_CONFIG_KEYFILE_GROUPPREFIX_INTERN "with-whitespace",
                          "key2",
-                         " b c\\,  d  ");
+                         " b c\\\\,  d  ");
     *out_expected_changes = NM_CONFIG_CHANGE_CAUSE_SET_VALUES | NM_CONFIG_CHANGE_VALUES
                             | NM_CONFIG_CHANGE_VALUES_INTERN;
 }

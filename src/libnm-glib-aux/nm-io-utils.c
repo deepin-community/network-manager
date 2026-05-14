@@ -415,8 +415,10 @@ nm_utils_file_get_contents(int                         dirfd,
 
 /*
  * Copied from GLib's g_file_set_contents() et al., but allows
- * specifying a mode for the new file and optionally the last access
- * and last modification times.
+ * specifying:
+ * - the file mode (@mode)
+ * - optionally, the last access and modification times (@times)
+ * - optionally, a fixed name for the temporary file (@tmp_name)
  */
 gboolean
 nm_utils_file_set_contents(const char            *filename,
@@ -424,10 +426,11 @@ nm_utils_file_set_contents(const char            *filename,
                            gssize                 length,
                            mode_t                 mode,
                            const struct timespec *times,
+                           const char            *tmp_name,
                            int                   *out_errsv,
                            GError               **error)
 {
-    gs_free char *tmp_name = NULL;
+    gs_free char *tmp_name_free = NULL;
     struct stat   statbuf;
     int           errsv;
     gssize        s;
@@ -442,8 +445,13 @@ nm_utils_file_set_contents(const char            *filename,
     if (length == -1)
         length = strlen(contents);
 
-    tmp_name = g_strdup_printf("%s.XXXXXX", filename);
-    fd       = g_mkstemp_full(tmp_name, O_RDWR | O_CLOEXEC, mode);
+    if (tmp_name) {
+        fd = open(tmp_name, O_CREAT | O_RDWR | O_TRUNC | O_CLOEXEC, mode);
+    } else {
+        tmp_name_free = g_strdup_printf("%s.XXXXXX", filename);
+        tmp_name      = tmp_name_free;
+        fd            = g_mkstemp_full(tmp_name_free, O_RDWR | O_CLOEXEC, mode);
+    }
     if (fd < 0) {
         return _get_contents_error_errno(error, out_errsv, "failed to create file %s", tmp_name);
     }
@@ -683,7 +691,7 @@ nm_g_subprocess_terminate_in_background(GSubprocess *subprocess, int timeout_mse
     main_context = g_main_context_get_thread_default();
 
     term_data  = g_slice_new(SubprocessTerminateData);
-    *term_data = (SubprocessTerminateData){
+    *term_data = (SubprocessTerminateData) {
         .subprocess     = g_object_ref(subprocess),
         .timeout_source = NULL,
     };
@@ -845,7 +853,7 @@ nm_sd_notify(const char *state)
 
     /* systemd calls here fd_set_sndbuf(fd, SNDBUF_SIZE) .We don't bother. */
 
-    iovec = (struct iovec){
+    iovec = (struct iovec) {
         .iov_base = (gpointer) state,
         .iov_len  = strlen(state),
     };

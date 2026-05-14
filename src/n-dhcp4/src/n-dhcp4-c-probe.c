@@ -118,6 +118,7 @@ int n_dhcp4_client_probe_config_dup(NDhcp4ClientProbeConfig *config,
         dup->init_reboot = config->init_reboot;
         dup->requested_ip = config->requested_ip;
         dup->ms_start_delay = config->ms_start_delay;
+        dup->dscp = config->dscp;
 
         for (unsigned int i = 0; i < config->n_request_parameters; ++i)
                 dup->request_parameters[dup->n_request_parameters++] = config->request_parameters[i];
@@ -188,6 +189,19 @@ _c_public_ void n_dhcp4_client_probe_config_set_inform_only(NDhcp4ClientProbeCon
  */
 _c_public_ void n_dhcp4_client_probe_config_set_init_reboot(NDhcp4ClientProbeConfig *config, bool init_reboot) {
         config->init_reboot = init_reboot;
+}
+
+/**
+ * n_dhcp4_client_probe_config_set_dscp() - set the IP DSCP value
+ * @config:                     configuration to operate on
+ * @dscp:                       value to set
+ *
+ * This sets the DSCP property of the configuration object, which specifies
+ * the DSCP value to set in the first six bits of the DS field in the IPv4
+ * header. If this function is not called, the DSCP will be set to CS0 (0).
+ */
+_c_public_ void n_dhcp4_client_probe_config_set_dscp(NDhcp4ClientProbeConfig *config, uint8_t dscp) {
+        config->dscp = dscp & 0x3F;
 }
 
 /**
@@ -689,6 +703,8 @@ static int n_dhcp4_client_probe_transition_deferred(NDhcp4ClientProbe *probe, ui
 
         switch (probe->state) {
         case N_DHCP4_CLIENT_PROBE_STATE_INIT:
+                /* reset client IP (CIADDR) */
+                n_dhcp4_c_connection_clear_client_ip(&probe->connection);
                 r = n_dhcp4_c_connection_listen(&probe->connection);
                 if (r)
                         return r;
@@ -1123,11 +1139,9 @@ int n_dhcp4_client_probe_transition_decline(NDhcp4ClientProbe *probe, NDhcp4Inco
                 if (r)
                         return r;
 
-                r = n_dhcp4_c_connection_start_request(&probe->connection, request, ns_now);
+                r = n_dhcp4_c_connection_send_request(&probe->connection, request, ns_now);
                 if (r)
                         return r;
-                else
-                        request = NULL; /* consumed */
 
                 n_dhcp4_client_lease_unlink(probe->current_lease);
                 probe->current_lease = n_dhcp4_client_lease_unref(probe->current_lease);
@@ -1303,5 +1317,35 @@ int n_dhcp4_client_probe_dispatch_io(NDhcp4ClientProbe *probe, uint32_t events) 
  * n_dhcp4_client_probe_update_mtu() - XXX
  */
 int n_dhcp4_client_probe_update_mtu(NDhcp4ClientProbe *probe, uint16_t mtu) {
+        return 0;
+}
+
+/**
+ * n_dhcp4_client_probe_release() - send a release request
+ * @probe:                          probe to operate on
+ *
+ * This sends a RELEASE message on the connection used by the probe.
+ *
+ * Return: 0 if successful otherwise non-zero value is returned.
+ */
+int n_dhcp4_client_probe_release(NDhcp4ClientProbe *probe) {
+        _c_cleanup_(n_dhcp4_outgoing_freep) NDhcp4Outgoing *request_out = NULL;
+        int r;
+
+        if (probe->connection.state != N_DHCP4_C_CONNECTION_STATE_DRAINING
+                && probe->connection.state != N_DHCP4_C_CONNECTION_STATE_UDP)
+                return -ENOTRECOVERABLE;
+
+        r = n_dhcp4_c_connection_release_new(&probe->connection, &request_out, NULL);
+        if (r)
+                return r;
+
+        r = n_dhcp4_c_connection_send_request(&probe->connection, request_out, 0);
+        if (r)
+                return r;
+
+        probe->state = N_DHCP4_CLIENT_PROBE_STATE_INIT;
+        n_dhcp4_client_lease_unlink(probe->current_lease);
+
         return 0;
 }

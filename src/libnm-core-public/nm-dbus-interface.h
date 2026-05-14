@@ -37,8 +37,10 @@
 #define NM_DBUS_INTERFACE_DEVICE_DUMMY         NM_DBUS_INTERFACE_DEVICE ".Dummy"
 #define NM_DBUS_INTERFACE_DEVICE_GENERIC       NM_DBUS_INTERFACE_DEVICE ".Generic"
 #define NM_DBUS_INTERFACE_DEVICE_GRE           NM_DBUS_INTERFACE_DEVICE ".Gre"
+#define NM_DBUS_INTERFACE_DEVICE_HSR           NM_DBUS_INTERFACE_DEVICE ".Hsr"
 #define NM_DBUS_INTERFACE_DEVICE_INFINIBAND    NM_DBUS_INTERFACE_DEVICE ".Infiniband"
 #define NM_DBUS_INTERFACE_DEVICE_IP_TUNNEL     NM_DBUS_INTERFACE_DEVICE ".IPTunnel"
+#define NM_DBUS_INTERFACE_DEVICE_IPVLAN        NM_DBUS_INTERFACE_DEVICE ".Ipvlan"
 #define NM_DBUS_INTERFACE_DEVICE_LOOPBACK      NM_DBUS_INTERFACE_DEVICE ".Loopback"
 #define NM_DBUS_INTERFACE_DEVICE_MACSEC        NM_DBUS_INTERFACE_DEVICE ".Macsec"
 #define NM_DBUS_INTERFACE_DEVICE_MACVLAN       NM_DBUS_INTERFACE_DEVICE ".Macvlan"
@@ -92,16 +94,25 @@
 
 /**
  * NMVersionInfoCapability:
- * %_NM_VERSION_INFO_CAPABILITY_UNUSED: a dummy capability. It has no meaning,
- *   don't use it.
+ * @NM_VERSION_INFO_CAPABILITY_SYNC_ROUTE_WITH_TABLE: Contains the fix to a bug that
+ *   caused that routes in table other than main were not removed on reapply nor
+ *   on connection down.
+ *   https://issues.redhat.com/browse/RHEL-66262
+ *   https://issues.redhat.com/browse/RHEL-67324
+ * @NM_VERSION_INFO_CAPABILITY_IP4_FORWARDING: Indicates that NetworkManager supports
+ * configuring per-device IPv4 sysctl forwarding setting. Since: 1.54.
+ * @NM_VERSION_INFO_CAPABILITY_SRIOV_PRESERVE_ON_DOWN: NetworkManager supports the
+ *   "sriov.preserve-on-down" property. Since: 1.54
  *
- * Currently no enum values are defined. These capabilities are exposed
- * on D-Bus in the "VersionInfo" bit field.
+ * The numeric values represent the bit index of the capability. These capabilities
+ * can be queried in the "VersionInfo" D-Bus property.
  *
  * Since: 1.42
  */
 typedef enum {
-    _NM_VERSION_INFO_CAPABILITY_UNUSED = 0x7FFFFFFFu,
+    NM_VERSION_INFO_CAPABILITY_SYNC_ROUTE_WITH_TABLE  = 0,
+    NM_VERSION_INFO_CAPABILITY_IP4_FORWARDING         = 1,
+    NM_VERSION_INFO_CAPABILITY_SRIOV_PRESERVE_ON_DOWN = 2,
 } NMVersionInfoCapability;
 
 /**
@@ -134,8 +145,10 @@ typedef enum {
  *    and not disable controls that require network access.
  *    The graphical shells may hide the network accessibility indicator altogether
  *    since no meaningful status indication can be provided.
- * @NM_STATE_ASLEEP: Networking is not enabled, the system is being suspended or
- *    resumed from suspend.
+ * @NM_STATE_ASLEEP: Deprecated: 1.56: Use %NM_STATE_DISABLED instead.
+ * @NM_STATE_DISABLED: NetworkManager is disabled, either because the user requested
+ *    to disable networking or because the system is suspended or resuming from suspend.
+ *    Since: 1.56.
  * @NM_STATE_DISCONNECTED: There is no active network connection.
  *    The graphical shell should indicate  no network connectivity and the
  *    applications should not attempt to access the network.
@@ -159,7 +172,8 @@ typedef enum {
  **/
 typedef enum {
     NM_STATE_UNKNOWN          = 0,
-    NM_STATE_ASLEEP           = 10,
+    NM_STATE_ASLEEP           = 10, /* Deprecated */
+    NM_STATE_DISABLED         = 10,
     NM_STATE_DISCONNECTED     = 20,
     NM_STATE_DISCONNECTING    = 30,
     NM_STATE_CONNECTING       = 40,
@@ -212,11 +226,11 @@ typedef enum {
  * @NM_DEVICE_TYPE_MODEM: a modem supporting analog telephone, CDMA/EVDO,
  * GSM/UMTS, or LTE network access protocols
  * @NM_DEVICE_TYPE_INFINIBAND: an IP-over-InfiniBand device
- * @NM_DEVICE_TYPE_BOND: a bond master interface
+ * @NM_DEVICE_TYPE_BOND: a bond controller interface
  * @NM_DEVICE_TYPE_VLAN: an 802.1Q VLAN interface
  * @NM_DEVICE_TYPE_ADSL: ADSL modem
- * @NM_DEVICE_TYPE_BRIDGE: a bridge master interface
- * @NM_DEVICE_TYPE_TEAM: a team master interface
+ * @NM_DEVICE_TYPE_BRIDGE: a bridge controller interface
+ * @NM_DEVICE_TYPE_TEAM: a team controller interface
  * @NM_DEVICE_TYPE_TUN: a TUN or TAP interface
  * @NM_DEVICE_TYPE_IP_TUNNEL: a IP tunnel interface
  * @NM_DEVICE_TYPE_MACVLAN: a MACVLAN interface
@@ -234,6 +248,8 @@ typedef enum {
  * @NM_DEVICE_TYPE_WIFI_P2P: an 802.11 Wi-Fi P2P device. Since: 1.16.
  * @NM_DEVICE_TYPE_VRF: A VRF (Virtual Routing and Forwarding) interface. Since: 1.24.
  * @NM_DEVICE_TYPE_LOOPBACK: a loopback interface. Since: 1.42.
+ * @NM_DEVICE_TYPE_HSR: A HSR/PRP device. Since: 1.46.
+ * @NM_DEVICE_TYPE_IPVLAN: A IPVLAN device. Since: 1.52.
  *
  * #NMDeviceType values indicate the type of hardware represented by a
  * device object.
@@ -272,6 +288,8 @@ typedef enum {
     NM_DEVICE_TYPE_WIFI_P2P      = 30,
     NM_DEVICE_TYPE_VRF           = 31,
     NM_DEVICE_TYPE_LOOPBACK      = 32,
+    NM_DEVICE_TYPE_HSR           = 33,
+    NM_DEVICE_TYPE_IPVLAN        = 34,
 } NMDeviceType;
 
 /**
@@ -306,6 +324,7 @@ typedef enum /*< flags >*/ {
  * @NM_WIFI_DEVICE_CAP_FREQ_VALID: device reports frequency capabilities
  * @NM_WIFI_DEVICE_CAP_FREQ_2GHZ: device supports 2.4GHz frequencies
  * @NM_WIFI_DEVICE_CAP_FREQ_5GHZ: device supports 5GHz frequencies
+ * @NM_WIFI_DEVICE_CAP_FREQ_6GHZ: device supports 6GHz frequencies. Since: 1.46.
  * @NM_WIFI_DEVICE_CAP_MESH: device supports acting as a mesh point. Since: 1.20.
  * @NM_WIFI_DEVICE_CAP_IBSS_RSN: device supports WPA2/RSN in an IBSS network. Since: 1.22.
  *
@@ -324,6 +343,7 @@ typedef enum /*< flags >*/ {
     NM_WIFI_DEVICE_CAP_FREQ_VALID    = 0x00000100,
     NM_WIFI_DEVICE_CAP_FREQ_2GHZ     = 0x00000200,
     NM_WIFI_DEVICE_CAP_FREQ_5GHZ     = 0x00000400,
+    NM_WIFI_DEVICE_CAP_FREQ_6GHZ     = 0x00000800,
     NM_WIFI_DEVICE_CAP_MESH          = 0x00001000,
     NM_WIFI_DEVICE_CAP_IBSS_RSN      = 0x00002000,
 } NMDeviceWifiCapabilities;
@@ -605,6 +625,31 @@ typedef enum {
  * @NM_DEVICE_STATE_REASON_IP_METHOD_UNSUPPORTED: The selected IP method is not supported
  * @NM_DEVICE_STATE_REASON_SRIOV_CONFIGURATION_FAILED: configuration of SR-IOV parameters failed
  * @NM_DEVICE_STATE_REASON_PEER_NOT_FOUND: The Wi-Fi P2P peer could not be found
+ * @NM_DEVICE_STATE_REASON_DEVICE_HANDLER_FAILED: The device handler dispatcher returned an
+ *   error. Since: 1.46
+ * @NM_DEVICE_STATE_REASON_UNMANAGED_BY_DEFAULT: The device is unmanaged because the device type
+ *   is unmanaged by default. Since: 1.48
+ * @NM_DEVICE_STATE_REASON_UNMANAGED_EXTERNAL_DOWN: The device is unmanaged because it is an
+ *   external device and is unconfigured (down or without addresses). Since: 1.48
+ * @NM_DEVICE_STATE_REASON_UNMANAGED_LINK_NOT_INIT: The device is unmanaged because the link is
+ *   not initialized by udev. Since: 1.48
+ * @NM_DEVICE_STATE_REASON_UNMANAGED_QUITTING: The device is unmanaged because NetworkManager is
+ *   quitting. Since: 1.48
+ * @NM_DEVICE_STATE_REASON_UNMANAGED_SLEEPING: Since: 1.48. Deprecated: 1.56: Use
+ *   %NM_DEVICE_STATE_REASON_UNMANAGED_MANAGER_DISABLED instead.
+ * @NM_DEVICE_STATE_REASON_UNMANAGED_MANAGER_DISABLED: The device is unmanaged because networking is
+ *   disabled or the system is suspended. Since: 1.56
+ * @NM_DEVICE_STATE_REASON_UNMANAGED_USER_CONF: The device is unmanaged by user decision in
+ *   NetworkManager.conf ('unmanaged' in a [device*] section). Since: 1.48
+ * @NM_DEVICE_STATE_REASON_UNMANAGED_USER_EXPLICIT: The device is unmanaged by explicit user
+ *   decision (e.g. 'nmcli device set $DEV managed no'). Since: 1.48
+ * @NM_DEVICE_STATE_REASON_UNMANAGED_USER_SETTINGS: The device is unmanaged by user decision
+ *   via settings plugin ('unmanaged-devices' for keyfile or 'NM_CONTROLLED=no' for ifcfg-rh).
+ *   Since: 1.48
+ * @NM_DEVICE_STATE_REASON_UNMANAGED_USER_UDEV: The device is unmanaged via udev rule. Since: 1.48
+ * @NM_DEVICE_STATE_REASON_NETWORKING_OFF: NetworkManager was disabled (networking off). Since: 1.56
+ * @NM_DEVICE_STATE_REASON_MODEM_NO_OPERATOR_CODE: The modem's operator code wasn't available,
+ *   and auto-configuration was requested. Since: 1.56
  *
  * Device state change reason codes
  */
@@ -677,6 +722,19 @@ typedef enum {
     NM_DEVICE_STATE_REASON_IP_METHOD_UNSUPPORTED          = 65,
     NM_DEVICE_STATE_REASON_SRIOV_CONFIGURATION_FAILED     = 66,
     NM_DEVICE_STATE_REASON_PEER_NOT_FOUND                 = 67,
+    NM_DEVICE_STATE_REASON_DEVICE_HANDLER_FAILED          = 68,
+    NM_DEVICE_STATE_REASON_UNMANAGED_BY_DEFAULT           = 69,
+    NM_DEVICE_STATE_REASON_UNMANAGED_EXTERNAL_DOWN        = 70,
+    NM_DEVICE_STATE_REASON_UNMANAGED_LINK_NOT_INIT        = 71,
+    NM_DEVICE_STATE_REASON_UNMANAGED_QUITTING             = 72,
+    NM_DEVICE_STATE_REASON_UNMANAGED_SLEEPING             = 73, /* Deprecated */
+    NM_DEVICE_STATE_REASON_UNMANAGED_MANAGER_DISABLED     = 73,
+    NM_DEVICE_STATE_REASON_UNMANAGED_USER_CONF            = 74,
+    NM_DEVICE_STATE_REASON_UNMANAGED_USER_EXPLICIT        = 75,
+    NM_DEVICE_STATE_REASON_UNMANAGED_USER_SETTINGS        = 76,
+    NM_DEVICE_STATE_REASON_UNMANAGED_USER_UDEV            = 77,
+    NM_DEVICE_STATE_REASON_NETWORKING_OFF                 = 78,
+    NM_DEVICE_STATE_REASON_MODEM_NO_OPERATOR_CODE         = 79,
 } NMDeviceStateReason;
 
 /**
@@ -967,12 +1025,12 @@ typedef enum {
  * @NM_CHECKPOINT_CREATE_FLAG_DISCONNECT_NEW_DEVICES: upon rollback,
  *   disconnect any new device appeared after the checkpoint. Since: 1.6.
  * @NM_CHECKPOINT_CREATE_FLAG_ALLOW_OVERLAPPING: by default, creating
- *   a checkpoint fails if there are already existing checkoints that
+ *   a checkpoint fails if there are already existing checkpoints that
  *   reference the same devices. With this flag, creation of such
  *   checkpoints is allowed, however, if an older checkpoint
  *   that references overlapping devices gets rolled back, it will
  *   automatically destroy this checkpoint during rollback. This
- *   allows to create several overlapping checkpoints in parallel,
+ *   allows one to create several overlapping checkpoints in parallel,
  *   and rollback to them at will. With the special case that
  *   rolling back to an older checkpoint will invalidate all
  *   overlapping younger checkpoints. This opts-in that the
@@ -983,6 +1041,11 @@ typedef enum {
  *   With this flag, the rollback detaches all external ports.
  *   This only has an effect for bridge ports. Before 1.38, this was the default
  *   behavior. Since: 1.38.
+ * @NM_CHECKPOINT_CREATE_FLAG_TRACK_INTERNAL_GLOBAL_DNS: during rollback,
+ *   by default changes to global DNS via D-BUS interface are preserved.
+ *   With this flag, the rollback reverts the global DNS changes made via D-Bus
+ *   interface. Global DNS defined in [global-dns] section of
+ *   NetworkManager.conf is not impacted by this flag. Since: 1.48.
  *
  * The flags for CheckpointCreate call
  *
@@ -995,6 +1058,7 @@ typedef enum /*< flags >*/ {
     NM_CHECKPOINT_CREATE_FLAG_DISCONNECT_NEW_DEVICES     = 0x04,
     NM_CHECKPOINT_CREATE_FLAG_ALLOW_OVERLAPPING          = 0x08,
     NM_CHECKPOINT_CREATE_FLAG_NO_PRESERVE_EXTERNAL_PORTS = 0x10,
+    NM_CHECKPOINT_CREATE_FLAG_TRACK_INTERNAL_GLOBAL_DNS  = 0x20,
 } NMCheckpointCreateFlags;
 
 /**
@@ -1049,13 +1113,13 @@ typedef enum /*< flags >*/ {
 /**
  * NMActivationStateFlags:
  * @NM_ACTIVATION_STATE_FLAG_NONE: an alias for numeric zero, no flags set.
- * @NM_ACTIVATION_STATE_FLAG_IS_MASTER: the device is a master.
- * @NM_ACTIVATION_STATE_FLAG_IS_SLAVE: the device is a slave.
+ * @NM_ACTIVATION_STATE_FLAG_IS_CONTROLLER: the device is a controller.
+ * @NM_ACTIVATION_STATE_FLAG_IS_PORT: the device is a port.
  * @NM_ACTIVATION_STATE_FLAG_LAYER2_READY: layer2 is activated and ready.
  * @NM_ACTIVATION_STATE_FLAG_IP4_READY: IPv4 setting is completed.
  * @NM_ACTIVATION_STATE_FLAG_IP6_READY: IPv6 setting is completed.
- * @NM_ACTIVATION_STATE_FLAG_MASTER_HAS_SLAVES: The master has any slave devices attached.
- *   This only makes sense if the device is a master.
+ * @NM_ACTIVATION_STATE_FLAG_CONTROLLER_HAS_PORTS: The controller has any port devices attached.
+ *   This only makes sense if the device is a controller.
  * @NM_ACTIVATION_STATE_FLAG_LIFETIME_BOUND_TO_PROFILE_VISIBILITY: the lifetime
  *   of the activation is bound to the visibility of the connection profile,
  *   which in turn depends on "connection.permissions" and whether a session
@@ -1070,15 +1134,19 @@ typedef enum /*< flags >*/ {
 typedef enum /*< flags >*/ {
     NM_ACTIVATION_STATE_FLAG_NONE = 0,
 
-    NM_ACTIVATION_STATE_FLAG_IS_MASTER                            = 0x1,
-    NM_ACTIVATION_STATE_FLAG_IS_SLAVE                             = 0x2,
+    NM_ACTIVATION_STATE_FLAG_IS_CONTROLLER                        = 0x1,
+    NM_ACTIVATION_STATE_FLAG_IS_PORT                              = 0x2,
     NM_ACTIVATION_STATE_FLAG_LAYER2_READY                         = 0x4,
     NM_ACTIVATION_STATE_FLAG_IP4_READY                            = 0x8,
     NM_ACTIVATION_STATE_FLAG_IP6_READY                            = 0x10,
-    NM_ACTIVATION_STATE_FLAG_MASTER_HAS_SLAVES                    = 0x20,
+    NM_ACTIVATION_STATE_FLAG_CONTROLLER_HAS_PORTS                 = 0x20,
     NM_ACTIVATION_STATE_FLAG_LIFETIME_BOUND_TO_PROFILE_VISIBILITY = 0x40,
     NM_ACTIVATION_STATE_FLAG_EXTERNAL                             = 0x80,
 } NMActivationStateFlags;
+
+#define NM_ACTIVATION_STATE_FLAG_IS_MASTER         NM_ACTIVATION_STATE_FLAG_IS_CONTROLLER
+#define NM_ACTIVATION_STATE_FLAG_IS_SLAVE          NM_ACTIVATION_STATE_FLAG_IS_PORT
+#define NM_ACTIVATION_STATE_FLAG_MASTER_HAS_SLAVES NM_ACTIVATION_FLAG_CONTROLLER_HAS_PORTS
 
 /**
  * NMSettingsAddConnection2Flags:
@@ -1392,6 +1460,16 @@ typedef enum /*< flags >*/ {
  *   any additional addresses using the MPTCP ADD_ADDR sub-option, this will behave the same
  *   as a plain subflow endpoint. When the peer does announce addresses, each received ADD_ADDR
  *   sub-option will trigger creation of an additional subflow to generate a full mesh topology.
+ * @NM_MPTCP_FLAGS_LAMINAR: Flag for the MPTCP endpoint. The endpoint will be
+ *   used to create new subflows from the associated address to additional
+ *   addresses announced by the other peer. This will be done if allowed by the
+ *   MPTCP limits, and if the associated address is not already being used by
+ *   another subflow from the same MPTCP connection. Note that the 'fullmesh'
+ *   flag takes precedence over the 'laminar' one. Without any of these two
+ *   flags, the path-manager will create new subflows to additional addresses
+ *   announced by the other peer by selecting the source address from the
+ *   routing tables, which is harder to configure if the announced address is
+ *   not known in advance. Since: 1.56
  *
  * Since: 1.40
  */
@@ -1408,6 +1486,24 @@ typedef enum /*< flags >*/ {
     NM_MPTCP_FLAGS_SUBFLOW  = 0x20,
     NM_MPTCP_FLAGS_BACKUP   = 0x40,
     NM_MPTCP_FLAGS_FULLMESH = 0x80,
+    NM_MPTCP_FLAGS_LAMINAR  = 0x100,
 } NMMptcpFlags;
+
+/* For secrets requests, hints starting with "x-vpn-message:" are a message to show, not
+ * a secret to request
+ */
+#define NM_SECRET_TAG_VPN_MSG "x-vpn-message:"
+
+/* For secrets requests, hints starting with "x-dynamic-challenge(-echo):" are dynamic
+ * 2FA challenges that are requested in a second authentication step, after the password
+ * (or whatever auth method is used) was already successfully validated. Because of
+ * that, the default secrets of the service mustn't be requested (again).
+ * When using the "-echo" variant, the user input doesn't need to be hidden even
+ * without --show-secrets
+ *
+ * Note: currently only implemented for VPN, but can be extended.
+ */
+#define NM_SECRET_TAG_DYNAMIC_CHALLENGE      "x-dynamic-challenge:"
+#define NM_SECRET_TAG_DYNAMIC_CHALLENGE_ECHO "x-dynamic-challenge-echo:"
 
 #endif /* __NM_DBUS_INTERFACE_H__ */

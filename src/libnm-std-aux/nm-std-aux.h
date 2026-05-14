@@ -83,6 +83,13 @@
 
 /*****************************************************************************/
 
+/* Reason for double application is described here
+ * https://gcc.gnu.org/onlinedocs/gcc-4.8.5/cpp/Stringification.html */
+#define NM_STRINGIFY_ARG(contents)    #contents
+#define NM_STRINGIFY(macro_or_string) NM_STRINGIFY_ARG(macro_or_string)
+
+/*****************************************************************************/
+
 #ifndef _NM_CC_SUPPORT_AUTO_TYPE
 #if (defined(__GNUC__) && (__GNUC__ > 4 || (__GNUC__ == 4 && __GNUC_MINOR__ >= 9)))
 #define _NM_CC_SUPPORT_AUTO_TYPE 1
@@ -154,6 +161,12 @@ typedef uint64_t _nm_bitwise nm_be64_t;
 
 /*****************************************************************************/
 
+#define _NM_INT_IS_SIGNED(arg) (!(((typeof(arg)) -1) > 0))
+
+#define _NM_INT_SAME_SIGNEDNESS(arg1, arg2) (_NM_INT_IS_SIGNED(arg1) == _NM_INT_IS_SIGNED(arg2))
+
+/*****************************************************************************/
+
 #define NM_PASTE_ARGS(identifier1, identifier2) identifier1##identifier2
 #define NM_PASTE(identifier1, identifier2)      NM_PASTE_ARGS(identifier1, identifier2)
 
@@ -203,6 +216,48 @@ typedef uint64_t _nm_bitwise nm_be64_t;
 
 /*****************************************************************************/
 
+#if defined(__GNUC__)
+#define _NM_PRAGMA_WARNING_DO(warning) NM_STRINGIFY(GCC diagnostic ignored warning)
+#elif defined(__clang__)
+#define _NM_PRAGMA_WARNING_DO(warning) NM_STRINGIFY(clang diagnostic ignored warning)
+#endif
+
+/* you can only suppress a specific warning that the compiler
+ * understands. Otherwise you will get another compiler warning
+ * about invalid pragma option.
+ * It's not that bad however, because gcc and clang often have the
+ * same name for the same warning. */
+
+#if defined(__GNUC__) && (__GNUC__ > 4 || (__GNUC__ == 4 && __GNUC_MINOR__ >= 6))
+#define NM_PRAGMA_DIAGNOSTICS_PUSH _Pragma("GCC diagnostic push")
+#define NM_PRAGMA_WARNING_DISABLE(warning) \
+    NM_PRAGMA_DIAGNOSTICS_PUSH _Pragma(_NM_PRAGMA_WARNING_DO(warning))
+#define NM_PRAGMA_WARNING_REENABLE _Pragma("GCC diagnostic pop")
+#elif defined(__clang__)
+#define NM_PRAGMA_DIAGNOSTICS_PUSH _Pragma("clang diagnostic push")
+#define NM_PRAGMA_WARNING_DISABLE(warning)                                                \
+    NM_PRAGMA_DIAGNOSTICS_PUSH _Pragma(_NM_PRAGMA_WARNING_DO("-Wunknown-warning-option")) \
+        _Pragma(_NM_PRAGMA_WARNING_DO(warning))
+#define NM_PRAGMA_WARNING_REENABLE _Pragma("clang diagnostic pop")
+#else
+#define NM_PRAGMA_DIAGNOSTICS_PUSH
+#define NM_PRAGMA_WARNING_DISABLE(warning)
+#define NM_PRAGMA_WARNING_REENABLE
+#endif
+
+/*****************************************************************************/
+
+/* Seems gcc-12 has a tendency for false-positive -Wdangling-pointer warnings with
+ * g_error()'s `for(;;);`. See https://bugzilla.redhat.com/show_bug.cgi?id=2056613 .
+ * Work around, but only for the affected gcc 12.0.1. */
+#if defined(__GNUC__) && __GNUC__ == 12 && __GNUC_MINOR__ == 0 && __GNUC_PATCHLEVEL__ <= 1
+#define NM_PRAGMA_WARNING_DISABLE_DANGLING_POINTER NM_PRAGMA_WARNING_DISABLE("-Wdangling-pointer")
+#else
+#define NM_PRAGMA_WARNING_DISABLE_DANGLING_POINTER NM_PRAGMA_DIAGNOSTICS_PUSH
+#endif
+
+/*****************************************************************************/
+
 /* glib/C provides the following kind of assertions:
  *   - assert() -- disable with NDEBUG
  *   - g_return_if_fail() -- disable with G_DISABLE_CHECKS
@@ -233,8 +288,18 @@ typedef uint64_t _nm_bitwise nm_be64_t;
 
 #define NM_MORE_ASSERTS_EFFECTIVE (_NM_ASSERT_FAIL_ENABLED ? NM_MORE_ASSERTS : 0)
 
+#if defined(__GNUC__) && __GNUC__ >= 12
+#define _nm_assert_pragma_enter NM_PRAGMA_WARNING_DISABLE("-Wnonnull-compare")
+#define _nm_assert_pragma_leave NM_PRAGMA_WARNING_REENABLE
+#else
+#define _nm_assert_pragma_enter
+#define _nm_assert_pragma_leave
+#endif
+
 #define nm_assert(cond)                                                \
     ({                                                                 \
+        _nm_assert_pragma_enter;                                       \
+                                                                       \
         /* nm_assert() must do *nothing* of effect, except evaluating
          * @cond (0 or 1 times).
          *
@@ -252,6 +317,9 @@ typedef uint64_t _nm_bitwise nm_be64_t;
         } else {                                                       \
             _nm_assert_fail(#cond);                                    \
         }                                                              \
+                                                                       \
+        _nm_assert_pragma_leave;                                       \
+                                                                       \
         1;                                                             \
     })
 
@@ -386,37 +454,63 @@ nm_mult_clamped_u(unsigned a, unsigned b)
     return c;
 }
 
-/* glib's MIN()/MAX() macros don't have function-like behavior, in that they evaluate
- * the argument possibly twice.
- *
- * Taken from systemd's MIN()/MAX() macros. */
+/* In a few places where a constant expression is required, NM_MIN() doesn't work.
+ * In that case, use NM_MIN_CONST(). */
+#define NM_MIN_CONST(a, b)                                                                   \
+    ((NM_STATIC_ASSERT_EXPR_1(_NM_INT_SAME_SIGNEDNESS((a), (b)) && __builtin_constant_p((a)) \
+                              && __builtin_constant_p((b)))                                  \
+      && ((a) <= (b)))                                                                       \
+         ? (a)                                                                               \
+         : (b))
 
-#define NM_MIN(a, b) __NM_MIN(NM_UNIQ, a, NM_UNIQ, b)
-#define __NM_MIN(aq, a, bq, b)                                                         \
-    ({                                                                                 \
-        typeof(a) NM_UNIQ_T(A, aq) = (a);                                              \
-        typeof(b) NM_UNIQ_T(B, bq) = (b);                                              \
-        ((NM_UNIQ_T(A, aq) < NM_UNIQ_T(B, bq)) ? NM_UNIQ_T(A, aq) : NM_UNIQ_T(B, bq)); \
+#define _NM_MIN_V(aq, a, bq, b)                                                         \
+    ({                                                                                  \
+        typeof(a) NM_UNIQ_T(A, aq) = (a);                                               \
+        typeof(b) NM_UNIQ_T(B, bq) = (b);                                               \
+                                                                                        \
+        ((NM_UNIQ_T(A, aq) <= NM_UNIQ_T(B, bq)) ? NM_UNIQ_T(A, aq) : NM_UNIQ_T(B, bq)); \
     })
 
-#define NM_MAX(a, b) __NM_MAX(NM_UNIQ, a, NM_UNIQ, b)
-#define __NM_MAX(aq, a, bq, b)                                                         \
-    ({                                                                                 \
-        typeof(a) NM_UNIQ_T(A, aq) = (a);                                              \
-        typeof(b) NM_UNIQ_T(B, bq) = (b);                                              \
-        ((NM_UNIQ_T(A, aq) > NM_UNIQ_T(B, bq)) ? NM_UNIQ_T(A, aq) : NM_UNIQ_T(B, bq)); \
+#define NM_MIN(a, b)                                                                         \
+    __builtin_choose_expr(__builtin_constant_p((a)) && __builtin_constant_p((b))             \
+                              && NM_STATIC_ASSERT_EXPR_1(_NM_INT_SAME_SIGNEDNESS((a), (b))), \
+                          (((a) <= (b)) ? (a) : (b)),                                        \
+                          _NM_MIN_V(NM_UNIQ, a, NM_UNIQ, b))
+
+#define NM_MAX_CONST(a, b)                                                                   \
+    ((NM_STATIC_ASSERT_EXPR_1(_NM_INT_SAME_SIGNEDNESS((a), (b)) && __builtin_constant_p((a)) \
+                              && __builtin_constant_p((b)))                                  \
+      && ((a) >= (b)))                                                                       \
+         ? (a)                                                                               \
+         : (b))
+
+#define _NM_MAX_V(aq, a, bq, b)                                                         \
+    ({                                                                                  \
+        typeof(a) NM_UNIQ_T(A, aq) = (a);                                               \
+        typeof(b) NM_UNIQ_T(B, bq) = (b);                                               \
+                                                                                        \
+        ((NM_UNIQ_T(A, aq) >= NM_UNIQ_T(B, bq)) ? NM_UNIQ_T(A, aq) : NM_UNIQ_T(B, bq)); \
     })
+
+#define NM_MAX(a, b)                                                                         \
+    __builtin_choose_expr(__builtin_constant_p((a)) && __builtin_constant_p((b))             \
+                              && NM_STATIC_ASSERT_EXPR_1(_NM_INT_SAME_SIGNEDNESS((a), (b))), \
+                          (((a) >= (b)) ? (a) : (b)),                                        \
+                          _NM_MAX_V(NM_UNIQ, a, NM_UNIQ, b))
 
 #define NM_CLAMP(x, low, high) __NM_CLAMP(NM_UNIQ, x, NM_UNIQ, low, NM_UNIQ, high)
-#define __NM_CLAMP(xq, x, lowq, low, highq, high)                             \
-    ({                                                                        \
-        typeof(x)    NM_UNIQ_T(X, xq)       = (x);                            \
-        typeof(low)  NM_UNIQ_T(LOW, lowq)   = (low);                          \
-        typeof(high) NM_UNIQ_T(HIGH, highq) = (high);                         \
-                                                                              \
-        ((NM_UNIQ_T(X, xq) > NM_UNIQ_T(HIGH, highq)) ? NM_UNIQ_T(HIGH, highq) \
-         : (NM_UNIQ_T(X, xq) < NM_UNIQ_T(LOW, lowq)) ? NM_UNIQ_T(LOW, lowq)   \
-                                                     : NM_UNIQ_T(X, xq));     \
+#define __NM_CLAMP(xq, x, lowq, low, highq, high)                                            \
+    ({                                                                                       \
+        typeof(x)    NM_UNIQ_T(X, xq)       = (x);                                           \
+        typeof(low)  NM_UNIQ_T(LOW, lowq)   = (low);                                         \
+        typeof(high) NM_UNIQ_T(HIGH, highq) = (high);                                        \
+                                                                                             \
+        NM_STATIC_ASSERT(_NM_INT_SAME_SIGNEDNESS(NM_UNIQ_T(X, xq), NM_UNIQ_T(LOW, lowq)));   \
+        NM_STATIC_ASSERT(_NM_INT_SAME_SIGNEDNESS(NM_UNIQ_T(X, xq), NM_UNIQ_T(HIGH, highq))); \
+                                                                                             \
+        ((NM_UNIQ_T(X, xq) > NM_UNIQ_T(HIGH, highq)) ? NM_UNIQ_T(HIGH, highq)                \
+         : (NM_UNIQ_T(X, xq) < NM_UNIQ_T(LOW, lowq)) ? NM_UNIQ_T(LOW, lowq)                  \
+                                                     : NM_UNIQ_T(X, xq));                    \
     })
 
 #define NM_MAX_WITH_CMP(cmp, a, b)        \
@@ -426,13 +520,6 @@ nm_mult_clamped_u(unsigned a, unsigned b)
                                           \
         (((cmp(_a, _b)) >= 0) ? _a : _b); \
     })
-
-/* evaluates to (void) if _A or _B are not constant or of different types */
-#define NM_CONST_MAX(_A, _B)                                                          \
-    (__builtin_choose_expr((__builtin_constant_p(_A) && __builtin_constant_p(_B)      \
-                            && __builtin_types_compatible_p(typeof(_A), typeof(_B))), \
-                           ((_A) > (_B)) ? (_A) : (_B),                               \
-                           ((void) 0)))
 
 /* Determine whether @x is a power of two (@x being an integer type).
  * Basically, this returns TRUE, if @x has exactly one bit set.
@@ -888,7 +975,7 @@ nm_memcpy(void *restrict dest, const void *restrict src, size_t n)
  * side-effects. */
 #define NM_IN_SET_SE(x, ...) _NM_IN_SET(NM_UNIQ, |, typeof(x), x, __VA_ARGS__)
 
-/* the *_TYPED forms allow to explicitly select the type of "x". This is useful
+/* the *_TYPED forms allow one to explicitly select the type of "x". This is useful
  * if "x" doesn't support typeof (bitfields) or you want to gracefully convert
  * a type using automatic type conversion rules (but not forcing the conversion
  * with a cast). */
@@ -1287,13 +1374,15 @@ nm_ptr_to_uintptr(const void *p)
 
 /*****************************************************************************/
 
-#define NM_CMP_DIRECT(a, b)            \
-    do {                               \
-        typeof(a) _a = (a);            \
-        typeof(b) _b = (b);            \
-                                       \
-        if (_a != _b)                  \
-            return (_a < _b) ? -1 : 1; \
+#define NM_CMP_DIRECT(a, b)                                \
+    do {                                                   \
+        typeof(a) _a = (a);                                \
+        typeof(b) _b = (b);                                \
+                                                           \
+        NM_STATIC_ASSERT(_NM_INT_SAME_SIGNEDNESS(_a, _b)); \
+                                                           \
+        if (_a != _b)                                      \
+            return (_a < _b) ? -1 : 1;                     \
     } while (0)
 
 #define NM_CMP_DIRECT_UNSAFE(a, b)                                                  \

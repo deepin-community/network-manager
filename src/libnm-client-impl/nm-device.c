@@ -313,6 +313,8 @@ coerce_type(NMDeviceType type)
     case NM_DEVICE_TYPE_WIFI_P2P:
     case NM_DEVICE_TYPE_VRF:
     case NM_DEVICE_TYPE_LOOPBACK:
+    case NM_DEVICE_TYPE_HSR:
+    case NM_DEVICE_TYPE_IPVLAN:
         return type;
     }
     return NM_DEVICE_TYPE_UNKNOWN;
@@ -608,7 +610,7 @@ const NMLDBusMetaIface _nml_dbus_meta_iface_nm_device = NML_DBUS_META_IFACE_INIT
             .prop_struct_offset =
                 G_STRUCT_OFFSET(NMDevicePrivate, property_ao[PROPERTY_AO_IDX_PORTS]),
             .extra.property_vtable_ao =
-                &((const NMLDBusPropertVTableAO){.get_o_type_fcn = (nm_device_get_type)})),
+                &((const NMLDBusPropertVTableAO) {.get_o_type_fcn = (nm_device_get_type)})),
         NML_DBUS_META_PROPERTY_INIT_B("Real", PROP_REAL, NMDevicePrivate, real),
         NML_DBUS_META_PROPERTY_INIT_IGNORE("State", "u"),
         NML_DBUS_META_PROPERTY_INIT_FCN("StateReason",
@@ -1282,7 +1284,7 @@ nm_device_get_type_description(NMDevice *device)
  * Gets the devices currently set as port of @device.
  *
  * Returns: (element-type NMDevice): the #GPtrArray containing #NMDevices that
- * are slaves of @device. This is the internal copy used by the device and
+ * are ports of @device. This is the internal copy used by the device and
  * must not be modified.
  *
  * Since: 1.34
@@ -1396,8 +1398,8 @@ _nm_device_notify_update_prop_ports(NMClient               *client,
     nm_assert(notify_update_prop_flags == NML_DBUS_NOTIFY_UPDATE_PROP_FLAGS_NOTIFY);
 
     klass = NM_DEVICE_GET_CLASS(self);
-    if (klass->slaves_param_spec)
-        _nm_client_queue_notify_object(client, self, klass->slaves_param_spec);
+    if (klass->ports_param_spec)
+        _nm_client_queue_notify_object(client, self, klass->ports_param_spec);
 out:
     return NML_DBUS_NOTIFY_UPDATE_PROP_FLAGS_NONE;
 }
@@ -1814,6 +1816,10 @@ get_type_name(NMDevice *device)
         return _("VRF");
     case NM_DEVICE_TYPE_LOOPBACK:
         return _("Loopback");
+    case NM_DEVICE_TYPE_HSR:
+        return _("HSR");
+    case NM_DEVICE_TYPE_IPVLAN:
+        return _("IPVLAN");
     case NM_DEVICE_TYPE_GENERIC:
     case NM_DEVICE_TYPE_UNUSED1:
     case NM_DEVICE_TYPE_UNUSED2:
@@ -2370,7 +2376,7 @@ nm_device_is_software(NMDevice *device)
  *   settings with or %NULL to reuse existing
  * @version_id: zero or the expected version id of the applied connection.
  *   If specified and the version id mismatches, the call fails without
- *   modification. This allows to catch concurrent accesses.
+ *   modification. This allows one to catch concurrent accesses.
  * @flags: always set this to zero
  * @cancellable: a #GCancellable, or %NULL
  * @error: location for a #GError, or %NULL
@@ -2424,7 +2430,7 @@ nm_device_reapply(NMDevice     *device,
  *   settings with or %NULL to reuse existing
  * @version_id: zero or the expected version id of the applied
  *   connection. If specified and the version id mismatches, the call
- *   fails without modification. This allows to catch concurrent
+ *   fails without modification. This allows one to catch concurrent
  *   accesses.
  * @flags: always set this to zero
  * @cancellable: a #GCancellable, or %NULL
@@ -2998,7 +3004,7 @@ nm_lldp_neighbor_new(void)
     NMLldpNeighbor *neigh;
 
     neigh  = g_slice_new(NMLldpNeighbor);
-    *neigh = (NMLldpNeighbor){
+    *neigh = (NMLldpNeighbor) {
         .refcount = 1,
         .attrs    = g_hash_table_new_full(nm_str_hash,
                                        g_str_equal,

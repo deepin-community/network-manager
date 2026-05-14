@@ -46,6 +46,7 @@ typedef struct {
     gpointer                     user_data;
     guint                        fail_on_idle_id;
     guint                        blobs_left;
+    guint                        remove_blobs_left;
     guint                        calls_left;
     struct _AddNetworkData      *add_network_data;
 } AssocData;
@@ -65,6 +66,7 @@ enum {
     WPS_CREDENTIALS, /* WPS credentials received */
     GROUP_STARTED,   /* a new Group (interface) was created */
     GROUP_FINISHED,  /* a Group (interface) has been finished */
+    PSK_MISMATCH,    /* supplicant reported incorrect PSK */
     LAST_SIGNAL
 };
 
@@ -689,7 +691,7 @@ _bss_info_properties_changed(NMSupplicantInterface *self,
     v_v = nm_g_variant_lookup_value(properties, "SSID", G_VARIANT_TYPE_BYTESTRING);
     if (v_v) {
         arr_data = g_variant_get_fixed_array(v_v, &arr_len, 1);
-        arr_len  = MIN(32, arr_len);
+        arr_len  = NM_MIN(32u, arr_len);
 
         /* Stupid ieee80211 layer uses <hidden> */
         if (arr_data && arr_len
@@ -714,7 +716,7 @@ _bss_info_properties_changed(NMSupplicantInterface *self,
     if (v_v) {
         arr_data = g_variant_get_fixed_array(v_v, &arr_len, 1);
         if (arr_len == ETH_ALEN && memcmp(arr_data, &nm_ether_addr_zero, ETH_ALEN) != 0
-            && memcmp(arr_data, (char[ETH_ALEN]){0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF}, ETH_ALEN)
+            && memcmp(arr_data, (char[ETH_ALEN]) {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF}, ETH_ALEN)
                    != 0) {
             /* pass */
         } else
@@ -765,9 +767,15 @@ _bss_info_properties_changed(NMSupplicantInterface *self,
         gboolean p_owe_transition_mode;
         gboolean p_metered;
         guint32  rate;
+        guint32  bandwidth;
 
         arr_data = g_variant_get_fixed_array(v_v, &arr_len, 1);
-        nm_wifi_utils_parse_ies(arr_data, arr_len, &rate, &p_metered, &p_owe_transition_mode);
+        nm_wifi_utils_parse_ies(arr_data,
+                                arr_len,
+                                &rate,
+                                &bandwidth,
+                                &p_metered,
+                                &p_owe_transition_mode);
         p_max_rate     = NM_MAX(p_max_rate, rate);
         p_max_rate_has = TRUE;
         g_variant_unref(v_v);
@@ -777,7 +785,8 @@ _bss_info_properties_changed(NMSupplicantInterface *self,
         else
             bss_info->rsn_flags &= ~NM_802_11_AP_SEC_KEY_MGMT_OWE_TM;
 
-        bss_info->metered = p_metered;
+        bss_info->metered   = p_metered;
+        bss_info->bandwidth = bandwidth;
     }
 
     if (p_max_rate_has)
@@ -832,7 +841,7 @@ _bss_info_add(NMSupplicantInterface *self, const char *object_path)
     }
 
     bss_info  = g_slice_new(NMSupplicantBssInfo);
-    *bss_info = (NMSupplicantBssInfo){
+    *bss_info = (NMSupplicantBssInfo) {
         ._self             = self,
         .bss_path          = g_steal_pointer(&bss_path),
         ._init_cancellable = g_cancellable_new(),
@@ -946,7 +955,7 @@ _peer_info_properties_changed(NMSupplicantInterface *self,
     if (v_v) {
         arr_data = g_variant_get_fixed_array(v_v, &arr_len, 1);
         if (arr_len == ETH_ALEN && memcmp(arr_data, &nm_ether_addr_zero, ETH_ALEN) != 0
-            && memcmp(arr_data, (char[ETH_ALEN]){0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF}, ETH_ALEN)
+            && memcmp(arr_data, (char[ETH_ALEN]) {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF}, ETH_ALEN)
                    != 0) {
             /* pass */
         } else
@@ -1030,7 +1039,7 @@ _peer_info_add(NMSupplicantInterface *self, const char *object_path)
     }
 
     peer_info  = g_slice_new(NMSupplicantPeerInfo);
-    *peer_info = (NMSupplicantPeerInfo){
+    *peer_info = (NMSupplicantPeerInfo) {
         ._self             = self,
         .peer_path         = g_steal_pointer(&peer_path),
         ._init_cancellable = g_cancellable_new(),
@@ -1373,7 +1382,7 @@ _get_capability(NMSupplicantInterfacePrivate *priv, NMSupplCapType type)
     case NM_SUPPL_CAP_TYPE_AP:
         iface_value = NM_SUPPL_CAP_MASK_GET(priv->iface_capabilities, type);
         value       = NM_SUPPL_CAP_MASK_GET(priv->global_capabilities, type);
-        value       = MAX(iface_value, value);
+        value       = NM_MAX(iface_value, value);
         break;
     case NM_SUPPL_CAP_TYPE_FT:
         value = NM_SUPPL_CAP_MASK_GET(priv->global_capabilities, type);
@@ -1824,7 +1833,7 @@ _wps_start(NMSupplicantInterface *self, const char *type, const char *bssid, con
         }
 
         wps_data  = g_slice_new(WpsData);
-        *wps_data = (WpsData){
+        *wps_data = (WpsData) {
             .self  = self,
             .type  = g_strdup(type),
             .bssid = g_strdup(bssid),
@@ -2257,6 +2266,7 @@ assoc_add_blob_cb(GObject *source, GAsyncResult *result, gpointer user_data)
         return;
     }
 
+    nm_assert(priv->assoc_data->blobs_left > 0);
     priv->assoc_data->blobs_left--;
     _LOGT("assoc[" NM_HASH_OBFUSCATE_PTR_FMT "]: blob added (%u left)",
           NM_HASH_OBFUSCATE_PTR(priv->assoc_data),
@@ -2266,18 +2276,156 @@ assoc_add_blob_cb(GObject *source, GAsyncResult *result, gpointer user_data)
 }
 
 static void
+assoc_add_blobs(NMSupplicantInterface *self)
+{
+    NMSupplicantInterfacePrivate *priv = NM_SUPPLICANT_INTERFACE_GET_PRIVATE(self);
+    GHashTable                   *blobs;
+    GHashTableIter                iter;
+    const char                   *blob_name;
+    GBytes                       *blob_data;
+
+    blobs                        = nm_supplicant_config_get_blobs(priv->assoc_data->cfg);
+    priv->assoc_data->blobs_left = nm_g_hash_table_size(blobs);
+
+    _LOGT("assoc[" NM_HASH_OBFUSCATE_PTR_FMT "]: need to add %u blobs",
+          NM_HASH_OBFUSCATE_PTR(priv->assoc_data),
+          priv->assoc_data->blobs_left);
+
+    if (priv->assoc_data->blobs_left == 0) {
+        assoc_call_select_network(self);
+        return;
+    }
+
+    g_hash_table_iter_init(&iter, blobs);
+    while (g_hash_table_iter_next(&iter, (gpointer) &blob_name, (gpointer) &blob_data)) {
+        _LOGT("assoc[" NM_HASH_OBFUSCATE_PTR_FMT "]: adding blob '%s'",
+              NM_HASH_OBFUSCATE_PTR(priv->assoc_data),
+              blob_name);
+        _dbus_connection_call(
+            self,
+            NM_WPAS_DBUS_IFACE_INTERFACE,
+            "AddBlob",
+            g_variant_new("(s@ay)", blob_name, nm_g_bytes_to_variant_ay(blob_data)),
+            G_VARIANT_TYPE("()"),
+            G_DBUS_CALL_FLAGS_NONE,
+            DBUS_TIMEOUT_MSEC,
+            priv->assoc_data->cancellable,
+            assoc_add_blob_cb,
+            self);
+    }
+}
+
+static void
+assoc_remove_blob_cb(GObject *source, GAsyncResult *result, gpointer user_data)
+{
+    NMSupplicantInterface        *self;
+    NMSupplicantInterfacePrivate *priv;
+    gs_free_error GError         *error = NULL;
+    gs_unref_variant GVariant    *res   = NULL;
+
+    res = g_dbus_connection_call_finish(G_DBUS_CONNECTION(source), result, &error);
+    if (nm_utils_error_is_cancelled(error))
+        return;
+
+    self = NM_SUPPLICANT_INTERFACE(user_data);
+    priv = NM_SUPPLICANT_INTERFACE_GET_PRIVATE(self);
+
+    /* We don't consider a failure fatal. The new association might be able
+     * to proceed even with the existing blobs, if they don't conflict with new
+     * ones. */
+
+    nm_assert(priv->assoc_data->remove_blobs_left > 0);
+    priv->assoc_data->remove_blobs_left--;
+
+    if (error) {
+        g_dbus_error_strip_remote_error(error);
+        _LOGD("assoc[" NM_HASH_OBFUSCATE_PTR_FMT "]: failed to delete blob: %s",
+              NM_HASH_OBFUSCATE_PTR(priv->assoc_data),
+              error->message);
+    } else {
+        _LOGT("assoc[" NM_HASH_OBFUSCATE_PTR_FMT "]: blob removed (%u left)",
+              NM_HASH_OBFUSCATE_PTR(priv->assoc_data),
+              priv->assoc_data->remove_blobs_left);
+    }
+
+    if (priv->assoc_data->remove_blobs_left == 0)
+        assoc_add_blobs(self);
+}
+
+static void
+assoc_get_blobs_cb(GObject *source, GAsyncResult *result, gpointer user_data)
+{
+    NMSupplicantInterface        *self;
+    NMSupplicantInterfacePrivate *priv;
+    gs_free_error GError         *error = NULL;
+    gs_unref_variant GVariant    *res   = NULL;
+    gs_unref_variant GVariant    *value = NULL;
+    GVariantIter                  iter;
+    const char                   *blob_name;
+    GVariant                     *blob_data;
+
+    res = g_dbus_connection_call_finish(G_DBUS_CONNECTION(source), result, &error);
+    if (nm_utils_error_is_cancelled(error))
+        return;
+
+    self = NM_SUPPLICANT_INTERFACE(user_data);
+    priv = NM_SUPPLICANT_INTERFACE_GET_PRIVATE(self);
+
+    if (error) {
+        _LOGD("assoc[" NM_HASH_OBFUSCATE_PTR_FMT "]: failed to get blob list: %s",
+              NM_HASH_OBFUSCATE_PTR(priv->assoc_data),
+              error->message);
+        assoc_add_blobs(self);
+        return;
+    }
+
+    g_variant_get(res, "(v)", &value);
+
+    /* While the "Blobs" property is documented as type "as", it is actually "a{say}" */
+    if (!value || !g_variant_is_of_type(value, G_VARIANT_TYPE("a{say}"))) {
+        _LOGD("assoc[" NM_HASH_OBFUSCATE_PTR_FMT "]: failed to get blob list: wrong return type %s",
+              NM_HASH_OBFUSCATE_PTR(priv->assoc_data),
+              value ? g_variant_get_type_string(value) : "NULL");
+        assoc_add_blobs(self);
+        return;
+    }
+
+    g_variant_iter_init(&iter, value);
+    priv->assoc_data->remove_blobs_left = g_variant_iter_n_children(&iter);
+    _LOGT("assoc[" NM_HASH_OBFUSCATE_PTR_FMT "]: need to delete %u blobs",
+          NM_HASH_OBFUSCATE_PTR(priv->assoc_data),
+          priv->assoc_data->remove_blobs_left);
+
+    if (priv->assoc_data->remove_blobs_left == 0) {
+        assoc_add_blobs(self);
+    } else {
+        while (g_variant_iter_loop(&iter, "{&s@ay}", &blob_name, &blob_data)) {
+            _LOGT("assoc[" NM_HASH_OBFUSCATE_PTR_FMT "]: removing blob '%s'",
+                  NM_HASH_OBFUSCATE_PTR(priv->assoc_data),
+                  blob_name);
+            _dbus_connection_call(self,
+                                  NM_WPAS_DBUS_IFACE_INTERFACE,
+                                  "RemoveBlob",
+                                  g_variant_new("(s)", blob_name),
+                                  G_VARIANT_TYPE("()"),
+                                  G_DBUS_CALL_FLAGS_NONE,
+                                  DBUS_TIMEOUT_MSEC,
+                                  priv->assoc_data->cancellable,
+                                  assoc_remove_blob_cb,
+                                  self);
+        }
+    }
+}
+
+static void
 assoc_add_network_cb(GObject *source, GAsyncResult *result, gpointer user_data)
 {
     AddNetworkData                 *add_network_data = user_data;
     AssocData                      *assoc_data;
     NMSupplicantInterface          *self;
     NMSupplicantInterfacePrivate   *priv;
-    gs_unref_variant GVariant      *res   = NULL;
-    gs_free_error GError           *error = NULL;
-    GHashTable                     *blobs;
-    GHashTableIter                  iter;
-    const char                     *blob_name;
-    GBytes                         *blob_data;
+    gs_unref_variant GVariant      *res         = NULL;
+    gs_free_error GError           *error       = NULL;
     nm_auto_ref_string NMRefString *name_owner  = NULL;
     nm_auto_ref_string NMRefString *object_path = NULL;
 
@@ -2329,34 +2477,21 @@ assoc_add_network_cb(GObject *source, GAsyncResult *result, gpointer user_data)
     nm_assert(!priv->net_path);
     g_variant_get(res, "(o)", &priv->net_path);
 
-    /* Send blobs first; otherwise jump to selecting the network */
-    blobs                        = nm_supplicant_config_get_blobs(priv->assoc_data->cfg);
-    priv->assoc_data->blobs_left = blobs ? g_hash_table_size(blobs) : 0u;
-
-    _LOGT("assoc[" NM_HASH_OBFUSCATE_PTR_FMT "]: network added (%s) (%u blobs left)",
+    _LOGT("assoc[" NM_HASH_OBFUSCATE_PTR_FMT "]: network added (%s)",
           NM_HASH_OBFUSCATE_PTR(priv->assoc_data),
-          priv->net_path,
-          priv->assoc_data->blobs_left);
+          priv->net_path);
 
-    if (priv->assoc_data->blobs_left == 0) {
-        assoc_call_select_network(self);
-        return;
-    }
-
-    g_hash_table_iter_init(&iter, blobs);
-    while (g_hash_table_iter_next(&iter, (gpointer) &blob_name, (gpointer) &blob_data)) {
-        _dbus_connection_call(
-            self,
-            NM_WPAS_DBUS_IFACE_INTERFACE,
-            "AddBlob",
-            g_variant_new("(s@ay)", blob_name, nm_g_bytes_to_variant_ay(blob_data)),
-            G_VARIANT_TYPE("()"),
-            G_DBUS_CALL_FLAGS_NONE,
-            DBUS_TIMEOUT_MSEC,
-            priv->assoc_data->cancellable,
-            assoc_add_blob_cb,
-            self);
-    }
+    /* Delete any existing blobs before adding new ones */
+    _dbus_connection_call(self,
+                          DBUS_INTERFACE_PROPERTIES,
+                          "Get",
+                          g_variant_new("(ss)", NM_WPAS_DBUS_IFACE_INTERFACE, "Blobs"),
+                          G_VARIANT_TYPE("(v)"),
+                          G_DBUS_CALL_FLAGS_NONE,
+                          DBUS_TIMEOUT_MSEC,
+                          priv->assoc_data->cancellable,
+                          assoc_get_blobs_cb,
+                          self);
 }
 
 static void
@@ -2374,7 +2509,7 @@ add_network(NMSupplicantInterface *self)
      * For that we also have a shutdown_wait_obj so that on exit we still wait
      * to handle the response. */
     add_network_data  = g_slice_new(AddNetworkData);
-    *add_network_data = (AddNetworkData){
+    *add_network_data = (AddNetworkData) {
         .assoc_data        = priv->assoc_data,
         .name_owner        = nm_ref_string_ref(priv->name_owner),
         .object_path       = nm_ref_string_ref(priv->object_path),
@@ -2527,7 +2662,7 @@ nm_supplicant_interface_assoc(NMSupplicantInterface       *self,
     nm_supplicant_interface_disconnect(self);
 
     assoc_data  = g_slice_new(AssocData);
-    *assoc_data = (AssocData){
+    *assoc_data = (AssocData) {
         .self      = self,
         .cfg       = g_object_ref(cfg),
         .callback  = callback,
@@ -2700,7 +2835,7 @@ nm_supplicant_interface_request_scan(NMSupplicantInterface                   *se
     }
 
     data  = g_slice_new(ScanRequestData);
-    *data = (ScanRequestData){
+    *data = (ScanRequestData) {
         .self        = self,
         .callback    = callback,
         .user_data   = user_data,
@@ -3075,7 +3210,7 @@ _signal_handle(NMSupplicantInterface *self,
             const char           *status;
             const char           *parameter;
 
-            if (g_variant_is_of_type(parameters, G_VARIANT_TYPE("(ss)")))
+            if (!g_variant_is_of_type(parameters, G_VARIANT_TYPE("(ss)")))
                 return;
 
             g_variant_get(parameters, "(&s&s)", &status, &parameter);
@@ -3098,6 +3233,10 @@ _signal_handle(NMSupplicantInterface *self,
             return;
         }
 
+        if (nm_streq(signal_name, "PskMismatch")) {
+            g_signal_emit(self, signals[PSK_MISMATCH], 0);
+            return;
+        }
         return;
     }
 
@@ -3730,4 +3869,14 @@ nm_supplicant_interface_class_init(NMSupplicantInterfaceClass *klass)
                                            G_TYPE_NONE,
                                            1,
                                            G_TYPE_STRING);
+
+    signals[PSK_MISMATCH] = g_signal_new(NM_SUPPLICANT_INTERFACE_PSK_MISMATCH,
+                                         G_OBJECT_CLASS_TYPE(object_class),
+                                         G_SIGNAL_RUN_LAST,
+                                         0,
+                                         NULL,
+                                         NULL,
+                                         NULL,
+                                         G_TYPE_NONE,
+                                         0);
 }

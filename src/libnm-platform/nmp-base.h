@@ -39,6 +39,15 @@ typedef enum {
 /*****************************************************************************/
 
 typedef struct {
+    guint16 vid_start;
+    guint16 vid_end;
+    bool    untagged : 1;
+    bool    pvid : 1;
+} NMPlatformBridgeVlan;
+
+/*****************************************************************************/
+
+typedef struct {
     /* We don't want to include <linux/ethtool.h> in header files,
      * thus create a ABI compatible version of struct ethtool_drvinfo.*/
     guint32 _private_cmd;
@@ -93,15 +102,11 @@ typedef struct {
     const NMEthtoolFeatureState states_list[];
 } NMEthtoolFeatureStates;
 
-/*****************************************************************************/
-
 typedef struct {
     guint32
         s[_NM_ETHTOOL_ID_COALESCE_NUM /* indexed by (NMEthtoolID - _NM_ETHTOOL_ID_COALESCE_FIRST) */
     ];
 } NMEthtoolCoalesceState;
-
-/*****************************************************************************/
 
 typedef struct {
     guint32 rx_pending;
@@ -115,6 +120,17 @@ typedef struct {
     bool rx : 1;
     bool tx : 1;
 } NMEthtoolPauseState;
+
+typedef struct {
+    guint32 rx;
+    guint32 tx;
+    guint32 other;
+    guint32 combined;
+} NMEthtoolChannelsState;
+
+typedef struct {
+    bool enabled : 1;
+} NMEthtoolEEEState;
 
 /*****************************************************************************/
 
@@ -152,11 +168,13 @@ typedef enum _nm_packed {
     NMP_OBJECT_TYPE_LNK_BRIDGE,
     NMP_OBJECT_TYPE_LNK_GRE,
     NMP_OBJECT_TYPE_LNK_GRETAP,
+    NMP_OBJECT_TYPE_LNK_HSR,
     NMP_OBJECT_TYPE_LNK_INFINIBAND,
     NMP_OBJECT_TYPE_LNK_IP6TNL,
     NMP_OBJECT_TYPE_LNK_IP6GRE,
     NMP_OBJECT_TYPE_LNK_IP6GRETAP,
     NMP_OBJECT_TYPE_LNK_IPIP,
+    NMP_OBJECT_TYPE_LNK_IPVLAN,
     NMP_OBJECT_TYPE_LNK_MACSEC,
     NMP_OBJECT_TYPE_LNK_MACVLAN,
     NMP_OBJECT_TYPE_LNK_MACVTAP,
@@ -194,8 +212,11 @@ nmp_object_type_to_flags(NMPObjectType obj_type)
  * @NM_IP_ROUTE_TABLE_SYNC_MODE_NONE: indicate an invalid setting.
  * @NM_IP_ROUTE_TABLE_SYNC_MODE_MAIN: only the main table is synced. For all
  *   other tables, NM won't delete any extra routes.
- * @NM_IP_ROUTE_TABLE_SYNC_MODE_FULL: NM will sync all tables, except the
- *   local table (255).
+ * @NM_IP_ROUTE_TABLE_SYNC_MODE_MAIN_AND_NM_ROUTES: only the main table is synced,
+ *   plus individual routes in other tables added by NM, leaving routes that
+ *   were not added by NM untouched.
+ * @NM_IP_ROUTE_TABLE_SYNC_MODE_ALL_EXCEPT_LOCAL: NM will sync all tables, except
+ *   the local table (255).
  * @NM_IP_ROUTE_TABLE_SYNC_MODE_ALL: NM will sync all tables, including the
  *   local table (255).
  * @NM_IP_ROUTE_TABLE_SYNC_MODE_ALL_PRUNE: NM will sync all tables (including
@@ -205,7 +226,8 @@ nmp_object_type_to_flags(NMPObjectType obj_type)
 typedef enum {
     NM_IP_ROUTE_TABLE_SYNC_MODE_NONE,
     NM_IP_ROUTE_TABLE_SYNC_MODE_MAIN,
-    NM_IP_ROUTE_TABLE_SYNC_MODE_FULL,
+    NM_IP_ROUTE_TABLE_SYNC_MODE_MAIN_AND_NM_ROUTES,
+    NM_IP_ROUTE_TABLE_SYNC_MODE_ALL_EXCEPT_LOCAL,
     NM_IP_ROUTE_TABLE_SYNC_MODE_ALL,
     NM_IP_ROUTE_TABLE_SYNC_MODE_ALL_PRUNE,
 } NMIPRouteTableSyncMode;

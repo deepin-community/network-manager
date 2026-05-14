@@ -16,6 +16,8 @@
 #include "nm-setting-connection.h"
 #include "nm-setting-ovs-port.h"
 #include "nm-setting-ovs-interface.h"
+#include "nm-setting-ovs-external-ids.h"
+#include "nm-setting-ovs-other-config.h"
 #include "nm-setting-wired.h"
 
 #define _NMLOG_DEVICE_TYPE NMDeviceOvsPort
@@ -48,7 +50,7 @@ create_and_realize(NMDevice              *device,
                    const NMPlatformLink **out_plink,
                    GError               **error)
 {
-    /* The port will be added to ovsdb when an interface is enslaved,
+    /* The port will be added to ovsdb when an interface is attached as port,
      * because there's no such thing like an empty port. */
 
     return TRUE;
@@ -160,7 +162,7 @@ attach_port(NMDevice                  *device,
         return TRUE;
 
     ac_port   = NM_ACTIVE_CONNECTION(nm_device_get_act_request(device));
-    ac_bridge = nm_active_connection_get_master(ac_port);
+    ac_bridge = nm_active_connection_get_controller(ac_port);
     if (!ac_bridge) {
         _LOGW(LOGD_DEVICE,
               "can't attach %s: bridge active-connection not found",
@@ -175,7 +177,7 @@ attach_port(NMDevice                  *device,
     }
 
     data  = g_slice_new(AttachPortData);
-    *data = (AttachPortData){
+    *data = (AttachPortData) {
         .device             = g_object_ref(device),
         .port               = g_object_ref(port),
         .cancellable        = g_object_ref(cancellable),
@@ -218,9 +220,9 @@ detach_port(NMDevice                  *device,
             gpointer                   user_data)
 {
     NMDeviceOvsPort *self             = NM_DEVICE_OVS_PORT(device);
-    bool             port_not_managed = !NM_IN_SET(nm_device_sys_iface_state_get(port),
-                                       NM_DEVICE_SYS_IFACE_STATE_MANAGED,
-                                       NM_DEVICE_SYS_IFACE_STATE_ASSUME);
+    bool             port_not_managed = !NM_IN_SET(nm_device_managed_type_get(port),
+                                       NM_DEVICE_MANAGED_TYPE_FULL,
+                                       NM_DEVICE_MANAGED_TYPE_ASSUME);
     NMTernary        ret              = TRUE;
 
     _LOGI(LOGD_DEVICE, "detaching ovs interface %s", nm_device_get_ip_iface(port));
@@ -233,7 +235,7 @@ detach_port(NMDevice                  *device,
         AttachPortData *data;
 
         data  = g_slice_new(AttachPortData);
-        *data = (AttachPortData){
+        *data = (AttachPortData) {
             .device             = g_object_ref(device),
             .port               = g_object_ref(port),
             .cancellable        = nm_g_object_ref(cancellable),
@@ -256,6 +258,37 @@ detach_port(NMDevice                  *device,
     return ret;
 }
 
+static gboolean
+can_reapply_change(NMDevice   *device,
+                   const char *setting_name,
+                   NMSetting  *s_old,
+                   NMSetting  *s_new,
+                   GHashTable *diffs,
+                   GError    **error)
+{
+    NMDeviceClass *device_class = NM_DEVICE_CLASS(nm_device_ovs_port_parent_class);
+
+    if (nm_streq(setting_name, NM_SETTING_OVS_PORT_SETTING_NAME)) {
+        return nm_device_hash_check_invalid_keys(diffs,
+                                                 NM_SETTING_OVS_PORT_SETTING_NAME,
+                                                 error,
+                                                 NM_SETTING_OVS_PORT_TAG,
+                                                 NM_SETTING_OVS_PORT_VLAN_MODE,
+                                                 NM_SETTING_OVS_PORT_BOND_UPDELAY,
+                                                 NM_SETTING_OVS_PORT_BOND_DOWNDELAY,
+                                                 NM_SETTING_OVS_PORT_LACP,
+                                                 NM_SETTING_OVS_PORT_BOND_MODE,
+                                                 NM_SETTING_OVS_PORT_TRUNKS);
+    }
+
+    if (NM_IN_STRSET(setting_name,
+                     NM_SETTING_OVS_EXTERNAL_IDS_SETTING_NAME,
+                     NM_SETTING_OVS_OTHER_CONFIG_SETTING_NAME))
+        return TRUE;
+
+    return device_class->can_reapply_change(device, setting_name, s_old, s_new, diffs, error);
+}
+
 /*****************************************************************************/
 
 static void
@@ -266,7 +299,11 @@ static const NMDBusInterfaceInfoExtended interface_info_device_ovs_port = {
     .parent = NM_DEFINE_GDBUS_INTERFACE_INFO_INIT(
         NM_DBUS_INTERFACE_DEVICE_OVS_PORT,
         .properties = NM_DEFINE_GDBUS_PROPERTY_INFOS(
-            NM_DEFINE_DBUS_PROPERTY_INFO_EXTENDED_READABLE("Slaves", "ao", NM_DEVICE_SLAVES), ), ),
+            NM_DEFINE_DBUS_PROPERTY_INFO_EXTENDED_READABLE(
+                "Slaves",
+                "ao",
+                NM_DEVICE_SLAVES,
+                .annotations = NM_GDBUS_ANNOTATION_INFO_LIST_DEPRECATED(), ), ), ),
 };
 
 static void
@@ -281,14 +318,14 @@ nm_device_ovs_port_class_init(NMDeviceOvsPortClass *klass)
     device_class->connection_type_check_compatible = NM_SETTING_OVS_PORT_SETTING_NAME;
     device_class->link_types                       = NM_DEVICE_DEFINE_LINK_TYPES();
 
-    device_class->is_master                           = TRUE;
-    device_class->get_type_description                = get_type_description;
-    device_class->create_and_realize                  = create_and_realize;
-    device_class->get_generic_capabilities            = get_generic_capabilities;
-    device_class->act_stage3_ip_config                = act_stage3_ip_config;
-    device_class->ready_for_ip_config                 = ready_for_ip_config;
-    device_class->attach_port                         = attach_port;
-    device_class->detach_port                         = detach_port;
-    device_class->can_reapply_change_ovs_external_ids = TRUE;
-    device_class->reapply_connection                  = nm_device_ovs_reapply_connection;
+    device_class->is_controller            = TRUE;
+    device_class->get_type_description     = get_type_description;
+    device_class->create_and_realize       = create_and_realize;
+    device_class->get_generic_capabilities = get_generic_capabilities;
+    device_class->act_stage3_ip_config     = act_stage3_ip_config;
+    device_class->ready_for_ip_config      = ready_for_ip_config;
+    device_class->attach_port              = attach_port;
+    device_class->detach_port              = detach_port;
+    device_class->can_reapply_change       = can_reapply_change;
+    device_class->reapply_connection       = nm_device_ovs_reapply_connection;
 }

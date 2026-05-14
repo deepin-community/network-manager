@@ -8,7 +8,6 @@
 
 #include "alloc-util.h"
 #include "macro.h"
-#include "memory-util.h"
 
 void* memdup(const void *p, size_t l) {
         void *ret;
@@ -45,7 +44,7 @@ void* greedy_realloc(
                 size_t need,
                 size_t size) {
 
-        size_t a, newalloc;
+        size_t newalloc;
         void *q;
 
         assert(p);
@@ -62,14 +61,13 @@ void* greedy_realloc(
                 return NULL;
         newalloc = need * 2;
 
-        if (size_multiply_overflow(newalloc, size))
+        if (!MUL_ASSIGN_SAFE(&newalloc, size))
                 return NULL;
-        a = newalloc * size;
 
-        if (a < 64) /* Allocate at least 64 bytes */
-                a = 64;
+        if (newalloc < 64) /* Allocate at least 64 bytes */
+                newalloc = 64;
 
-        q = realloc(*p, a);
+        q = realloc(*p, newalloc);
         if (!q)
                 return NULL;
 
@@ -101,6 +99,33 @@ void* greedy_realloc0(
 
         if (after > before)
                 memzero(q + before, after - before);
+
+        return q;
+}
+
+void* greedy_realloc_append(
+                void **p,
+                size_t *n_p,
+                const void *from,
+                size_t n_from,
+                size_t size) {
+
+        uint8_t *q;
+
+        assert(p);
+        assert(n_p);
+        assert(from || n_from == 0);
+
+        if (n_from > SIZE_MAX - *n_p)
+                return NULL;
+
+        q = greedy_realloc(p, *n_p + n_from, size);
+        if (!q)
+                return NULL;
+
+        memcpy_safe(q + *n_p * size, from, n_from * size);
+
+        *n_p += n_from;
 
         return q;
 }

@@ -120,7 +120,7 @@ get_new_connection_name(NMConnection *const *existing_connections,
          * connection id. */
         temp = g_strdup_printf(C_("connection id fallback", "%s %u"), fallback_prefix, i);
 
-        if (nm_strv_find_first(existing_names, existing_len, temp) < 0)
+        if (!nm_strv_contains(existing_names, existing_len, temp))
             return temp;
 
         g_free(temp);
@@ -250,23 +250,19 @@ nm_utils_ppp_ip_methods_enabled(NMConnection *connection,
 /*****************************************************************************/
 
 void
-_nm_utils_complete_generic_with_params(NMPlatform          *platform,
-                                       NMConnection        *connection,
-                                       const char          *ctype,
-                                       NMConnection *const *existing_connections,
-                                       const char          *preferred_id,
-                                       const char          *fallback_id_prefix,
-                                       const char          *ifname_prefix,
-                                       const char          *ifname,
-                                       ...)
+nm_utils_complete_generic(NMPlatform          *platform,
+                          NMConnection        *connection,
+                          const char          *ctype,
+                          NMConnection *const *existing_connections,
+                          const char          *preferred_id,
+                          const char          *fallback_id_prefix,
+                          const char          *ifname_prefix,
+                          const char          *ifname)
 {
     NMSettingConnection           *s_con;
     char                          *id;
     char                          *generated_ifname;
     gs_unref_hashtable GHashTable *parameters = NULL;
-    va_list                        ap;
-    const char                    *p_val;
-    const char                    *p_key;
 
     g_assert(fallback_id_prefix);
     g_return_if_fail(ifname_prefix == NULL || ifname == NULL);
@@ -301,20 +297,22 @@ _nm_utils_complete_generic_with_params(NMPlatform          *platform,
         g_free(generated_ifname);
     }
 
-    /* Normalize */
-    va_start(ap, ifname);
-    while ((p_key = va_arg(ap, const char *))) {
-        p_val = va_arg(ap, const char *);
-        if (!p_val) {
-            if (parameters)
-                g_hash_table_remove(parameters, p_key);
-            continue;
-        }
-        if (!parameters)
-            parameters = g_hash_table_new(nm_str_hash, g_str_equal);
-        g_hash_table_insert(parameters, (char *) p_key, (char *) p_val);
+    if (nm_connection_get_setting_adsl(connection) || nm_connection_get_setting_cdma(connection)
+        || nm_connection_get_setting_olpc_mesh(connection)
+        || nm_connection_get_setting_pppoe(connection)
+        || nm_connection_get_setting_vpn(connection)) {
+        parameters = g_hash_table_new(nm_str_hash, g_str_equal);
+        g_hash_table_insert(parameters,
+                            NM_CONNECTION_NORMALIZE_PARAM_IP6_CONFIG_METHOD,
+                            NM_SETTING_IP6_CONFIG_METHOD_IGNORE);
+    } else {
+        parameters = NULL;
     }
-    va_end(ap);
+
+    /* We ignore the result, because the caller validates the connection.
+     * The only reason we do a normalization attempt here is
+     * NM_CONNECTION_NORMALIZE_PARAM_IP6_CONFIG_METHOD.
+     * Could we perhaps, one day, get rid of it? */
     nm_connection_normalize(connection, parameters, NULL, NULL);
 }
 
@@ -670,9 +668,9 @@ check_connection_cloned_mac_address(NMConnection *orig,
         cand_mac = nm_setting_wired_get_cloned_mac_address(s_wired_cand);
 
     /* special cloned mac address entries are accepted. */
-    if (NM_CLONED_MAC_IS_SPECIAL(orig_mac))
+    if (NM_CLONED_MAC_IS_SPECIAL(orig_mac, FALSE))
         orig_mac = NULL;
-    if (NM_CLONED_MAC_IS_SPECIAL(cand_mac))
+    if (NM_CLONED_MAC_IS_SPECIAL(cand_mac, FALSE))
         cand_mac = NULL;
 
     if (!orig_mac || !cand_mac) {
@@ -695,14 +693,15 @@ check_connection_controller(NMConnection *orig, NMConnection *candidate, GHashTa
 
     props = check_property_in_hash(settings,
                                    NM_SETTING_CONNECTION_SETTING_NAME,
-                                   NM_SETTING_CONNECTION_MASTER);
+                                   NM_SETTING_CONNECTION_CONTROLLER);
+
     if (!props)
         return TRUE;
 
     s_con_orig      = nm_connection_get_setting_connection(orig);
     s_con_cand      = nm_connection_get_setting_connection(candidate);
-    orig_controller = nm_setting_connection_get_master(s_con_orig);
-    cand_controller = nm_setting_connection_get_master(s_con_cand);
+    orig_controller = nm_setting_connection_get_controller(s_con_orig);
+    cand_controller = nm_setting_connection_get_controller(s_con_cand);
 
     /* A generated connection uses the UUID to specify the controller. Accept
      * candidates that specify as controller an interface name matching that
@@ -722,6 +721,10 @@ check_connection_controller(NMConnection *orig, NMConnection *candidate, GHashTa
                                  props,
                                  NM_SETTING_CONNECTION_SETTING_NAME,
                                  NM_SETTING_CONNECTION_MASTER);
+                remove_from_hash(settings,
+                                 props,
+                                 NM_SETTING_CONNECTION_SETTING_NAME,
+                                 NM_SETTING_CONNECTION_CONTROLLER);
                 return TRUE;
             } else {
                 return FALSE;
@@ -892,8 +895,8 @@ nm_utils_match_connection(NMConnection *const   *connections,
             if (!nm_streq0(nm_setting_connection_get_connection_type(s_orig),
                            nm_setting_connection_get_connection_type(s_cand)))
                 continue;
-            if (!nm_streq0(nm_setting_connection_get_slave_type(s_orig),
-                           nm_setting_connection_get_slave_type(s_cand)))
+            if (!nm_streq0(nm_setting_connection_get_port_type(s_orig),
+                           nm_setting_connection_get_port_type(s_cand)))
                 continue;
 
             /* this is good enough for a match */
@@ -962,7 +965,7 @@ nm_match_spec_device_data_init_from_device(struct _NMMatchSpecDeviceData *out_da
     nm_assert(out_data);
 
     if (!device) {
-        *out_data = (NMMatchSpecDeviceData){};
+        *out_data = (NMMatchSpecDeviceData) {};
         return out_data;
     }
 
@@ -978,7 +981,7 @@ nm_match_spec_device_data_init_from_device(struct _NMMatchSpecDeviceData *out_da
      *
      * The returned data is only valid, until NMDevice gets modified again. */
 
-    *out_data = (NMMatchSpecDeviceData){
+    *out_data = (NMMatchSpecDeviceData) {
         .interface_name   = nm_device_get_iface(device),
         .device_type      = nm_device_get_type_description(device),
         .driver           = nm_device_get_driver(device),
@@ -1005,7 +1008,7 @@ nm_match_spec_device_data_init_from_platform(NMMatchSpecDeviceData *out_data,
      * It's still useful because of specs like "*" and "except:interface-name:eth0",
      * which match even in that case. */
 
-    *out_data = (NMMatchSpecDeviceData){
+    *out_data = (NMMatchSpecDeviceData) {
         .interface_name   = pllink ? pllink->name : NULL,
         .device_type      = match_device_type,
         .driver           = pllink ? pllink->driver : NULL,
@@ -1052,7 +1055,7 @@ nm_ip_routing_rule_to_platform(const NMIPRoutingRule *rule, NMPlatformRoutingRul
 
     uid_range_has = nm_ip_routing_rule_get_uid_range(rule, &uid_range_start, &uid_range_end);
 
-    *out_pl = (NMPlatformRoutingRule){
+    *out_pl = (NMPlatformRoutingRule) {
         .addr_family = nm_ip_routing_rule_get_addr_family(rule),
         .flags       = (nm_ip_routing_rule_get_invert(rule) ? FIB_RULE_INVERT : 0),
         .priority    = nm_ip_routing_rule_get_priority(rule),
@@ -1195,7 +1198,7 @@ nm_shutdown_wait_obj_register_full(gpointer           watched_obj,
      * make sure to use the default context. */
 
     handle  = g_slice_new(NMShutdownWaitObjHandle);
-    *handle = (NMShutdownWaitObjHandle){
+    *handle = (NMShutdownWaitObjHandle) {
         /* depending on @free_msg_reason, we take ownership of @msg_reason.
          * In either case, we just reference the string without cloning
          * it. */
@@ -1506,7 +1509,6 @@ nm_utils_ip_route_attribute_to_platform(int                addr_family,
     GET_ATTR(NM_IP_ROUTE_ATTRIBUTE_INITCWND, r->initcwnd, UINT32, uint32, 0);
     GET_ATTR(NM_IP_ROUTE_ATTRIBUTE_INITRWND, r->initrwnd, UINT32, uint32, 0);
     GET_ATTR(NM_IP_ROUTE_ATTRIBUTE_MTU, r->mtu, UINT32, uint32, 0);
-    GET_ATTR(NM_IP_ROUTE_ATTRIBUTE_RTO_MIN, r->rto_min, UINT32, uint32, 0);
     GET_ATTR(NM_IP_ROUTE_ATTRIBUTE_QUICKACK, r->quickack, BOOLEAN, boolean, FALSE);
     GET_ATTR(NM_IP_ROUTE_ATTRIBUTE_LOCK_WINDOW, r->lock_window, BOOLEAN, boolean, FALSE);
     GET_ATTR(NM_IP_ROUTE_ATTRIBUTE_LOCK_CWND, r->lock_cwnd, BOOLEAN, boolean, FALSE);
@@ -1514,6 +1516,18 @@ nm_utils_ip_route_attribute_to_platform(int                addr_family,
     GET_ATTR(NM_IP_ROUTE_ATTRIBUTE_LOCK_INITRWND, r->lock_initrwnd, BOOLEAN, boolean, FALSE);
     GET_ATTR(NM_IP_ROUTE_ATTRIBUTE_LOCK_MTU, r->lock_mtu, BOOLEAN, boolean, FALSE);
     GET_ATTR(NM_IP_ROUTE_ATTRIBUTE_LOCK_ADVMSS, r->lock_mss, BOOLEAN, boolean, FALSE);
+
+    {
+        GVariant *_variant = nm_ip_route_get_attribute(s_route, NM_IP_ROUTE_ATTRIBUTE_RTO_MIN);
+
+        if (_variant && g_variant_is_of_type(_variant, G_VARIANT_TYPE_UINT32)) {
+            r->rto_min     = g_variant_get_uint32(_variant);
+            r->rto_min_set = TRUE;
+        } else {
+            r->rto_min     = 0;
+            r->rto_min_set = FALSE;
+        }
+    }
 
     if ((variant = nm_ip_route_get_attribute(s_route, NM_IP_ROUTE_ATTRIBUTE_SRC))
         && g_variant_is_of_type(variant, G_VARIANT_TYPE_STRING)) {
@@ -1558,7 +1572,8 @@ nm_utils_ip_addresses_to_dbus(int                          addr_family,
     char             addr_str[NM_INET_ADDRSTRLEN];
     NMDedupMultiIter iter;
     const NMPObject *obj;
-    guint            i;
+    const gsize      MAX_ADDRESSES = 100;
+    gsize            i;
 
     nm_assert_addr_family(addr_family);
 
@@ -1579,6 +1594,11 @@ nm_utils_ip_addresses_to_dbus(int                          addr_family,
     while (
         nm_platform_dedup_multi_iter_next_obj(&iter, &obj, NMP_OBJECT_TYPE_IP_ADDRESS(IS_IPv4))) {
         const NMPlatformIPXAddress *address = NMP_OBJECT_CAST_IPX_ADDRESS(obj);
+
+        if (i > MAX_ADDRESSES) {
+            /* Limited. The rest is hidden. */
+            break;
+        }
 
         if (out_address_data) {
             GVariantBuilder addr_builder;
@@ -1669,6 +1689,8 @@ nm_utils_ip_routes_to_dbus(int                          addr_family,
     GVariantBuilder  builder_data;
     GVariantBuilder  builder_legacy;
     char             addr_str[NM_INET_ADDRSTRLEN];
+    const gsize      MAX_ROUTES = 100;
+    gsize            i;
 
     nm_assert_addr_family(addr_family);
 
@@ -1681,6 +1703,7 @@ nm_utils_ip_routes_to_dbus(int                          addr_family,
             g_variant_builder_init(&builder_legacy, G_VARIANT_TYPE("a(ayuayu)"));
     }
 
+    i = 0;
     nm_dedup_multi_iter_init(&iter, head_entry);
     while (nm_platform_dedup_multi_iter_next_obj(&iter, &obj, NMP_OBJECT_TYPE_IP_ROUTE(IS_IPv4))) {
         const NMPlatformIPXRoute *r = NMP_OBJECT_CAST_IPX_ROUTE(obj);
@@ -1698,6 +1721,13 @@ nm_utils_ip_routes_to_dbus(int                          addr_family,
 
         if (r->rx.type_coerced != nm_platform_route_type_coerce(RTN_UNICAST))
             continue;
+
+        if (i >= MAX_ROUTES) {
+            /* Limited. The rest is hidden. */
+            break;
+        }
+
+        i++;
 
         if (out_route_data) {
             GVariantBuilder route_builder;

@@ -381,9 +381,9 @@ nm_active_connection_get_vpn(NMActiveConnection *connection)
  * nm_active_connection_get_master:
  * @connection: a #NMActiveConnection
  *
- * Gets the master #NMDevice of the connection.
+ * Gets the controller #NMDevice of the connection.
  *
- * Returns: (transfer none): the master #NMDevice of the #NMActiveConnection.
+ * Returns: (transfer none): the controller #NMDevice of the #NMActiveConnection.
  *
  * Deprecated: 1.44: Use nm_active_connection_get_controller() instead.
  **/
@@ -624,7 +624,7 @@ const NMLDBusMetaIface _nml_dbus_meta_iface_nm_connection_active = NML_DBUS_META
                                         PROP_CONTROLLER,
                                         "o",
                                         active_connection_update_prop_controller,
-                                        .extra.property_vtable_o = &((const NMLDBusPropertVTableO){
+                                        .extra.property_vtable_o = &((const NMLDBusPropertVTableO) {
                                             .get_o_type_fcn = (nm_device_get_type)})),
         NML_DBUS_META_PROPERTY_INIT_B("Default",
                                       PROP_DEFAULT,
@@ -664,7 +664,7 @@ const NMLDBusMetaIface _nml_dbus_meta_iface_nm_connection_active = NML_DBUS_META
                                         PROP_MASTER,
                                         "o",
                                         active_connection_update_prop_controller,
-                                        .extra.property_vtable_o = &((const NMLDBusPropertVTableO){
+                                        .extra.property_vtable_o = &((const NMLDBusPropertVTableO) {
                                             .get_o_type_fcn = (nm_device_get_type)})),
         NML_DBUS_META_PROPERTY_INIT_O("SpecificObject",
                                       PROP_SPECIFIC_OBJECT_PATH,
@@ -880,7 +880,7 @@ nm_active_connection_class_init(NMActiveConnectionClass *klass)
     /**
      * NMActiveConnection:master:
      *
-     * The master device if one exists. Replaced by the "controller" property.
+     * The controller device if one exists. Replaced by the "controller" property.
      *
      * Deprecated: 1.44
      **/

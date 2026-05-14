@@ -28,6 +28,7 @@ typedef enum {
     ((is_ipv4) ? NM_L3_CONFIG_DAT_FLAGS_HAS_DNS_PRIORITY_4 \
                : NM_L3_CONFIG_DAT_FLAGS_HAS_DNS_PRIORITY_6)
 
+    NM_L3_CONFIG_DAT_FLAGS_HAS_IPV4_NON_LL = (1ull << 3),
 } NML3ConfigDatFlags;
 
 typedef enum {
@@ -457,6 +458,10 @@ NMSettingConnectionDnsOverTls nm_l3_config_data_get_dns_over_tls(const NML3Confi
 gboolean nm_l3_config_data_set_dns_over_tls(NML3ConfigData               *self,
                                             NMSettingConnectionDnsOverTls dns_over_tls);
 
+NMSettingConnectionDnssec nm_l3_config_data_get_dnssec(const NML3ConfigData *self);
+
+gboolean nm_l3_config_data_set_dnssec(NML3ConfigData *self, NMSettingConnectionDnssec dnssec);
+
 NMIPRouteTableSyncMode nm_l3_config_data_get_route_table_sync(const NML3ConfigData *self,
                                                               int                   addr_family);
 
@@ -499,10 +504,9 @@ nm_l3_config_data_get_nameservers(const NML3ConfigData *self, int addr_family, g
 gboolean
 nm_l3_config_data_add_nameserver(NML3ConfigData *self, int addr_family, const char *nameserver);
 
-gboolean nm_l3_config_data_add_nameserver_detail(NML3ConfigData *self,
-                                                 int             addr_family,
-                                                 gconstpointer   addr_bin,
-                                                 const char     *server_name);
+gboolean nm_l3_config_data_add_nameserver_addr(NML3ConfigData *self,
+                                               int             addr_family,
+                                               gconstpointer   addr_bin);
 
 gboolean nm_l3_config_data_clear_nameservers(NML3ConfigData *self, int addr_family);
 
@@ -553,6 +557,16 @@ NMSettingIP6ConfigPrivacy nm_l3_config_data_get_ip6_privacy(const NML3ConfigData
 
 gboolean nm_l3_config_data_set_ip6_privacy(NML3ConfigData           *self,
                                            NMSettingIP6ConfigPrivacy ip6_privacy);
+
+gboolean nm_l3_config_data_get_allow_routes_without_address(const NML3ConfigData *self,
+                                                            int                   addr_family);
+
+void nm_l3_config_data_set_allow_routes_without_address(NML3ConfigData *self,
+                                                        int             addr_family,
+                                                        gboolean        value);
+
+gboolean nm_l3_config_data_get_routed_dns(const NML3ConfigData *self, int addr_family);
+void     nm_l3_config_data_set_routed_dns(NML3ConfigData *self, int addr_family, gboolean value);
 
 NMProxyConfigMethod nm_l3_config_data_get_proxy_method(const NML3ConfigData *self);
 
@@ -605,6 +619,7 @@ nmtst_l3_config_data_get_best_gateway(const NML3ConfigData *self, int addr_famil
 void nm_l3_config_data_hash_dns(const NML3ConfigData *l3cd,
                                 GChecksum            *sum,
                                 int                   addr_family,
-                                NMDnsIPConfigType     dns_ip_config_type);
+                                NMDnsIPConfigType     dns_ip_config_type,
+                                gboolean              ignore_searches_and_options);
 
 #endif /* __NM_L3_CONFIG_DATA_H__ */

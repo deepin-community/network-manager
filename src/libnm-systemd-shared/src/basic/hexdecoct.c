@@ -38,7 +38,7 @@ int undecchar(char c) {
 }
 
 char hexchar(int x) {
-        static const char table[16] = "0123456789abcdef";
+        static const char table[] = "0123456789abcdef";
 
         return table[x & 15];
 }
@@ -57,7 +57,7 @@ int unhexchar(char c) {
         return -EINVAL;
 }
 
-char *hexmem(const void *p, size_t l) {
+char* hexmem(const void *p, size_t l) {
         const uint8_t *x;
         char *r, *z;
 
@@ -116,7 +116,7 @@ int unhexmem_full(
                 const char *p,
                 size_t l,
                 bool secure,
-                void **ret,
+                void **ret_data,
                 size_t *ret_len) {
 
         _cleanup_free_ uint8_t *buf = NULL;
@@ -157,8 +157,8 @@ int unhexmem_full(
 
         if (ret_len)
                 *ret_len = (size_t) (z - buf);
-        if (ret)
-                *ret = TAKE_PTR(buf);
+        if (ret_data)
+                *ret_data = TAKE_PTR(buf);
 
         return 0;
 }
@@ -171,8 +171,8 @@ int unhexmem_full(
  * useful when representing NSEC3 hashes, as one can then verify the
  * order of hashes directly from their representation. */
 char base32hexchar(int x) {
-        static const char table[32] = "0123456789"
-                                      "ABCDEFGHIJKLMNOPQRSTUV";
+        static const char table[] = "0123456789"
+                                    "ABCDEFGHIJKLMNOPQRSTUV";
 
         return table[x & 31];
 }
@@ -191,7 +191,7 @@ int unbase32hexchar(char c) {
         return -EINVAL;
 }
 
-char *base32hexmem(const void *p, size_t l, bool padding) {
+char* base32hexmem(const void *p, size_t l, bool padding) {
         char *r, *z;
         const uint8_t *x;
         size_t len;
@@ -522,9 +522,9 @@ int unbase32hexmem(const char *p, size_t l, bool padding, void **mem, size_t *_l
 
 /* https://tools.ietf.org/html/rfc4648#section-4 */
 char base64char(int x) {
-        static const char table[64] = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
-                                      "abcdefghijklmnopqrstuvwxyz"
-                                      "0123456789+/";
+        static const char table[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+                                    "abcdefghijklmnopqrstuvwxyz"
+                                    "0123456789+/";
         return table[x & 63];
 }
 #endif /* NM_IGNORED */
@@ -533,9 +533,9 @@ char base64char(int x) {
  * since we don't want "/" appear in interface names (since interfaces appear in sysfs as filenames).
  * See section #5 of RFC 4648. */
 char urlsafe_base64char(int x) {
-        static const char table[64] = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
-                                      "abcdefghijklmnopqrstuvwxyz"
-                                      "0123456789-_";
+        static const char table[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+                                    "abcdefghijklmnopqrstuvwxyz"
+                                    "0123456789-_";
         return table[x & 63];
 }
 
@@ -557,12 +557,12 @@ int unbase64char(char c) {
 
         offset += '9' - '0' + 1;
 
-        if (c == '+')
+        if (IN_SET(c, '+', '-')) /* Support both the regular and the URL safe character set (see above) */
                 return offset;
 
         offset++;
 
-        if (c == '/')
+        if (IN_SET(c, '/', '_')) /* ditto */
                 return offset;
 
         return -EINVAL;
@@ -772,7 +772,7 @@ int unbase64mem_full(
                 const char *p,
                 size_t l,
                 bool secure,
-                void **ret,
+                void **ret_data,
                 size_t *ret_size) {
 
         _cleanup_free_ uint8_t *buf = NULL;
@@ -860,8 +860,8 @@ int unbase64mem_full(
 
         if (ret_size)
                 *ret_size = (size_t) (z - buf);
-        if (ret)
-                *ret = TAKE_PTR(buf);
+        if (ret_data)
+                *ret_data = TAKE_PTR(buf);
 
         return 0;
 }
@@ -872,6 +872,9 @@ void hexdump(FILE *f, const void *p, size_t s) {
         unsigned n = 0;
 
         assert(b || s == 0);
+
+        if (s == SIZE_MAX)
+                s = strlen(p);
 
         if (!f)
                 f = stdout;

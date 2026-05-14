@@ -264,22 +264,43 @@ construct_ip_items(GPtrArray *items, int addr_family, GVariant *ip_config, const
         g_variant_unref(val);
     }
 
-    val = g_variant_lookup_value(ip_config,
-                                 "nameservers",
-                                 addr_family == AF_INET ? G_VARIANT_TYPE("au")
-                                                        : G_VARIANT_TYPE("aay"));
+    /* For name servers, prefer the new key and fall back to the old one. */
+    val = g_variant_lookup_value(ip_config, "nameservers-full", G_VARIANT_TYPE("as"));
     if (val) {
-        gs_strfreev char **v = NULL;
+        nm_auto_unref_ptrarray GPtrArray *arr = NULL;
+        GVariantIter                      iter;
+        const char                       *str;
 
-        if (addr_family == AF_INET)
-            v = nm_utils_ip4_dns_from_variant(val);
-        else
-            v = nm_utils_ip6_dns_from_variant(val);
+        arr = g_ptr_array_new_full(g_variant_n_children(val) + 1, NULL);
+        g_variant_iter_init(&iter, val);
+        while (g_variant_iter_next(&iter, "&s", &str)) {
+            g_ptr_array_add(arr, (gpointer) str);
+        }
+        g_ptr_array_add(arr, NULL);
+
         _items_add_strv(items,
                         prefix,
                         addr_family == AF_INET ? "IP4_NAMESERVERS" : "IP6_NAMESERVERS",
-                        NM_CAST_STRV_CC(v));
+                        (const char *const *) arr->pdata);
         g_variant_unref(val);
+    } else {
+        val = g_variant_lookup_value(ip_config,
+                                     "nameservers",
+                                     addr_family == AF_INET ? G_VARIANT_TYPE("au")
+                                                            : G_VARIANT_TYPE("aay"));
+        if (val) {
+            gs_strfreev char **v = NULL;
+
+            if (addr_family == AF_INET)
+                v = nm_utils_ip4_dns_from_variant(val);
+            else
+                v = nm_utils_ip6_dns_from_variant(val);
+            _items_add_strv(items,
+                            prefix,
+                            addr_family == AF_INET ? "IP4_NAMESERVERS" : "IP6_NAMESERVERS",
+                            NM_CAST_STRV_CC(v));
+            g_variant_unref(val);
+        }
     }
 
     val = g_variant_lookup_value(ip_config, "domains", G_VARIANT_TYPE_STRING_ARRAY);
@@ -453,8 +474,12 @@ nm_dispatcher_utils_construct_envp(const char  *action,
 
     items = g_ptr_array_new_with_free_func(g_free);
 
-    /* Hostname and connectivity changes don't require a device nor contain a connection */
-    if (NM_IN_STRSET(action, NMD_ACTION_HOSTNAME, NMD_ACTION_CONNECTIVITY_CHANGE))
+    /* Hostname, dns and connectivity changes don't require a device nor contain
+     * a connection */
+    if (NM_IN_STRSET(action,
+                     NMD_ACTION_HOSTNAME,
+                     NMD_ACTION_CONNECTIVITY_CHANGE,
+                     NMD_ACTION_DNS_CHANGE))
         goto done;
 
     /* Connection properties */
@@ -534,6 +559,36 @@ nm_dispatcher_utils_construct_envp(const char  *action,
         _items_add_key0(items, NULL, "CONNECTION_ID", id);
         _items_add_key0(items, NULL, "DEVICE_IFACE", iface);
         _items_add_key0(items, NULL, "DEVICE_IP_IFACE", ip_iface);
+    }
+
+    {
+        gs_unref_variant GVariant *user_setting = NULL;
+
+        user_setting = g_variant_lookup_value(connection_dict,
+                                              NM_SETTING_USER_SETTING_NAME,
+                                              NM_VARIANT_TYPE_SETTING);
+        if (user_setting) {
+            gs_unref_variant GVariant    *data   = NULL;
+            nm_auto_free_gstring GString *string = NULL;
+            GVariantIter                  iter;
+            const char                   *key;
+            const char                   *val;
+
+            data =
+                g_variant_lookup_value(user_setting, NM_SETTING_USER_DATA, G_VARIANT_TYPE("a{ss}"));
+            if (data) {
+                g_variant_iter_init(&iter, data);
+                while (g_variant_iter_next(&iter, "{&s&s}", &key, &val)) {
+                    if (key) {
+                        if (!string)
+                            string = g_string_sized_new(64);
+                        g_string_assign(string, "CONNECTION_USER_");
+                        nm_utils_env_var_encode_name(key, string);
+                        _items_add_key0(items, NULL, string->str, val);
+                    }
+                }
+            }
+        }
     }
 
     /* Device items aren't valid if the device isn't activated */

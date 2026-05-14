@@ -81,7 +81,7 @@ nm_main_utils_write_pidfile(const char *pidfile)
     char                  pid[16];
 
     nm_sprintf_buf(pid, "%lld", (long long) getpid());
-    if (!nm_utils_file_set_contents(pidfile, pid, -1, 00644, NULL, NULL, &error)) {
+    if (!nm_utils_file_set_contents(pidfile, pid, -1, 00644, NULL, NULL, NULL, &error)) {
         fprintf(stderr, _("Writing to %s failed: %s\n"), pidfile, error->message);
         return FALSE;
     }
@@ -192,10 +192,7 @@ nm_main_utils_ensure_not_running_pidfile(const char *pidfile)
     if (strcmp(process_name, prgname) == 0) {
         /* Check that the process exists */
         if (kill(pid, 0) == 0) {
-            fprintf(stderr,
-                    _("%s is already running (pid %" G_GINT64_FORMAT ")\n"),
-                    prgname,
-                    (gint64) pid);
+            fprintf(stderr, _("%s is already running (pid %lld)\n"), prgname, (long long) pid);
             exit(1);
         }
     }

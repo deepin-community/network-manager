@@ -29,11 +29,13 @@
 #include "nm-setting-generic.h"
 #include "nm-setting-gsm.h"
 #include "nm-setting-hostname.h"
+#include "nm-setting-hsr.h"
 #include "nm-setting-infiniband.h"
 #include "nm-setting-ip-config.h"
 #include "nm-setting-ip-tunnel.h"
 #include "nm-setting-ip4-config.h"
 #include "nm-setting-ip6-config.h"
+#include "nm-setting-ipvlan.h"
 #include "nm-setting-link.h"
 #include "nm-setting-loopback.h"
 #include "nm-setting-macsec.h"
@@ -49,6 +51,7 @@
 #include "nm-setting-ovs-port.h"
 #include "nm-setting-ppp.h"
 #include "nm-setting-pppoe.h"
+#include "nm-setting-prefix-delegation.h"
 #include "nm-setting-proxy.h"
 #include "nm-setting-serial.h"
 #include "nm-setting-tc-config.h"
@@ -335,6 +338,13 @@ const NMMetaSettingInfo nm_meta_setting_infos[] = {
             .setting_name      = NM_SETTING_HOSTNAME_SETTING_NAME,
             .get_setting_gtype = nm_setting_hostname_get_type,
         },
+    [NM_META_SETTING_TYPE_HSR] =
+        {
+            .meta_type         = NM_META_SETTING_TYPE_HSR,
+            .setting_priority  = NM_SETTING_PRIORITY_HW_BASE,
+            .setting_name      = NM_SETTING_HSR_SETTING_NAME,
+            .get_setting_gtype = nm_setting_hsr_get_type,
+        },
     [NM_META_SETTING_TYPE_INFINIBAND] =
         {
             .meta_type         = NM_META_SETTING_TYPE_INFINIBAND,
@@ -362,6 +372,13 @@ const NMMetaSettingInfo nm_meta_setting_infos[] = {
             .setting_priority  = NM_SETTING_PRIORITY_HW_BASE,
             .setting_name      = NM_SETTING_IP_TUNNEL_SETTING_NAME,
             .get_setting_gtype = nm_setting_ip_tunnel_get_type,
+        },
+    [NM_META_SETTING_TYPE_IPVLAN] =
+        {
+            .meta_type         = NM_META_SETTING_TYPE_IPVLAN,
+            .setting_priority  = NM_SETTING_PRIORITY_HW_BASE,
+            .setting_name      = NM_SETTING_IPVLAN_SETTING_NAME,
+            .get_setting_gtype = nm_setting_ipvlan_get_type,
         },
     [NM_META_SETTING_TYPE_LINK] =
         {
@@ -415,7 +432,7 @@ const NMMetaSettingInfo nm_meta_setting_infos[] = {
     [NM_META_SETTING_TYPE_OVS_DPDK] =
         {
             .meta_type         = NM_META_SETTING_TYPE_OVS_DPDK,
-            .setting_priority  = NM_SETTING_PRIORITY_HW_BASE,
+            .setting_priority  = NM_SETTING_PRIORITY_AUX,
             .setting_name      = NM_SETTING_OVS_DPDK_SETTING_NAME,
             .get_setting_gtype = nm_setting_ovs_dpdk_get_type,
         },
@@ -443,7 +460,7 @@ const NMMetaSettingInfo nm_meta_setting_infos[] = {
     [NM_META_SETTING_TYPE_OVS_PATCH] =
         {
             .meta_type         = NM_META_SETTING_TYPE_OVS_PATCH,
-            .setting_priority  = NM_SETTING_PRIORITY_HW_BASE,
+            .setting_priority  = NM_SETTING_PRIORITY_AUX,
             .setting_name      = NM_SETTING_OVS_PATCH_SETTING_NAME,
             .get_setting_gtype = nm_setting_ovs_patch_get_type,
         },
@@ -467,6 +484,13 @@ const NMMetaSettingInfo nm_meta_setting_infos[] = {
             .setting_priority  = NM_SETTING_PRIORITY_AUX,
             .setting_name      = NM_SETTING_PPP_SETTING_NAME,
             .get_setting_gtype = nm_setting_ppp_get_type,
+        },
+    [NM_META_SETTING_TYPE_PREFIX_DELEGATION] =
+        {
+            .meta_type         = NM_META_SETTING_TYPE_PREFIX_DELEGATION,
+            .setting_priority  = NM_SETTING_PRIORITY_IP,
+            .setting_name      = NM_SETTING_PREFIX_DELEGATION_SETTING_NAME,
+            .get_setting_gtype = nm_setting_prefix_delegation_get_type,
         },
     [NM_META_SETTING_TYPE_PROXY] =
         {
@@ -632,15 +656,15 @@ const NMMetaSettingType nm_meta_setting_types_by_priority[] = {
     NM_META_SETTING_TYPE_DUMMY,
     NM_META_SETTING_TYPE_GENERIC,
     NM_META_SETTING_TYPE_GSM,
+    NM_META_SETTING_TYPE_HSR,
     NM_META_SETTING_TYPE_INFINIBAND,
     NM_META_SETTING_TYPE_IP_TUNNEL,
+    NM_META_SETTING_TYPE_IPVLAN,
     NM_META_SETTING_TYPE_LOOPBACK,
     NM_META_SETTING_TYPE_MACSEC,
     NM_META_SETTING_TYPE_MACVLAN,
     NM_META_SETTING_TYPE_OVS_BRIDGE,
-    NM_META_SETTING_TYPE_OVS_DPDK,
     NM_META_SETTING_TYPE_OVS_INTERFACE,
-    NM_META_SETTING_TYPE_OVS_PATCH,
     NM_META_SETTING_TYPE_OVS_PORT,
     NM_META_SETTING_TYPE_TEAM,
     NM_META_SETTING_TYPE_TUN,
@@ -670,8 +694,10 @@ const NMMetaSettingType nm_meta_setting_types_by_priority[] = {
     NM_META_SETTING_TYPE_ETHTOOL,
     NM_META_SETTING_TYPE_LINK,
     NM_META_SETTING_TYPE_MATCH,
+    NM_META_SETTING_TYPE_OVS_DPDK,
     NM_META_SETTING_TYPE_OVS_EXTERNAL_IDS,
     NM_META_SETTING_TYPE_OVS_OTHER_CONFIG,
+    NM_META_SETTING_TYPE_OVS_PATCH,
     NM_META_SETTING_TYPE_PPP,
     NM_META_SETTING_TYPE_PPPOE,
     NM_META_SETTING_TYPE_TEAM_PORT,
@@ -680,6 +706,7 @@ const NMMetaSettingType nm_meta_setting_types_by_priority[] = {
     NM_META_SETTING_TYPE_HOSTNAME,
     NM_META_SETTING_TYPE_IP4_CONFIG,
     NM_META_SETTING_TYPE_IP6_CONFIG,
+    NM_META_SETTING_TYPE_PREFIX_DELEGATION,
     NM_META_SETTING_TYPE_PROXY,
     NM_META_SETTING_TYPE_TC_CONFIG,
 
@@ -813,7 +840,7 @@ again:
         for (i = 0; i < _NM_META_SETTING_TYPE_NUM; i++) {
             const NMMetaSettingInfo *m = &nm_meta_setting_infos[i];
 
-            static_array[i] = (LookupData){
+            static_array[i] = (LookupData) {
                 .gtype        = m->get_setting_gtype(),
                 .setting_info = m,
             };

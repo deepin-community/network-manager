@@ -169,7 +169,6 @@ class SocketHTTPServer(HTTPServer):
 
 
 def create_default_resources_for_provider(provider):
-
     mac1 = b"cc:00:00:00:00:01"
     mac2 = b"cc:00:00:00:00:02"
 
@@ -244,7 +243,6 @@ def create_default_resources_for_provider(provider):
 
 
 def create_default_resources():
-
     return {p: create_default_resources_for_provider(p) for p in PROVIDERS}
 
 
@@ -278,7 +276,10 @@ httpd = SocketHTTPServer(
     allow_default=allow_default,
 )
 
-print("Listening on http://%s:%d" % (httpd.server_address[0], httpd.server_address[1]))
+if fileno is None:
+    print(
+        "Listening on http://%s:%d" % (httpd.server_address[0], httpd.server_address[1])
+    )
 httpd.server_activate()
 
 httpd.serve_forever()

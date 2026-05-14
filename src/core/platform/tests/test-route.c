@@ -574,6 +574,7 @@ test_ip4_route_get(void)
     result = nm_platform_ip_route_get(NM_PLATFORM_GET,
                                       AF_INET,
                                       &a,
+                                      0,
                                       nmtst_get_rand_uint32() % 2 ? 0 : ifindex,
                                       &route);
 
@@ -623,6 +624,79 @@ test_ip4_zero_gateway(void)
 }
 
 static void
+test_via(void)
+{
+    int                ifindex = nm_platform_link_get_ifindex(NM_PLATFORM_GET, DEVICE_NAME);
+    GPtrArray         *routes;
+    NMPlatformIP4Route rts[1];
+    struct in6_addr    gateway6;
+    const int          metric = 22987;
+    NMPlatformIP4Route route4;
+    guint              mss = 1000;
+    in_addr_t          net4;
+
+    /* Test IPv4 routes with a IPv6 gateway (using RTA_VIA attribute) */
+
+    inet_pton(AF_INET6, "fd01::1", &gateway6);
+    inet_pton(AF_INET, "1.2.3.4", &net4);
+
+    /* Add direct route to IPv6 gateway: ip route add dev $DEV fd01::1/128 */
+    nmtstp_ip6_route_add(NM_PLATFORM_GET,
+                         ifindex,
+                         NM_IP_CONFIG_SOURCE_USER,
+                         gateway6,
+                         128,
+                         in6addr_any,
+                         in6addr_any,
+                         metric,
+                         mss);
+    g_assert(nmtstp_ip6_route_get(NM_PLATFORM_GET, ifindex, &gateway6, 128, metric, NULL, 0));
+
+    /* Add IPv4 route via IPv6 gateway: ip route add dev $DEV 1.2.3.4/32 via inet6 fd01::1 */
+    route4 = (NMPlatformIP4Route) {
+        .ifindex         = ifindex,
+        .rt_source       = NM_IP_CONFIG_SOURCE_USER,
+        .network         = net4,
+        .plen            = 32,
+        .metric          = metric,
+        .via.addr_family = AF_INET6,
+        .via.addr.addr6  = gateway6,
+        .mss             = mss,
+    };
+    g_assert(NMTST_NM_ERR_SUCCESS(
+        nm_platform_ip4_route_add(NM_PLATFORM_GET, NMP_NLM_FLAG_REPLACE, &route4, NULL)));
+    g_assert(nmtstp_ip4_route_get(NM_PLATFORM_GET, ifindex, net4, 32, metric, 0));
+
+    /* Test route listing */
+    routes = nmtstp_ip4_route_get_all(NM_PLATFORM_GET, ifindex);
+    g_assert_cmpint(routes->len, ==, 1);
+
+    memset(rts, 0, sizeof(rts));
+    rts[0].rt_source       = nmp_utils_ip_config_source_round_trip_rtprot(NM_IP_CONFIG_SOURCE_USER);
+    rts[0].scope_inv       = nm_platform_route_scope_inv(RT_SCOPE_LINK);
+    rts[0].network         = net4;
+    rts[0].plen            = 32;
+    rts[0].ifindex         = ifindex;
+    rts[0].gateway         = INADDR_ANY;
+    rts[0].metric          = metric;
+    rts[0].mss             = mss;
+    rts[0].via.addr_family = AF_INET6;
+    rts[0].via.addr.addr6  = gateway6;
+    rts[0].n_nexthops      = 1;
+    nmtst_platform_ip4_routes_equal_aptr((const NMPObject *const *) routes->pdata,
+                                         rts,
+                                         routes->len,
+                                         TRUE);
+    g_ptr_array_unref(routes);
+
+    /* Delete routes */
+    g_assert(nmtstp_platform_ip6_route_delete(NM_PLATFORM_GET, ifindex, gateway6, 128, metric));
+    g_assert(!nmtstp_ip6_route_get(NM_PLATFORM_GET, ifindex, &gateway6, 128, metric, NULL, 0));
+    g_assert(nmtstp_platform_ip4_route_delete(NM_PLATFORM_GET, ifindex, net4, 32, metric));
+    g_assert(!nmtstp_ip4_route_get(NM_PLATFORM_GET, ifindex, net4, 32, metric, 0));
+}
+
+static void
 test_ip4_route_options(gconstpointer test_data)
 {
     const int TEST_IDX = GPOINTER_TO_INT(test_data);
@@ -638,27 +712,28 @@ test_ip4_route_options(gconstpointer test_data)
 
     switch (TEST_IDX) {
     case 1:
-        rts_add[rts_n++] = ((NMPlatformIP4Route){
-            .ifindex    = IFINDEX,
-            .rt_source  = NM_IP_CONFIG_SOURCE_USER,
-            .network    = nmtst_inet4_from_string("172.16.1.0"),
-            .plen       = 24,
-            .metric     = 20,
-            .tos        = 0x28,
-            .window     = 10000,
-            .cwnd       = 16,
-            .initcwnd   = 30,
-            .initrwnd   = 50,
-            .mtu        = 1350,
-            .lock_cwnd  = TRUE,
-            .mss        = 1300,
-            .quickack   = TRUE,
-            .rto_min    = 1000,
-            .n_nexthops = 1,
+        rts_add[rts_n++] = ((NMPlatformIP4Route) {
+            .ifindex     = IFINDEX,
+            .rt_source   = NM_IP_CONFIG_SOURCE_USER,
+            .network     = nmtst_inet4_from_string("172.16.1.0"),
+            .plen        = 24,
+            .metric      = 20,
+            .tos         = 0x28,
+            .window      = 10000,
+            .cwnd        = 16,
+            .initcwnd    = 30,
+            .initrwnd    = 50,
+            .mtu         = 1350,
+            .lock_cwnd   = TRUE,
+            .mss         = 1300,
+            .quickack    = TRUE,
+            .rto_min     = 1000,
+            .rto_min_set = TRUE,
+            .n_nexthops  = 1,
         });
         break;
     case 2:
-        addr[addr_n++]   = ((NMPlatformIP4Address){
+        addr[addr_n++]   = ((NMPlatformIP4Address) {
               .ifindex      = IFINDEX,
               .address      = nmtst_inet4_from_string("172.16.1.5"),
               .peer_address = nmtst_inet4_from_string("172.16.1.5"),
@@ -667,7 +742,7 @@ test_ip4_route_options(gconstpointer test_data)
               .preferred    = NM_PLATFORM_LIFETIME_PERMANENT,
               .n_ifa_flags  = 0,
         });
-        rts_add[rts_n++] = ((NMPlatformIP4Route){
+        rts_add[rts_n++] = ((NMPlatformIP4Route) {
             .ifindex    = IFINDEX,
             .rt_source  = NM_IP_CONFIG_SOURCE_USER,
             .network    = nmtst_inet4_from_string("172.17.1.0"),
@@ -676,7 +751,7 @@ test_ip4_route_options(gconstpointer test_data)
             .metric     = 20,
             .n_nexthops = 1,
         });
-        rts_add[rts_n++] = ((NMPlatformIP4Route){
+        rts_add[rts_n++] = ((NMPlatformIP4Route) {
             .ifindex     = IFINDEX,
             .rt_source   = NM_IP_CONFIG_SOURCE_USER,
             .network     = nmtst_inet4_from_string("172.19.1.0"),
@@ -766,6 +841,7 @@ test_ip6_route_get(void)
     result = nm_platform_ip_route_get(NM_PLATFORM_GET,
                                       AF_INET6,
                                       a,
+                                      0,
                                       nmtst_get_rand_uint32() % 2 ? 0 : ifindex,
                                       &route);
 
@@ -801,7 +877,7 @@ test_ip6_route_options(gconstpointer test_data)
 
     switch (TEST_IDX) {
     case 1:
-        rts_add[rts_n++] = ((NMPlatformIP6Route){
+        rts_add[rts_n++] = ((NMPlatformIP6Route) {
             .ifindex   = IFINDEX,
             .rt_source = NM_IP_CONFIG_SOURCE_USER,
             .network   = nmtst_inet6_from_string("2001:db8:a:b:0:0:0:0"),
@@ -817,7 +893,7 @@ test_ip6_route_options(gconstpointer test_data)
         });
         break;
     case 2:
-        addr[addr_n++]   = ((NMPlatformIP6Address){
+        addr[addr_n++]   = ((NMPlatformIP6Address) {
               .ifindex      = IFINDEX,
               .address      = nmtst_inet6_from_string("2000::2"),
               .plen         = 128,
@@ -826,7 +902,7 @@ test_ip6_route_options(gconstpointer test_data)
               .preferred    = NM_PLATFORM_LIFETIME_PERMANENT,
               .n_ifa_flags  = 0,
         });
-        rts_add[rts_n++] = ((NMPlatformIP6Route){
+        rts_add[rts_n++] = ((NMPlatformIP6Route) {
             .ifindex   = IFINDEX,
             .rt_source = NM_IP_CONFIG_SOURCE_USER,
             .network   = nmtst_inet6_from_string("1010::1"),
@@ -837,7 +913,7 @@ test_ip6_route_options(gconstpointer test_data)
         });
         break;
     case 3:
-        addr[addr_n++]   = ((NMPlatformIP6Address){
+        addr[addr_n++]   = ((NMPlatformIP6Address) {
               .ifindex      = IFINDEX,
               .address      = nmtst_inet6_from_string("2001:db8:8086::5"),
               .plen         = 128,
@@ -846,7 +922,7 @@ test_ip6_route_options(gconstpointer test_data)
               .preferred    = NM_PLATFORM_LIFETIME_PERMANENT,
               .n_ifa_flags  = 0,
         });
-        rts_add[rts_n++] = ((NMPlatformIP6Route){
+        rts_add[rts_n++] = ((NMPlatformIP6Route) {
             .ifindex   = IFINDEX,
             .rt_source = nmp_utils_ip_config_source_round_trip_rtprot(NM_IP_CONFIG_SOURCE_USER),
             .network   = nmtst_inet6_from_string("2001:db8:8086::"),
@@ -854,7 +930,7 @@ test_ip6_route_options(gconstpointer test_data)
             .metric    = 10021,
             .mss       = 0,
         });
-        rts_add[rts_n++] = ((NMPlatformIP6Route){
+        rts_add[rts_n++] = ((NMPlatformIP6Route) {
             .ifindex   = IFINDEX,
             .rt_source = nmp_utils_ip_config_source_round_trip_rtprot(NM_IP_CONFIG_SOURCE_USER),
             .network   = nmtst_inet6_from_string("2001:db8:abad:c0de::"),
@@ -1595,7 +1671,7 @@ test_rule(gconstpointer test_data)
 
 #define RR(...)                                  \
     nmp_object_new(NMP_OBJECT_TYPE_ROUTING_RULE, \
-                   (const NMPlatformObject *) &((NMPlatformRoutingRule){__VA_ARGS__}))
+                   (const NMPlatformObject *) &((NMPlatformRoutingRule) {__VA_ARGS__}))
 
     objs = g_ptr_array_new_with_free_func((GDestroyNotify) nmp_object_unref);
 
@@ -1926,11 +2002,11 @@ test_blackhole(gconstpointer test_data)
     rtn_type = nmtst_rand_select(RTN_BLACKHOLE, RTN_UNREACHABLE, RTN_PROHIBIT, RTN_THROW);
 
     if (IS_IPv4) {
-        rr.r4 = (const NMPlatformIP4Route){
+        rr.r4 = (const NMPlatformIP4Route) {
             .type_coerced = nm_platform_route_type_coerce(rtn_type),
         };
     } else {
-        rr.r6 = (const NMPlatformIP6Route){
+        rr.r6 = (const NMPlatformIP6Route) {
             .type_coerced = nm_platform_route_type_coerce(rtn_type),
             .metric       = 1000,
         };
@@ -1987,7 +2063,7 @@ again:
 
     if (p == -1) {
         static gsize              lock;
-        const NMPlatformMptcpAddr mptcp_addr = (NMPlatformMptcpAddr){
+        const NMPlatformMptcpAddr mptcp_addr = (NMPlatformMptcpAddr) {
             .id          = 1,
             .addr_family = AF_INET,
             .addr.addr4  = nmtst_inet4_from_string("1.2.3.4"),
@@ -2418,6 +2494,7 @@ _nmtstp_setup_tests(void)
         add_test_func("/route/ip4_route_get", test_ip4_route_get);
         add_test_func("/route/ip6_route_get", test_ip6_route_get);
         add_test_func("/route/ip4_zero_gateway", test_ip4_zero_gateway);
+        add_test_func("/route/via", test_via);
     }
 
     if (nmtstp_is_root_test()) {

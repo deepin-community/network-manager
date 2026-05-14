@@ -77,7 +77,7 @@ nm_wireguard_peer_new(void)
     NMWireGuardPeer *self;
 
     self  = g_slice_new(NMWireGuardPeer);
-    *self = (NMWireGuardPeer){
+    *self = (NMWireGuardPeer) {
         .refcount            = 1,
         .preshared_key_flags = NM_SETTING_SECRET_FLAG_NOT_REQUIRED,
     };
@@ -104,7 +104,7 @@ nm_wireguard_peer_new_clone(const NMWireGuardPeer *self, gboolean with_secrets)
     g_return_val_if_fail(NM_IS_WIREGUARD_PEER(self, TRUE), NULL);
 
     new  = g_slice_new(NMWireGuardPeer);
-    *new = (NMWireGuardPeer){
+    *new = (NMWireGuardPeer) {
         .refcount             = 1,
         .public_key           = g_strdup(self->public_key),
         .public_key_valid     = self->public_key_valid,
@@ -311,10 +311,9 @@ _nm_wireguard_peer_set_public_key_bin(NMWireGuardPeer *self,
 {
     g_return_if_fail(NM_IS_WIREGUARD_PEER(self, FALSE));
 
-    nm_clear_g_free(&self->public_key);
+    nm_assert(public_key);
 
-    if (!public_key)
-        return;
+    nm_clear_g_free(&self->public_key);
 
     self->public_key       = g_base64_encode(public_key, NM_WIREGUARD_PUBLIC_KEY_LEN);
     self->public_key_valid = TRUE;
@@ -1311,14 +1310,14 @@ _peers_set(NMSettingWireGuardPrivate *priv,
     if (!pd_same_key)
         pd_same_key = g_slice_new(PeerData);
 
-    *pd_same_key = (PeerData){
+    *pd_same_key = (PeerData) {
         .peer       = peer,
         .public_key = public_key,
         .idx        = priv->peers_arr->len,
     };
 
     g_ptr_array_add(priv->peers_arr, pd_same_key);
-    if (!nm_g_hash_table_add(priv->peers_hash, pd_same_key))
+    if (!g_hash_table_add(priv->peers_hash, pd_same_key))
         nm_assert_not_reached();
 
     nm_assert(_peers_get(priv, pd_same_key->idx) == pd_same_key);
@@ -1478,6 +1477,7 @@ peers_to_dbus(_NM_SETT_INFO_PROP_TO_DBUS_FCN_ARGS _nm_nil)
     for (i_peer = 0; i_peer < n_peers; i_peer++) {
         const NMWireGuardPeer *peer = _peers_get(priv, i_peer)->peer;
         GVariantBuilder        builder;
+        gboolean               has_secrets = FALSE;
 
         if (!peer->public_key)
             continue;
@@ -1497,11 +1497,13 @@ peers_to_dbus(_NM_SETT_INFO_PROP_TO_DBUS_FCN_ARGS _nm_nil)
                 g_variant_new_string(nm_sock_addr_endpoint_get_endpoint(peer->endpoint)));
 
         if (_nm_connection_serialize_secrets(flags, peer->preshared_key_flags)
-            && peer->preshared_key)
+            && peer->preshared_key) {
             g_variant_builder_add(&builder,
                                   "{sv}",
                                   NM_WIREGUARD_PEER_ATTR_PRESHARED_KEY,
                                   g_variant_new_string(peer->preshared_key));
+            has_secrets = TRUE;
+        }
 
         if (_nm_connection_serialize_non_secret(flags)
             && peer->preshared_key_flags != NM_SETTING_SECRET_FLAG_NOT_REQUIRED)
@@ -1545,6 +1547,20 @@ peers_to_dbus(_NM_SETT_INFO_PROP_TO_DBUS_FCN_ARGS _nm_nil)
                                   "{sv}",
                                   NM_WIREGUARD_PEER_ATTR_ALLOWED_IPS,
                                   g_variant_new_strv(strv, peer->allowed_ips->len));
+        }
+
+        if (NM_FLAGS_ANY(flags,
+                         NM_CONNECTION_SERIALIZE_ONLY_SECRETS
+                             | NM_CONNECTION_SERIALIZE_WITH_SECRETS_AGENT_OWNED
+                             | NM_CONNECTION_SERIALIZE_WITH_SECRETS_SYSTEM_OWNED
+                             | NM_CONNECTION_SERIALIZE_WITH_SECRETS_NOT_SAVED)
+            && !_nm_connection_serialize_non_secret(flags)) {
+            /* The flags indicate that only secrets must be serialized and this
+             * peer doesn't contain any. Skip the peer. */
+            if (!has_secrets) {
+                g_variant_builder_clear(&builder);
+                continue;
+            }
         }
 
         if (!any_peers) {
@@ -2362,8 +2378,8 @@ nm_setting_wireguard_class_init(NMSettingWireGuardClass *klass)
                                               NM_SETTING_PARAM_SECRET,
                                               NMSettingWireGuard,
                                               _priv.private_key,
-                                              .direct_hook.set_string_fcn =
-                                                  _set_string_fcn_public_key);
+                                              .direct_data.set_string = _set_string_fcn_public_key,
+                                              .direct_string_allow_empty = TRUE);
 
     /**
      * NMSettingWireGuard:private-key-flags:
@@ -2516,6 +2532,73 @@ nm_setting_wireguard_class_init(NMSettingWireGuardClass *klass)
                                                     NMSettingWireGuard,
                                                     _priv.ip6_auto_default_route);
 
+    /* ---nmcli---
+     * property: peers
+     * format: a comma-separated list of WireGuard peers
+     * description:
+     *  A comma-separated list of WireGuard peers. Each peer has the following syntax:
+     *
+     *   PUBLIC_KEY [ATTRIBUTE=VALUE [ATTRIBUTE=VALUE]...]
+     *
+     *   The supported attributes are: endpoint, allowed-ips, persistent-keepalive,
+     *   preshared-key, preshared-key-flags.
+     * description-docbook:
+     *   <para>
+     *   A comma-separated list of WireGuard peers. Each peer has the following syntax:
+     *   </para>
+     *   <para>
+     *   <literal>
+     *   <replaceable>public-key</replaceable>
+     *   [<replaceable>attribute</replaceable>=<replaceable>value</replaceable>
+     *   [<replaceable>attribute</replaceable>=<replaceable>value</replaceable>]...]
+     *   </literal>
+     *   </para>
+     *   <para>
+     *   The public key is required and must be encoded as base64; it can be
+     *   calculated by running <command>wg pubkey</command> on the private key,
+     *   and it is usually transmitted out of band to the author of the configuration
+     *   file.
+     *   </para>
+     *   <para>
+     *   The supported attributes are:
+     *   <variablelist>
+     *     <varlistentry>
+     *       <term><varname>endpoint</varname></term>
+     *       <listitem><para>An endpoint IP or hostname, followed by a colon, and then
+     *       a port number.</para></listitem>
+     *     </varlistentry>
+     *
+     *     <varlistentry>
+     *       <term><varname></varname></term>
+     *       <listitem><para></para></listitem>
+     *     </varlistentry>
+     *     <varlistentry>
+     *       <term><varname>allowed-ips</varname></term>
+     *       <listitem><para>A semicolon-separated list of IP (v4 or v6) addresses
+     *       with CIDR masks from which incoming traffic for this peer is allowed
+     *       and to which outgoing traffic for this peer is directed
+     *       </para></listitem>
+     *     </varlistentry>
+     *     <varlistentry>
+     *       <term><varname>persistent-keepalive</varname></term>
+     *       <listitem><para>An interval in seconds, between 1 and 65535, of
+     *       how often to send an authenticated empty packet to the peer for the
+     *       purpose of keeping a stateful firewall or NAT mapping valid persistently.
+     *       </para></listitem>
+     *     </varlistentry>
+     *     <varlistentry>
+     *       <term><varname>preshared-key</varname></term>
+     *       <listitem><para>A base64 preshared key generated by "wg genpsk". Optional,
+     *       and may be omitted.</para></listitem>
+     *     </varlistentry>
+     *     <varlistentry>
+     *       <term><varname>preshared-key-flags</varname></term>
+     *       <listitem><para>The secret flags for the preshared-key.</para></listitem>
+     *     </varlistentry>
+     *   </variablelist>
+     *   </para>
+     * ---end---
+     */
     /* ---dbus---
      * property: peers
      * format: array of 'a{sv}'

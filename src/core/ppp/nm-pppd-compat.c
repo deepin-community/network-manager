@@ -91,7 +91,7 @@ G_STATIC_ASSERT((gint64) NM_PPP_STATUS_RUNNING == PHASE_RUNNING);
 G_STATIC_ASSERT((gint64) NM_PPP_STATUS_TERMINATE == PHASE_TERMINATE);
 G_STATIC_ASSERT((gint64) NM_PPP_STATUS_DISCONNECT == PHASE_DISCONNECT);
 G_STATIC_ASSERT((gint64) NM_PPP_STATUS_HOLDOFF == PHASE_HOLDOFF);
-G_STATIC_ASSERT((gint64) NM_PPP_STATUS_MASTER == PHASE_MASTER);
+G_STATIC_ASSERT((gint64) NM_PPP_STATUS_CONTROLLER == PHASE_MASTER);
 
 G_STATIC_ASSERT(NM_PPPD_COMPAT_MAXNAMELEN == MAXNAMELEN);
 G_STATIC_ASSERT(NM_PPPD_COMPAT_MAXSECRETLEN == MAXSECRETLEN);
@@ -164,14 +164,14 @@ nm_pppd_compat_get_ipcp_options(NMPppdCompatIPCPOptions *out_got, NMPppdCompatIP
     nm_assert(out_got);
     nm_assert(out_his);
 
-    *out_got = (NMPppdCompatIPCPOptions){
+    *out_got = (NMPppdCompatIPCPOptions) {
         .ouraddr  = got->ouraddr,
         .hisaddr  = got->hisaddr,
         .dnsaddr  = {got->dnsaddr[0], got->dnsaddr[1]},
         .winsaddr = {got->winsaddr[0], got->winsaddr[1]},
     };
 
-    *out_his = (NMPppdCompatIPCPOptions){
+    *out_his = (NMPppdCompatIPCPOptions) {
         .ouraddr  = his->ouraddr,
         .hisaddr  = his->hisaddr,
         .dnsaddr  = {his->dnsaddr[0], his->dnsaddr[1]},
@@ -191,11 +191,11 @@ nm_pppd_compat_get_ipv6cp_options(NMPppdCompatIPV6CPOptions *out_got,
     nm_assert(out_got);
     nm_assert(out_his);
 
-    *out_got = (NMPppdCompatIPV6CPOptions){};
+    *out_got = (NMPppdCompatIPV6CPOptions) {};
     memcpy(&out_got->ourid, &got->ourid, sizeof(guint64));
     memcpy(&out_got->hisid, &got->hisid, sizeof(guint64));
 
-    *out_his = (NMPppdCompatIPV6CPOptions){};
+    *out_his = (NMPppdCompatIPV6CPOptions) {};
     memcpy(&out_his->ourid, &his->ourid, sizeof(guint64));
     memcpy(&out_his->hisid, &his->hisid, sizeof(guint64));
 }

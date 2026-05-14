@@ -18,6 +18,7 @@
 #include <linux/if_ether.h>
 #include <linux/if_infiniband.h>
 
+#include "libnm-glib-aux/nm-keyfile-aux.h"
 #include "libnm-glib-aux/nm-uuid.h"
 #include "libnm-glib-aux/nm-str-buf.h"
 #include "libnm-glib-aux/nm-secret-utils.h"
@@ -132,7 +133,7 @@ _nm_printf(5, 6) static void _read_handle_warn(KeyfileReaderInfo    *info,
                                      info,
                                      kf_key,
                                      cur_property);
-    handler_data.warn = (NMKeyfileHandlerDataWarn){
+    handler_data.warn = (NMKeyfileHandlerDataWarn) {
         .severity = severity,
         .message  = NULL,
         .fmt      = fmt,
@@ -186,7 +187,7 @@ _nm_printf(6, 7) static void _write_handle_warn(KeyfileWriterInfo    *info,
                                       cur_property,
                                       setting,
                                       kf_key);
-    handler_data.warn = (NMKeyfileHandlerDataWarn){
+    handler_data.warn = (NMKeyfileHandlerDataWarn) {
         .severity = severity,
         .message  = NULL,
         .fmt      = fmt,
@@ -233,7 +234,7 @@ _secret_flags_persist_secret(NMSettingSecretFlags flags)
 /*****************************************************************************/
 /* Some setting properties also contain setting names, such as
  * NMSettingConnection's 'type' property (which specifies the base type of the
- * connection, e.g. ethernet or wifi) or 'slave-type' (specifies type of slave
+ * connection, e.g. ethernet or wifi) or 'port-type' (specifies type of port
  * connection, e.g. bond or bridge). This function handles translating those
  * properties' values to the real setting name if they are an alias.
  */
@@ -915,7 +916,7 @@ _build_list_create(GKeyFile     *keyfile,
         if (G_UNLIKELY(!build_list))
             build_list = g_new(BuildListData, n_keys - i_keys);
 
-        build_list[build_list_len++] = (BuildListData){
+        build_list[build_list_len++] = (BuildListData) {
             .s_key    = s_key,
             .key_idx  = key_idx,
             .key_type = key_type,
@@ -936,6 +937,31 @@ _build_list_create(GKeyFile     *keyfile,
     *out_build_list_len = build_list_len;
     *out_keys_strv      = g_steal_pointer(&keys);
     return g_steal_pointer(&build_list);
+}
+
+static void
+gateway_parser(KeyfileReaderInfo *info, NMSetting *setting, const char *key)
+{
+    const char   *setting_name = nm_setting_get_name(setting);
+    gs_free char *gateway      = NULL;
+    const char   *old_gateway;
+
+    gateway = nm_keyfile_plugin_kf_get_string(info->keyfile, setting_name, key, NULL);
+    if (!gateway)
+        return;
+
+    old_gateway = nm_setting_ip_config_get_gateway(NM_SETTING_IP_CONFIG(setting));
+    if (old_gateway && !nm_streq0(gateway, old_gateway)) {
+        read_handle_warn(info,
+                         key,
+                         NM_SETTING_IP_CONFIG_GATEWAY,
+                         NM_KEYFILE_WARN_SEVERITY_WARN,
+                         _("ignoring gateway \"%s\" from \"address*\" keys because the "
+                           "\"gateway\" key is set"),
+                         old_gateway);
+    }
+
+    g_object_set(setting, NM_SETTING_IP_CONFIG_GATEWAY, gateway, NULL);
 }
 
 static void
@@ -1132,14 +1158,17 @@ ip_dns_parser(KeyfileReaderInfo *info, NMSetting *setting, const char *key)
     addr_family = NM_SETTING_IP_CONFIG_GET_ADDR_FAMILY(setting);
 
     for (i = 0, n = 0; i < length; i++) {
-        if (!nm_utils_dnsname_parse(addr_family, list[i], NULL, NULL, NULL)) {
+        gs_free_error GError *error = NULL;
+
+        if (!nm_dns_uri_parse(addr_family, list[i], NULL, &error)) {
             if (!read_handle_warn(info,
                                   key,
                                   key,
                                   NM_KEYFILE_WARN_SEVERITY_WARN,
-                                  _("ignoring invalid DNS server IPv%c address '%s'"),
+                                  _("ignoring invalid DNS server IPv%c address '%s': %s"),
                                   nm_utils_addr_family_to_char(addr_family),
-                                  list[i])) {
+                                  list[i],
+                                  error->message)) {
                 do {
                     nm_clear_g_free(&list[i]);
                 } while (++i < length);
@@ -1152,6 +1181,46 @@ ip_dns_parser(KeyfileReaderInfo *info, NMSetting *setting, const char *key)
         if (n != i)
             list[n] = g_steal_pointer(&list[i]);
         n++;
+    }
+
+    g_object_set(setting, key, list, NULL);
+}
+
+static void
+ip_dns_search_parser(KeyfileReaderInfo *info, NMSetting *setting, const char *key)
+{
+    gs_strfreev char **list = NULL;
+    gsize              length;
+
+    nm_assert(NM_IS_SETTING_IP4_CONFIG(setting) || NM_IS_SETTING_IP6_CONFIG(setting));
+
+    list = nm_keyfile_plugin_kf_get_string_list(info->keyfile,
+                                                nm_setting_get_name(setting),
+                                                key,
+                                                &length,
+                                                NULL);
+    nm_assert(length == NM_PTRARRAY_LEN(list));
+    if (length == 0)
+        return;
+
+    if (length == 1 && strpbrk(list[0], ", ")) {
+        /* By mistake, we accepted invalid characters like ',' in DNS search domains.
+         * Now we do some validation that would cause the connection to be rejected by
+         * the daemon. Let's continue accepting ',' and ' ' as separators but emit a
+         * warning */
+        char **list2;
+
+        read_handle_warn(info,
+                         key,
+                         key,
+                         NM_KEYFILE_WARN_SEVERITY_WARN,
+                         _("normalizing invalid separator ',' or ' ' in DNS search value '%s', "
+                           "only ';' will be valid separators in keyfiles in the future"),
+                         list[0]);
+
+        list2 = g_strsplit_set(list[0], ", ", -1);
+        g_strfreev(list);
+        list = list2;
     }
 
     g_object_set(setting, key, list, NULL);
@@ -1219,9 +1288,14 @@ mac_address_parser(KeyfileReaderInfo *info,
 
     tmp_string = nm_keyfile_plugin_kf_get_string(info->keyfile, setting_name, key, NULL);
 
-    if (cloned_mac_addr && NM_CLONED_MAC_IS_SPECIAL(tmp_string)) {
-        mac_str = tmp_string;
-        goto out;
+    if (cloned_mac_addr) {
+        gboolean is_wifi;
+
+        is_wifi = NM_IS_SETTING_WIRELESS(setting);
+        if (NM_CLONED_MAC_IS_SPECIAL(tmp_string, is_wifi)) {
+            mac_str = tmp_string;
+            goto out;
+        }
     }
 
     if (tmp_string && nm_utils_hwaddr_aton(tmp_string, addr_bin, addr_len))
@@ -1653,7 +1727,7 @@ nm_keyfile_detect_unqualified_path_scheme(const char   *base_dir,
         const char *const _bin     = (bin);                             \
         const gsize       _bin_len = (bin_len);                         \
                                                                         \
-        nm_assert(_bin &&_bin_len > 0);                                 \
+        nm_assert(_bin && _bin_len > 0);                                \
                                                                         \
         (_bin_len > NM_STRLEN(scheme) + 1 && _bin[_bin_len - 1] == '\0' \
          && memcmp(_bin, scheme, NM_STRLEN(scheme)) == 0);              \
@@ -2258,11 +2332,7 @@ ip6_addr_gen_mode_writer(KeyfileWriterInfo *info,
 }
 
 static void
-write_ip_values(GKeyFile   *file,
-                const char *setting_name,
-                GPtrArray  *array,
-                const char *gateway,
-                gboolean    is_route)
+write_ip_values(GKeyFile *file, const char *setting_name, GPtrArray *array, gboolean is_route)
 {
     if (array->len > 0) {
         nm_auto_str_buf NMStrBuf output = NM_STR_BUF_INIT(2 * INET_ADDRSTRLEN + 10, FALSE);
@@ -2295,7 +2365,7 @@ write_ip_values(GKeyFile   *file,
 
                 addr = nm_ip_address_get_address(address);
                 plen = nm_ip_address_get_prefix(address);
-                gw   = (i == 0) ? gateway : NULL;
+                gw   = NULL;
             }
 
             nm_str_buf_set_size(&output, 0, FALSE, FALSE);
@@ -2346,11 +2416,10 @@ addr_writer(KeyfileWriterInfo *info, NMSetting *setting, const char *key, const 
 {
     GPtrArray  *array;
     const char *setting_name = nm_setting_get_name(setting);
-    const char *gateway      = nm_setting_ip_config_get_gateway(NM_SETTING_IP_CONFIG(setting));
 
     array = (GPtrArray *) g_value_get_boxed(value);
     if (array && array->len)
-        write_ip_values(info->keyfile, setting_name, array, gateway, FALSE);
+        write_ip_values(info->keyfile, setting_name, array, FALSE);
 }
 
 static void
@@ -2361,7 +2430,7 @@ route_writer(KeyfileWriterInfo *info, NMSetting *setting, const char *key, const
 
     array = (GPtrArray *) g_value_get_boxed(value);
     if (array && array->len)
-        write_ip_values(info->keyfile, setting_name, array, NULL, TRUE);
+        write_ip_values(info->keyfile, setting_name, array, TRUE);
 }
 
 static void
@@ -2477,7 +2546,7 @@ wired_s390_options_writer_full(KeyfileWriterInfo        *info,
         /* groups in the keyfile are ordered. When we are about to add [ethernet-s390-options],
          * we want to also have an [ethernet] group, first. */
 
-        nm_keyfile_add_group(info->keyfile, setting_alias ?: NM_SETTING_WIRED_SETTING_NAME);
+        nm_key_file_add_group(info->keyfile, setting_alias ?: NM_SETTING_WIRED_SETTING_NAME);
     }
 
     for (i = 0; i < n; i++) {
@@ -2877,7 +2946,7 @@ cert_writer(KeyfileWriterInfo *info, NMSetting *setting, const char *key, const 
                                           vtable->setting_key,
                                           setting,
                                           key);
-        handler_data.write_cert = (NMKeyfileHandlerDataWriteCert){
+        handler_data.write_cert = (NMKeyfileHandlerDataWriteCert) {
             .vtable = vtable,
         };
 
@@ -2939,11 +3008,11 @@ struct _ParseInfoProperty {
 };
 
 #define PARSE_INFO_PROPERTY(_property_name, ...) \
-    (&((const ParseInfoProperty){.property_name = _property_name, __VA_ARGS__}))
+    (&((const ParseInfoProperty) {.property_name = _property_name, __VA_ARGS__}))
 
-#define PARSE_INFO_PROPERTIES(...)                     \
-    .properties = ((const ParseInfoProperty *const[]){ \
-        __VA_ARGS__ NULL,                              \
+#define PARSE_INFO_PROPERTIES(...)                      \
+    .properties = ((const ParseInfoProperty *const[]) { \
+        __VA_ARGS__ NULL,                               \
     })
 
 typedef struct {
@@ -2951,7 +3020,7 @@ typedef struct {
 } ParseInfoSetting;
 
 #define PARSE_INFO_SETTING(setting_type, ...) \
-    [setting_type] = (&((const ParseInfoSetting){__VA_ARGS__}))
+    [setting_type] = (&((const ParseInfoSetting) {__VA_ARGS__}))
 
 static const ParseInfoSetting *const parse_infos[_NM_META_SETTING_TYPE_NUM] = {
     PARSE_INFO_SETTING(
@@ -3055,7 +3124,8 @@ static const ParseInfoSetting *const parse_infos[_NM_META_SETTING_TYPE_NUM] = {
                                 .parser              = ip_dns_parser,
                                 .writer              = dns_writer, ),
             PARSE_INFO_PROPERTY(NM_SETTING_IP_CONFIG_DNS_OPTIONS, .always_write = TRUE, ),
-            PARSE_INFO_PROPERTY(NM_SETTING_IP_CONFIG_GATEWAY, .writer_skip = TRUE, ),
+            PARSE_INFO_PROPERTY(NM_SETTING_IP_CONFIG_DNS_SEARCH, .parser = ip_dns_search_parser, ),
+            PARSE_INFO_PROPERTY(NM_SETTING_IP_CONFIG_GATEWAY, .parser = gateway_parser, ),
             PARSE_INFO_PROPERTY(NM_SETTING_IP_CONFIG_ROUTES,
                                 .parser_no_check_key = TRUE,
                                 .parser              = ip_address_or_route_parser,
@@ -3083,7 +3153,8 @@ static const ParseInfoSetting *const parse_infos[_NM_META_SETTING_TYPE_NUM] = {
                                 .parser              = ip_dns_parser,
                                 .writer              = dns_writer, ),
             PARSE_INFO_PROPERTY(NM_SETTING_IP_CONFIG_DNS_OPTIONS, .always_write = TRUE, ),
-            PARSE_INFO_PROPERTY(NM_SETTING_IP_CONFIG_GATEWAY, .writer_skip = TRUE, ),
+            PARSE_INFO_PROPERTY(NM_SETTING_IP_CONFIG_DNS_SEARCH, .parser = ip_dns_search_parser, ),
+            PARSE_INFO_PROPERTY(NM_SETTING_IP_CONFIG_GATEWAY, .parser = gateway_parser, ),
             PARSE_INFO_PROPERTY(NM_SETTING_IP_CONFIG_ROUTES,
                                 .parser_no_check_key = TRUE,
                                 .parser              = ip_address_or_route_parser,
@@ -3544,6 +3615,62 @@ read_one_setting_value(KeyfileReaderInfo        *info,
 }
 
 static void
+_read_handle_renamed_properties(KeyfileReaderInfo *info)
+{
+    GKeyFile             *kf    = info->keyfile;
+    const char           *group = info->group;
+    gs_free_error GError *error = NULL;
+
+    if (NM_IN_STRSET(group, "ipv4", "ipv6")) {
+        /* dhcp-send-hostname is stored as dhcp-send-hostname-deprecated
+         * dhcp-send-hostname-v2 is stored as dhcp-send-hostname
+         * Do the conversion back. Also, accept boolean values for -v2 to
+         * maintain backwards compatibility with keyfiles written with the
+         * deprecated property in mind
+         */
+        if (g_key_file_has_key(kf, group, "dhcp-send-hostname", NULL)) {
+            gboolean val_bool;
+            int      val;
+
+            val = g_key_file_get_integer(kf, group, "dhcp-send-hostname", &error);
+            if (error) {
+                g_clear_error(&error);
+                val_bool = g_key_file_get_boolean(kf, group, "dhcp-send-hostname", &error);
+                if (!error)
+                    val = val_bool ? 1 : 0;
+                else
+                    read_handle_warn(info,
+                                     NULL,
+                                     NULL,
+                                     NM_KEYFILE_WARN_SEVERITY_WARN,
+                                     _("invalid value for '%s.dhcp-send-hostname'"),
+                                     info->group);
+            }
+
+            g_key_file_remove_key(kf, group, "dhcp-send-hostname", NULL);
+            if (!error)
+                g_key_file_set_integer(kf, group, "dhcp-send-hostname-v2", val);
+        }
+
+        if (g_key_file_has_key(kf, group, "dhcp-send-hostname-deprecated", NULL)) {
+            gs_free char *val = NULL;
+
+            val = g_key_file_get_value(kf, group, "dhcp-send-hostname-deprecated", NULL);
+            g_key_file_remove_key(kf, group, "dhcp-send-hostname-deprecated", NULL);
+            if (val)
+                g_key_file_set_value(kf, group, "dhcp-send-hostname", val);
+            else
+                read_handle_warn(info,
+                                 NULL,
+                                 NULL,
+                                 NM_KEYFILE_WARN_SEVERITY_WARN,
+                                 _("invalid value for '%s.dhcp-send-hostname-deprecated'"),
+                                 info->group);
+        }
+    }
+}
+
+static void
 _read_setting(KeyfileReaderInfo *info)
 {
     const NMSettInfoSetting   *sett_info;
@@ -3570,6 +3697,8 @@ _read_setting(KeyfileReaderInfo *info)
     setting = g_object_new(type, NULL);
 
     info->setting = setting;
+
+    _read_handle_renamed_properties(info);
 
     sett_info = _nm_setting_class_get_sett_info(NM_SETTING_GET_CLASS(setting));
 
@@ -3945,7 +4074,7 @@ nm_keyfile_read(GKeyFile             *keyfile,
 
     connection = nm_simple_connection_new();
 
-    info = (KeyfileReaderInfo){
+    info = (KeyfileReaderInfo) {
         .connection   = connection,
         .keyfile      = keyfile,
         .base_dir     = base_dir,
@@ -4069,10 +4198,32 @@ write_setting_value(KeyfileWriterInfo        *info,
             return;
     }
 
-    value = (GValue){0};
+    /* Don't write offensive terms that are already deprecated as the new inclusive terms
+     * are being written.
+     */
+    if (NM_IN_STRSET(key,
+                     NM_SETTING_CONNECTION_AUTOCONNECT_SLAVES,
+                     NM_SETTING_CONNECTION_MASTER,
+                     NM_SETTING_CONNECTION_SLAVE_TYPE,
+                     NM_SETTING_WIRED_MAC_ADDRESS_BLACKLIST))
+        return;
+
+    value = (GValue) {0};
 
     g_value_init(&value, G_PARAM_SPEC_VALUE_TYPE(property_info->param_spec));
     g_object_get_property(G_OBJECT(setting), property_info->param_spec->name, &value);
+
+    /* To prevent any confusion from the user regarding the v2 suffix,
+     * dhcp-send-hostname is stored as dhcp-send-hostname-deprecated
+     * and dhcp-send-hostname-v2 is stored as dhcp-send-hostname
+     * in the keyfile.
+     */
+    if (NM_IS_SETTING_IP4_CONFIG(setting) || NM_IS_SETTING_IP6_CONFIG(setting)) {
+        if (nm_streq(key, NM_SETTING_IP_CONFIG_DHCP_SEND_HOSTNAME_V2))
+            key = "dhcp-send-hostname";
+        else if (nm_streq(key, NM_SETTING_IP_CONFIG_DHCP_SEND_HOSTNAME))
+            key = "dhcp-send-hostname-deprecated";
+    }
 
     if ((!pip || !pip->writer_persist_default)
         && g_param_value_defaults(property_info->param_spec, &value)) {
@@ -4289,7 +4440,7 @@ nm_keyfile_write(NMConnection         *connection,
 
     keyfile = g_key_file_new();
 
-    info = (KeyfileWriterInfo){
+    info = (KeyfileWriterInfo) {
         .connection    = connection,
         .keyfile       = keyfile,
         .error         = NULL,
@@ -4370,7 +4521,7 @@ nm_keyfile_write(NMConnection         *connection,
             || g_key_file_has_group(info.keyfile, setting_name)) {
             /* we have a section for the setting. Nothing to do. */
         } else {
-            nm_keyfile_add_group(info.keyfile, setting_alias ?: setting_name);
+            nm_key_file_add_group(info.keyfile, setting_alias ?: setting_name);
         }
 
         if (NM_IS_SETTING_WIREGUARD(setting)) {

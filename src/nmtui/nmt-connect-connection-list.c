@@ -95,7 +95,9 @@ static const char *device_sort_order[]   = {"NMDeviceEthernet",
                                             "NMDeviceVeth",
                                             "NMDeviceInfiniband",
                                             "NMDeviceWifi",
+                                            "NMDeviceLoopback",
                                             NM_SETTING_VLAN_SETTING_NAME,
+                                            NM_SETTING_VETH_SETTING_NAME,
                                             NM_SETTING_BOND_SETTING_NAME,
                                             NM_SETTING_TEAM_SETTING_NAME,
                                             NM_SETTING_BRIDGE_SETTING_NAME,
@@ -184,7 +186,7 @@ add_connections_for_device(NmtConnectDevice *nmtdev, const GPtrArray *connection
         NMSettingConnection *s_con;
 
         s_con = nm_connection_get_setting_connection(conn);
-        if (nm_setting_connection_get_master(s_con))
+        if (nm_setting_connection_get_controller(s_con))
             continue;
 
         if (nm_device_connection_valid(nmtdev->device, conn)) {
@@ -480,7 +482,7 @@ nmt_connect_connection_list_rebuild(NmtConnectConnectionList *list)
         for (citer = nmtdev->conns; citer; citer = citer->next) {
             nmtconn = citer->data;
 
-            max_width = MAX(max_width, nmt_newt_text_width(nmtconn->name));
+            max_width = NM_MAX(max_width, nmt_newt_text_width(nmtconn->name));
         }
     }
 

@@ -57,9 +57,11 @@ _test_fixup_string(const TestFixupData *data, guint n_data, char *(*func)(const 
     }
 }
 
-#define T_DATA(_desc, _expected)                                \
-    {                                                           \
-        .desc = _desc, .expected = _expected, .line = __LINE__, \
+#define T_DATA(_desc, _expected) \
+    {                            \
+        .desc     = _desc,       \
+        .expected = _expected,   \
+        .line     = __LINE__,    \
     }
 
 static void
@@ -2283,7 +2285,7 @@ typedef struct {
     const char *val;
 } ReadVpnDetailData;
 
-#define READ_VPN_DETAIL_DATA(...) ((ReadVpnDetailData[]){__VA_ARGS__})
+#define READ_VPN_DETAIL_DATA(...) ((ReadVpnDetailData[]) {__VA_ARGS__})
 
 static gboolean
 _do_read_vpn_details_impl1(const char              *file,
@@ -2397,10 +2399,10 @@ _do_read_vpn_details_impl1(const char              *file,
 
         g_print(">>>> n_read=%zd;  \"%s\"",
                 n_read,
-                n_read > 0 ? (
-                    ss = nm_utils_buf_utf8safe_escape_cp(read_buf,
-                                                         n_read,
-                                                         NM_UTILS_STR_UTF8_SAFE_FLAG_ESCAPE_CTRL))
+                n_read > 0 ? (ss = nm_utils_buf_utf8safe_escape_cp(
+                                  read_buf,
+                                  n_read,
+                                  NM_UTILS_STR_UTF8_SAFE_FLAG_ESCAPE_CTRL))
                            : "");
     }
 
@@ -2688,8 +2690,10 @@ test_types(void)
         G(nm_device_ethernet_get_type),
         G(nm_device_generic_get_type),
         G(nm_device_get_type),
+        G(nm_device_hsr_get_type),
         G(nm_device_infiniband_get_type),
         G(nm_device_ip_tunnel_get_type),
+        G(nm_device_ipvlan_get_type),
         G(nm_device_macsec_get_type),
         G(nm_device_macvlan_get_type),
         G(nm_device_modem_capabilities_get_type),
@@ -2752,6 +2756,8 @@ test_types(void)
         G(nm_setting_connection_lldp_get_type),
         G(nm_setting_connection_llmnr_get_type),
         G(nm_setting_connection_mdns_get_type),
+        G(nm_setting_connection_dns_over_tls_get_type),
+        G(nm_setting_connection_dnssec_get_type),
         G(nm_setting_dcb_flags_get_type),
         G(nm_setting_dcb_get_type),
         G(nm_setting_diff_result_get_type),
@@ -2760,6 +2766,7 @@ test_types(void)
         G(nm_setting_generic_get_type),
         G(nm_setting_get_type),
         G(nm_setting_gsm_get_type),
+        G(nm_setting_hsr_get_type),
         G(nm_setting_infiniband_get_type),
         G(nm_setting_ip4_config_get_type),
         G(nm_setting_ip6_config_addr_gen_mode_get_type),
@@ -2767,6 +2774,8 @@ test_types(void)
         G(nm_setting_ip6_config_privacy_get_type),
         G(nm_setting_ip_config_get_type),
         G(nm_setting_ip_tunnel_get_type),
+        G(nm_setting_ipvlan_get_type),
+        G(nm_setting_ipvlan_mode_get_type),
         G(nm_setting_mac_randomization_get_type),
         G(nm_setting_macsec_get_type),
         G(nm_setting_macsec_mode_get_type),
@@ -2997,8 +3006,13 @@ test_nml_dbus_meta(void)
                             g_assert(NM_IS_OBJECT_CLASS(p->klass));
                             g_assert(g_type_is_a(gtype, G_TYPE_FROM_CLASS(p->klass)));
                             if (ii == 0)
+                                /* If there is more than one NMLDBusPropertyO needed in the struct
+                                 * associated to the DBus object, they must be all in the same struct field
+                                 * as an array. This is later used on nm-object.c to perform operations on
+                                 * all the object properties at once. */
                                 g_assert(p->klass->property_o_info == p);
                             else
+                                /* Same check than above if branch but for NMLDBusPropertyAO. */
                                 g_assert(p->klass->property_ao_info == p);
                             g_assert_cmpint(p->klass->priv_ptr_offset, >, 0);
                             if (p_prev) {
@@ -3188,6 +3202,10 @@ check_dbus_properties:
                            && nm_streq(pspec->name, NM_DEVICE_WIREGUARD_FWMARK)) {
                     g_assert_cmpstr(obj_property_name, ==, "fw-mark");
                     expected_property_name = NM_DEVICE_WIREGUARD_FWMARK;
+                } else if (mif == &_nml_dbus_meta_iface_nm_device_iptunnel
+                           && nm_streq(pspec->name, NM_DEVICE_IP_TUNNEL_FWMARK)) {
+                    g_assert_cmpstr(obj_property_name, ==, "fw-mark");
+                    expected_property_name = NM_DEVICE_IP_TUNNEL_FWMARK;
                 } else if (NM_IN_SET(mif,
                                      &_nml_dbus_meta_iface_nm_ip4config,
                                      &_nml_dbus_meta_iface_nm_ip6config)
@@ -3378,6 +3396,11 @@ test_dbus_meta_types(void)
             NML_DBUS_META_INTERFACE_PRIO_INSTANTIATE_30,
         },
         {
+            NM_DBUS_INTERFACE_DEVICE_HSR,
+            NM_TYPE_DEVICE_HSR,
+            NML_DBUS_META_INTERFACE_PRIO_INSTANTIATE_30,
+        },
+        {
             NM_DBUS_INTERFACE_DEVICE_INFINIBAND,
             NM_TYPE_DEVICE_INFINIBAND,
             NML_DBUS_META_INTERFACE_PRIO_INSTANTIATE_30,
@@ -3385,6 +3408,11 @@ test_dbus_meta_types(void)
         {
             NM_DBUS_INTERFACE_DEVICE_IP_TUNNEL,
             NM_TYPE_DEVICE_IP_TUNNEL,
+            NML_DBUS_META_INTERFACE_PRIO_INSTANTIATE_30,
+        },
+        {
+            NM_DBUS_INTERFACE_DEVICE_IPVLAN,
+            NM_TYPE_DEVICE_IPVLAN,
             NML_DBUS_META_INTERFACE_PRIO_INSTANTIATE_30,
         },
         {

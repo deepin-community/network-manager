@@ -37,7 +37,7 @@ typedef enum _NMDedupMultiIdxMode {
 
 /*****************************************************************************/
 
-#define _NMDedupMultiObj_Align (MAX(_nm_alignof(void *), _nm_alignof(gint64)))
+#define _NMDedupMultiObj_Align (NM_MAX_CONST(_nm_alignof(void *), _nm_alignof(gint64)))
 
 struct _NMDedupMultiObj {
     union {
@@ -221,7 +221,7 @@ struct _NMDedupMultiHeadEntry {
 static inline gconstpointer
 nm_dedup_multi_entry_get_obj(const NMDedupMultiEntry *entry)
 {
-    /* convenience method that allows to skip the %NULL check on
+    /* convenience method that allows one to skip the %NULL check on
      * @entry. Think of the NULL-conditional operator ?. of C# */
     return entry ? entry->obj : NULL;
 }

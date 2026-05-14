@@ -226,6 +226,29 @@ static guint _get_seen_bssids(NMSettingsConnection *self,
 
 /*****************************************************************************/
 
+char *
+nm_settings_connection_persist_mode_to_string(NMSettingsConnectionPersistMode mode)
+{
+    switch (mode) {
+    case NM_SETTINGS_CONNECTION_PERSIST_MODE_IN_MEMORY:
+        return "in-memory";
+    case NM_SETTINGS_CONNECTION_PERSIST_MODE_IN_MEMORY_DETACHED:
+        return "in-memory-detached";
+    case NM_SETTINGS_CONNECTION_PERSIST_MODE_IN_MEMORY_ONLY:
+        return "in-memory-only";
+    case NM_SETTINGS_CONNECTION_PERSIST_MODE_KEEP:
+        return "keep";
+    case NM_SETTINGS_CONNECTION_PERSIST_MODE_NO_PERSIST:
+        return "no-persist";
+    case NM_SETTINGS_CONNECTION_PERSIST_MODE_TO_DISK:
+        return "to-disk";
+    }
+
+    return nm_assert_unreachable_val(NULL);
+}
+
+/*****************************************************************************/
+
 NMSettings *
 nm_settings_connection_get_settings(NMSettingsConnection *self)
 {
@@ -1698,7 +1721,7 @@ settings_connection_update(NMSettingsConnection  *self,
         goto error;
 
     info  = g_slice_new(UpdateInfo);
-    *info = (UpdateInfo){
+    *info = (UpdateInfo) {
         .is_update2   = is_update2,
         .context      = context,
         .agent_mgr    = g_object_ref(priv->agent_mgr),

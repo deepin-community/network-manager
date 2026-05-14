@@ -24,6 +24,8 @@
 
 #define NM_L3CFG_SIGNAL_NOTIFY "l3cfg-notify"
 
+#define NM_DNS_ROUTES_FWMARK_TABLE_PRIO 20053
+
 typedef enum _nm_packed {
     _NM_L3_ACD_DEFEND_TYPE_NONE,
     NM_L3_ACD_DEFEND_TYPE_NEVER,
@@ -34,8 +36,8 @@ typedef enum _nm_packed {
 /**
  * NML3CfgConfigFlags:
  * @NM_L3CFG_CONFIG_FLAGS_NONE: no flags, the default.
- * @NM_L3_CONFIG_MERGE_FLAGS_ONLY_FOR_ACD: if this merge flag is set,
- *   the the NML3ConfigData doesn't get merged and it's information won't be
+ * @NM_L3CFG_CONFIG_FLAGS_ONLY_FOR_ACD: if this flag is set,
+ *   the NML3ConfigData doesn't get merged and the information won't be
  *   synced. The only purpose is to run ACD on its IPv4 addresses, but
  *   regardless whether ACD succeeds/fails, the IP addresses won't be configured.
  *   The point is to run ACD first (without configuring it), and only
@@ -123,22 +125,17 @@ nm_l3_acd_addr_info_find_track_info(const NML3AcdAddrInfo *addr_info,
 }
 
 typedef enum {
-    /* emitted when the merged/commited NML3ConfigData instance changes.
+    NM_L3_CONFIG_NOTIFY_TYPE_ACD_EVENT,
+
+    /* Emitted before the merged l3cd is committed to platform.
      * Note that this gets emitted "under unsafe circumstances". That means,
      * you should not perform complex operations inside this callback,
      * and neither should you call into NML3Cfg again (reentrancy). */
-    NM_L3_CONFIG_NOTIFY_TYPE_L3CD_CHANGED,
-
-    NM_L3_CONFIG_NOTIFY_TYPE_ACD_EVENT,
-
-    /* emitted before the merged l3cd is committed to platform.
-     *
-     * This event also gets emitted "under unsafe circumstances".
-     * See NM_L3_CONFIG_NOTIFY_TYPE_L3CD_CHANGED. */
     NM_L3_CONFIG_NOTIFY_TYPE_PRE_COMMIT,
 
     /* emitted at the end of nm_l3cfg_platform_commit(). This signals also that
-     * nm_l3cfg_is_ready() might have switched to TRUE. */
+     * nm_l3cfg_is_ready() might have switched to TRUE. Also emitted
+     * "under unsafe circumstances". */
     NM_L3_CONFIG_NOTIFY_TYPE_POST_COMMIT,
 
     /* NML3Cfg hooks to the NMPlatform signals for link, addresses and routes.
@@ -168,8 +165,8 @@ typedef struct {
         struct {
             const NML3ConfigData *l3cd_old;
             const NML3ConfigData *l3cd_new;
-            bool                  commited;
-        } l3cd_changed;
+            bool                  l3cd_changed;
+        } commit;
 
         struct {
             NML3AcdAddrInfo info;
@@ -354,7 +351,7 @@ gboolean nm_l3cfg_remove_config_all_dirty(NML3Cfg *self, gconstpointer tag);
  * nm_l3cfg_commit_type_register(). nm_l3cfg_commit_on_idle_schedule() also
  * accepts a one-time commit-type argument.
  *
- * This is related to NMDevice's sys_iface_state, which we use to control whether
+ * This is related to NMDevice's managed_type, which we use to control whether
  * to touch/assume/manage the interface.
  *
  * The numeric values of the enum matters: higher number mean more "important".
@@ -440,6 +437,8 @@ const NML3ConfigData *nm_l3cfg_get_combined_l3cd(NML3Cfg *self, gboolean get_com
 
 const NMPObject *
 nm_l3cfg_get_best_default_route(NML3Cfg *self, int addr_family, gboolean get_commited);
+
+in_addr_t *nm_l3cfg_get_configured_ip4_addresses(NML3Cfg *self, gsize *out_len);
 
 /*****************************************************************************/
 

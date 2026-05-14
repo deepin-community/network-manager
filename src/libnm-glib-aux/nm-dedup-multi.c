@@ -54,7 +54,7 @@ nm_dedup_multi_idx_type_init(NMDedupMultiIdxType *idx_type, const NMDedupMultiId
     nm_assert(idx_type);
     nm_assert(klass);
 
-    *idx_type = (NMDedupMultiIdxType){
+    *idx_type = (NMDedupMultiIdxType) {
         .klass        = klass,
         .lst_idx_head = C_LIST_INIT(idx_type->lst_idx_head),
     };
@@ -149,7 +149,7 @@ _entry_unpack(const NMDedupMultiEntry    *entry,
     nm_assert(NM_IN_SET(*out_lookup_head, FALSE, TRUE));
     ASSERT_idx_type(*out_idx_type);
 
-    /* for lookup of the head, we allow to omit object, but only
+    /* for lookup of the head, we allow one to omit object, but only
      * if the idx_type does not partition the objects. Otherwise, we
      * require a obj to compare. */
     nm_assert(!*out_lookup_head || (*out_obj || !(*out_idx_type)->klass->idx_obj_partition_equal));
@@ -1005,7 +1005,7 @@ nm_dedup_multi_index_new(void)
     NMDedupMultiIndex *self;
 
     self  = g_slice_new(NMDedupMultiIndex);
-    *self = (NMDedupMultiIndex){
+    *self = (NMDedupMultiIndex) {
         .ref_count   = 1,
         .idx_entries = g_hash_table_new((GHashFunc) _dict_idx_entries_hash,
                                         (GEqualFunc) _dict_idx_entries_equal),

@@ -114,7 +114,7 @@ nm_ndisc_data_to_l3cd(NMDedupMultiIndex        *multi_idx,
     nm_auto_unref_l3cd_init NML3ConfigData *l3cd = NULL;
     guint32                                 ifa_flags;
     guint                                   i;
-    const gint32                            now_sec = nm_utils_get_monotonic_timestamp_sec();
+    const gint64                            now_msec = nm_utils_get_monotonic_timestamp_msec();
 
     l3cd = nm_l3_config_data_new(multi_idx, ifindex, NM_IP_CONFIG_SOURCE_NDISC);
 
@@ -130,16 +130,14 @@ nm_ndisc_data_to_l3cd(NMDedupMultiIndex        *multi_idx,
         const NMNDiscAddress *ndisc_addr = &rdata->addresses[i];
         NMPlatformIP6Address  a;
 
-        a = (NMPlatformIP6Address){
+        a = (NMPlatformIP6Address) {
             .ifindex   = ifindex,
             .address   = ndisc_addr->address,
             .plen      = 64,
-            .timestamp = now_sec,
-            .lifetime  = _nm_ndisc_lifetime_from_expiry(((gint64) now_sec) * 1000,
-                                                       ndisc_addr->expiry_msec,
-                                                       TRUE),
+            .timestamp = now_msec / 1000,
+            .lifetime  = _nm_ndisc_lifetime_from_expiry(now_msec, ndisc_addr->expiry_msec, TRUE),
             .preferred = _nm_ndisc_lifetime_from_expiry(
-                ((gint64) now_sec) * 1000,
+                now_msec,
                 NM_MIN(ndisc_addr->expiry_msec, ndisc_addr->expiry_preferred_msec),
                 TRUE),
             .addr_source = NM_IP_CONFIG_SOURCE_NDISC,
@@ -153,7 +151,7 @@ nm_ndisc_data_to_l3cd(NMDedupMultiIndex        *multi_idx,
         const NMNDiscRoute *ndisc_route = &rdata->routes[i];
         NMPlatformIP6Route  r;
 
-        r = (NMPlatformIP6Route){
+        r = (NMPlatformIP6Route) {
             .ifindex       = ifindex,
             .network       = ndisc_route->network,
             .plen          = ndisc_route->plen,
@@ -172,6 +170,9 @@ nm_ndisc_data_to_l3cd(NMDedupMultiIndex        *multi_idx,
     }
 
     if (rdata->gateways_n > 0) {
+        guint              metric_offset = 0;
+        NMIcmpv6RouterPref prev_pref     = NM_ICMPV6_ROUTER_PREF_INVALID;
+
         NMPlatformIP6Route r = {
             .rt_source     = NM_IP_CONFIG_SOURCE_NDISC,
             .ifindex       = ifindex,
@@ -182,6 +183,20 @@ nm_ndisc_data_to_l3cd(NMDedupMultiIndex        *multi_idx,
         };
 
         for (i = 0; i < rdata->gateways_n; i++) {
+            /* If we add multiple default routes with the same metric and
+             * different preferences, kernel merges them into a single ECMP
+             * route, with overall preference equal to the preference of the
+             * first route added. Therefore, the preference of individual routes
+             * is not respected.
+             * To avoid that, add routes with different metrics if they have
+             * different preferences, so that they are not merged together. Here
+             * the gateways are already ordered by increasing preference. */
+            if (i != 0 && rdata->gateways[i].preference != prev_pref) {
+                metric_offset++;
+            }
+
+            prev_pref = rdata->gateways[i].preference;
+            r.metric  = metric_offset;
             r.gateway = rdata->gateways[i].address;
             r.rt_pref = rdata->gateways[i].preference;
             nm_assert((NMIcmpv6RouterPref) r.rt_pref == rdata->gateways[i].preference);
@@ -190,10 +205,7 @@ nm_ndisc_data_to_l3cd(NMDedupMultiIndex        *multi_idx,
     }
 
     for (i = 0; i < rdata->dns_servers_n; i++) {
-        nm_l3_config_data_add_nameserver_detail(l3cd,
-                                                AF_INET6,
-                                                &rdata->dns_servers[i].address,
-                                                NULL);
+        nm_l3_config_data_add_nameserver_addr(l3cd, AF_INET6, &rdata->dns_servers[i].address);
     }
 
     for (i = 0; i < rdata->dns_domains_n; i++)
@@ -705,6 +717,7 @@ nm_ndisc_add_route(NMNDisc *ndisc, const NMNDiscRoute *new_item, gint64 now_msec
          * comparison is aborted, and both routes are added.
          */
         if (IN6_ARE_ADDR_EQUAL(&item->network, &new_item->network) && item->plen == new_item->plen
+            && IN6_ARE_ADDR_EQUAL(&item->gateway, &new_item->gateway)
             && item->on_link == new_item->on_link) {
             if (new_item->expiry_msec <= now_msec) {
                 g_array_remove_index(rdata->routes, i);
@@ -820,7 +833,7 @@ nm_ndisc_add_dns_domain(NMNDisc *ndisc, const NMNDiscDNSDomain *new_item, gint64
         return FALSE;
 
     item  = nm_g_array_append_new(rdata->dns_domains, NMNDiscDNSDomain);
-    *item = (NMNDiscDNSDomain){
+    *item = (NMNDiscDNSDomain) {
         .domain      = g_strdup(new_item->domain),
         .expiry_msec = new_item->expiry_msec,
     };
@@ -975,9 +988,8 @@ announce_router(NMNDisc *ndisc)
 
         /* Schedule next initial announcement retransmit. */
         priv->send_ra_id =
-            g_timeout_add_seconds(nm_random_u64_range_full(NM_NDISC_ROUTER_ADVERT_DELAY,
-                                                           NM_NDISC_ROUTER_ADVERT_INITIAL_INTERVAL,
-                                                           FALSE),
+            g_timeout_add_seconds(nm_random_u64_range(NM_NDISC_ROUTER_ADVERT_DELAY,
+                                                      NM_NDISC_ROUTER_ADVERT_INITIAL_INTERVAL),
                                   (GSourceFunc) announce_router,
                                   ndisc);
     } else {
@@ -1011,9 +1023,10 @@ announce_router_initial(NMNDisc *ndisc)
     /* Schedule the initial send rather early. Clamp the delay by minimal
      * delay and not the initial advert internal so that we start fast. */
     if (G_LIKELY(!priv->send_ra_id)) {
-        priv->send_ra_id = g_timeout_add_seconds(nm_random_u64_range(NM_NDISC_ROUTER_ADVERT_DELAY),
-                                                 (GSourceFunc) announce_router,
-                                                 ndisc);
+        priv->send_ra_id =
+            g_timeout_add_seconds(nm_random_u64_range(0, NM_NDISC_ROUTER_ADVERT_DELAY),
+                                  (GSourceFunc) announce_router,
+                                  ndisc);
     }
 }
 
@@ -1029,7 +1042,7 @@ announce_router_solicited(NMNDisc *ndisc)
         nm_clear_g_source(&priv->send_ra_id);
 
     if (!priv->send_ra_id) {
-        priv->send_ra_id = g_timeout_add(nm_random_u64_range(NM_NDISC_ROUTER_ADVERT_DELAY_MS),
+        priv->send_ra_id = g_timeout_add(nm_random_u64_range(0, NM_NDISC_ROUTER_ADVERT_DELAY_MS),
                                          (GSourceFunc) announce_router,
                                          ndisc);
     }
@@ -1074,7 +1087,7 @@ nm_ndisc_set_config(NMNDisc *ndisc, const NML3ConfigData *l3cd)
         if (!lifetime)
             continue;
 
-        a = (NMNDiscAddress){
+        a = (NMNDiscAddress) {
             .address     = addr->address,
             .expiry_msec = _nm_ndisc_lifetime_to_expiry(NM_NDISC_EXPIRY_BASE_TIMESTAMP, lifetime),
             .expiry_preferred_msec =
@@ -1090,14 +1103,14 @@ nm_ndisc_set_config(NMNDisc *ndisc, const NML3ConfigData *l3cd)
     if (l3cd)
         strvarr = nm_l3_config_data_get_nameservers(l3cd, AF_INET6, &len);
     for (i = 0; i < len; i++) {
-        struct in6_addr  a;
+        NMIPAddr         a;
         NMNDiscDNSServer n;
 
-        if (!nm_utils_dnsname_parse_assert(AF_INET6, strvarr[i], NULL, &a, NULL))
+        if (!nm_dns_uri_parse_plain(AF_INET6, strvarr[i], NULL, &a))
             continue;
 
-        n = (NMNDiscDNSServer){
-            .address     = a,
+        n = (NMNDiscDNSServer) {
+            .address     = a.addr6,
             .expiry_msec = _nm_ndisc_lifetime_to_expiry(NM_NDISC_EXPIRY_BASE_TIMESTAMP,
                                                         NM_NDISC_ROUTER_LIFETIME),
         };
@@ -1112,7 +1125,7 @@ nm_ndisc_set_config(NMNDisc *ndisc, const NML3ConfigData *l3cd)
     for (i = 0; i < len; i++) {
         NMNDiscDNSDomain n;
 
-        n = (NMNDiscDNSDomain){
+        n = (NMNDiscDNSDomain) {
             .domain      = (char *) strvarr[i],
             .expiry_msec = _nm_ndisc_lifetime_to_expiry(NM_NDISC_EXPIRY_BASE_TIMESTAMP,
                                                         NM_NDISC_ROUTER_LIFETIME),
@@ -1293,10 +1306,8 @@ nm_ndisc_dad_failed(NMNDisc *ndisc, GArray *addresses, gboolean emit_changed_sig
             NMNDiscAddress *item = &nm_g_array_index(rdata->addresses, NMNDiscAddress, j);
 
             if (IN6_ARE_ADDR_EQUAL(&item->address, addr)) {
-                char sbuf[NM_INET_ADDRSTRLEN];
-
-                _LOGI("DAD failed for discovered address %s", nm_inet6_ntop(addr, sbuf));
                 changed = TRUE;
+
                 if (!complete_address(ndisc, item)) {
                     g_array_remove_index(rdata->addresses, j);
                     continue;
@@ -1479,7 +1490,7 @@ clean_addresses(NMNDisc *ndisc, gint64 now_msec, NMNDiscConfigMap *changed, gint
         g_array_set_size(rdata->addresses, j);
     }
 
-    if (_array_set_size_max(rdata->gateways, priv->config.max_addresses))
+    if (_array_set_size_max(rdata->addresses, priv->config.max_addresses))
         *changed |= NM_NDISC_CONFIG_ADDRESSES;
 }
 
@@ -1819,7 +1830,7 @@ _config_init(NMNDiscConfig *config, const NMNDiscConfig *src)
     nm_assert(config);
     g_return_if_fail(src);
 
-    /* we only allow to set @config if it was cleared (or is not yet initialized). */
+    /* we only allow one to set @config if it was cleared (or is not yet initialized). */
     nm_assert(!config->l3cfg);
     nm_assert(!config->ifname);
     nm_assert(!config->network_id);
@@ -1857,6 +1868,7 @@ _config_init(NMNDiscConfig *config, const NMNDiscConfig *src)
     g_return_if_fail(
         NM_IN_SET(config->node_type, NM_NDISC_NODE_TYPE_HOST, NM_NDISC_NODE_TYPE_ROUTER));
     g_return_if_fail(NM_IN_SET(config->ip6_privacy,
+                               NM_SETTING_IP6_CONFIG_PRIVACY_UNKNOWN,
                                NM_SETTING_IP6_CONFIG_PRIVACY_DISABLED,
                                NM_SETTING_IP6_CONFIG_PRIVACY_PREFER_PUBLIC_ADDR,
                                NM_SETTING_IP6_CONFIG_PRIVACY_PREFER_TEMP_ADDR));

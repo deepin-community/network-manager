@@ -292,6 +292,7 @@ test_device_wifi_capabilities(void)
     _E(NM_WIFI_DEVICE_CAP_FREQ_VALID);
     _E(NM_WIFI_DEVICE_CAP_FREQ_2GHZ);
     _E(NM_WIFI_DEVICE_CAP_FREQ_5GHZ);
+    _E(NM_WIFI_DEVICE_CAP_FREQ_6GHZ);
     _E(NM_WIFI_DEVICE_CAP_MESH);
     _E(NM_WIFI_DEVICE_CAP_IBSS_RSN);
 #undef _E
@@ -556,6 +557,21 @@ test_nm_hash(void)
 #endif
 
     NM_STATIC_ASSERT_EXPR_VOID(NM_HASH_COMBINE_BOOLS(int, 1, 0, 1) == 5);
+
+    g_assert_cmpmem(NM_HASH_SEED_16(55, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15),
+                    16,
+                    ((guint8[16]) {55, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15}),
+                    16);
+
+    g_assert_cmpmem(NM_HASH_SEED_16_U64(1), 16, ((guint8[16]) {0, 0, 0, 0, 0, 0, 0, 1, 0}), 16);
+    g_assert_cmpmem(NM_HASH_SEED_16_U64(0x1234567890ABCDEFu),
+                    16,
+                    ((guint8[16]) {0x12, 0x34, 0x56, 0x78, 0x90, 0xAB, 0xCD, 0xEF, 0}),
+                    16);
+
+    g_assert_cmpint(c_siphash_hash(NM_HASH_SEED_16_U64(0x780E21E45489CC6Fu), (guint8 *) "foo", 3),
+                    ==,
+                    0XA5A41E5C1B4153BFu);
 }
 
 /*****************************************************************************/
@@ -1686,7 +1702,7 @@ static const NMDedupMultiObjClass dedup_obj_class = {
 };
 
 #define DEDUP_OBJ_INIT(val_val, other_other)              \
-    (&((DedupObj){                                        \
+    (&((DedupObj) {                                       \
         .parent =                                         \
             {                                             \
                 .klass      = &dedup_obj_class,           \
@@ -1888,7 +1904,7 @@ _dedup_entry_assert_all(const NMDedupMultiEntry *entry,
     }
 }
 #define _dedup_entry_assert_all(entry, expected_idx, ...) \
-    _dedup_entry_assert_all(entry, expected_idx, (const DedupObj *const[]){__VA_ARGS__, NULL})
+    _dedup_entry_assert_all(entry, expected_idx, (const DedupObj *const[]) {__VA_ARGS__, NULL})
 
 static void
 test_dedup_multi(void)
@@ -2627,7 +2643,7 @@ test_setting_gsm_apn_bad_chars(void)
 
     /* Make sure a valid APN works */
     g_object_set(s_gsm, NM_SETTING_GSM_APN, "foobar123.-baz", NULL);
-    g_assert(nm_setting_verify(NM_SETTING(s_gsm), NULL, NULL));
+    nmtst_assert_setting_verifies(s_gsm);
 
     /* Random invalid chars */
     g_object_set(s_gsm, NM_SETTING_GSM_APN, "@#%$@#%@#%", NULL);
@@ -2639,7 +2655,7 @@ test_setting_gsm_apn_bad_chars(void)
 
     /* 0 characters long */
     g_object_set(s_gsm, NM_SETTING_GSM_APN, "", NULL);
-    g_assert(nm_setting_verify(NM_SETTING(s_gsm), NULL, NULL));
+    nmtst_assert_setting_verifies(s_gsm);
 
     /* 65-character long */
     g_object_set(s_gsm,
@@ -3946,7 +3962,7 @@ typedef struct {
 
 typedef struct {
     const char *name;
-    DiffKey     keys[30];
+    DiffKey     keys[41];
 } DiffSetting;
 
 #define ARRAY_LEN(a) (sizeof(a) / sizeof(a[0]))
@@ -4003,8 +4019,11 @@ test_connection_diff_a_only(void)
           {NM_SETTING_CONNECTION_PERMISSIONS, NM_SETTING_DIFF_RESULT_IN_A},
           {NM_SETTING_CONNECTION_ZONE, NM_SETTING_DIFF_RESULT_IN_A},
           {NM_SETTING_CONNECTION_MASTER, NM_SETTING_DIFF_RESULT_IN_A},
+          {NM_SETTING_CONNECTION_CONTROLLER, NM_SETTING_DIFF_RESULT_IN_A},
           {NM_SETTING_CONNECTION_SLAVE_TYPE, NM_SETTING_DIFF_RESULT_IN_A},
+          {NM_SETTING_CONNECTION_PORT_TYPE, NM_SETTING_DIFF_RESULT_IN_A},
           {NM_SETTING_CONNECTION_AUTOCONNECT_SLAVES, NM_SETTING_DIFF_RESULT_IN_A},
+          {NM_SETTING_CONNECTION_AUTOCONNECT_PORTS, NM_SETTING_DIFF_RESULT_IN_A},
           {NM_SETTING_CONNECTION_SECONDARIES, NM_SETTING_DIFF_RESULT_IN_A},
           {NM_SETTING_CONNECTION_GATEWAY_PING_TIMEOUT, NM_SETTING_DIFF_RESULT_IN_A},
           {NM_SETTING_CONNECTION_METERED, NM_SETTING_DIFF_RESULT_IN_A},
@@ -4013,10 +4032,15 @@ test_connection_diff_a_only(void)
           {NM_SETTING_CONNECTION_MDNS, NM_SETTING_DIFF_RESULT_IN_A},
           {NM_SETTING_CONNECTION_LLMNR, NM_SETTING_DIFF_RESULT_IN_A},
           {NM_SETTING_CONNECTION_DNS_OVER_TLS, NM_SETTING_DIFF_RESULT_IN_A},
+          {NM_SETTING_CONNECTION_DNSSEC, NM_SETTING_DIFF_RESULT_IN_A},
           {NM_SETTING_CONNECTION_MPTCP_FLAGS, NM_SETTING_DIFF_RESULT_IN_A},
           {NM_SETTING_CONNECTION_MUD_URL, NM_SETTING_DIFF_RESULT_IN_A},
           {NM_SETTING_CONNECTION_WAIT_DEVICE_TIMEOUT, NM_SETTING_DIFF_RESULT_IN_A},
           {NM_SETTING_CONNECTION_WAIT_ACTIVATION_DELAY, NM_SETTING_DIFF_RESULT_IN_A},
+          {NM_SETTING_CONNECTION_DOWN_ON_POWEROFF, NM_SETTING_DIFF_RESULT_IN_A},
+          {NM_SETTING_CONNECTION_IP_PING_TIMEOUT, NM_SETTING_DIFF_RESULT_IN_A},
+          {NM_SETTING_CONNECTION_IP_PING_ADDRESSES, NM_SETTING_DIFF_RESULT_IN_A},
+          {NM_SETTING_CONNECTION_IP_PING_ADDRESSES_REQUIRE_ALL, NM_SETTING_DIFF_RESULT_IN_A},
           {NULL, NM_SETTING_DIFF_RESULT_UNKNOWN}}},
         {NM_SETTING_WIRED_SETTING_NAME,
          {
@@ -4028,6 +4052,7 @@ test_connection_diff_a_only(void)
              {NM_SETTING_WIRED_CLONED_MAC_ADDRESS, NM_SETTING_DIFF_RESULT_IN_A},
              {NM_SETTING_WIRED_GENERATE_MAC_ADDRESS_MASK, NM_SETTING_DIFF_RESULT_IN_A},
              {NM_SETTING_WIRED_MAC_ADDRESS_BLACKLIST, NM_SETTING_DIFF_RESULT_IN_A},
+             {NM_SETTING_WIRED_MAC_ADDRESS_DENYLIST, NM_SETTING_DIFF_RESULT_IN_A},
              {NM_SETTING_WIRED_MTU, NM_SETTING_DIFF_RESULT_IN_A},
              {NM_SETTING_WIRED_S390_SUBCHANNELS, NM_SETTING_DIFF_RESULT_IN_A},
              {NM_SETTING_WIRED_S390_NETTYPE, NM_SETTING_DIFF_RESULT_IN_A},
@@ -4054,6 +4079,7 @@ test_connection_diff_a_only(void)
              {NM_SETTING_IP4_CONFIG_DHCP_CLIENT_ID, NM_SETTING_DIFF_RESULT_IN_A},
              {NM_SETTING_IP_CONFIG_DHCP_TIMEOUT, NM_SETTING_DIFF_RESULT_IN_A},
              {NM_SETTING_IP_CONFIG_DHCP_SEND_HOSTNAME, NM_SETTING_DIFF_RESULT_IN_A},
+             {NM_SETTING_IP_CONFIG_DHCP_SEND_HOSTNAME_V2, NM_SETTING_DIFF_RESULT_IN_A},
              {NM_SETTING_IP_CONFIG_DHCP_HOSTNAME, NM_SETTING_DIFF_RESULT_IN_A},
              {NM_SETTING_IP_CONFIG_DHCP_HOSTNAME_FLAGS, NM_SETTING_DIFF_RESULT_IN_A},
              {NM_SETTING_IP4_CONFIG_DHCP_FQDN, NM_SETTING_DIFF_RESULT_IN_A},
@@ -4063,11 +4089,18 @@ test_connection_diff_a_only(void)
              {NM_SETTING_IP_CONFIG_REQUIRED_TIMEOUT, NM_SETTING_DIFF_RESULT_IN_A},
              {NM_SETTING_IP_CONFIG_DNS_PRIORITY, NM_SETTING_DIFF_RESULT_IN_A},
              {NM_SETTING_IP_CONFIG_DHCP_IAID, NM_SETTING_DIFF_RESULT_IN_A},
+             {NM_SETTING_IP_CONFIG_DHCP_DSCP, NM_SETTING_DIFF_RESULT_IN_A},
              {NM_SETTING_IP4_CONFIG_DHCP_VENDOR_CLASS_IDENTIFIER, NM_SETTING_DIFF_RESULT_IN_A},
              {NM_SETTING_IP_CONFIG_DHCP_REJECT_SERVERS, NM_SETTING_DIFF_RESULT_IN_A},
              {NM_SETTING_IP4_CONFIG_LINK_LOCAL, NM_SETTING_DIFF_RESULT_IN_A},
+             {NM_SETTING_IP4_CONFIG_DHCP_IPV6_ONLY_PREFERRED, NM_SETTING_DIFF_RESULT_IN_A},
              {NM_SETTING_IP_CONFIG_AUTO_ROUTE_EXT_GW, NM_SETTING_DIFF_RESULT_IN_A},
              {NM_SETTING_IP_CONFIG_REPLACE_LOCAL_RULE, NM_SETTING_DIFF_RESULT_IN_A},
+             {NM_SETTING_IP_CONFIG_DHCP_SEND_RELEASE, NM_SETTING_DIFF_RESULT_IN_A},
+             {NM_SETTING_IP_CONFIG_ROUTED_DNS, NM_SETTING_DIFF_RESULT_IN_A},
+             {NM_SETTING_IP_CONFIG_SHARED_DHCP_RANGE, NM_SETTING_DIFF_RESULT_IN_A},
+             {NM_SETTING_IP_CONFIG_SHARED_DHCP_LEASE_TIME, NM_SETTING_DIFF_RESULT_IN_A},
+             {NM_SETTING_IP_CONFIG_FORWARDING, NM_SETTING_DIFF_RESULT_IN_A},
              {NULL, NM_SETTING_DIFF_RESULT_UNKNOWN},
          }},
     };
@@ -5295,6 +5328,7 @@ test_setting_ip4_changed_signal(void)
     NMIPAddress       *addr;
     NMIPRoute         *route;
     GError            *error = NULL;
+    gs_strfreev char **strv  = NULL;
 
     connection = nm_simple_connection_new();
     g_signal_connect(connection,
@@ -5319,7 +5353,8 @@ test_setting_ip4_changed_signal(void)
     ASSERT_CHANGED(nm_setting_ip_config_add_dns_search(s_ip4, "foobar.com"));
     ASSERT_CHANGED(nm_setting_ip_config_remove_dns_search(s_ip4, 0));
 
-    NMTST_EXPECT_LIBNM_CRITICAL(NMTST_G_RETURN_MSG(idx >= 0 && idx < priv->dns_search->len));
+    NMTST_EXPECT_LIBNM_CRITICAL(
+        NMTST_G_RETURN_MSG(idx >= 0 && idx < nm_g_array_len(priv->dns_search.arr)));
     ASSERT_UNCHANGED(nm_setting_ip_config_remove_dns_search(s_ip4, 1));
     g_test_assert_expected_messages();
 
@@ -5351,10 +5386,51 @@ test_setting_ip4_changed_signal(void)
     nm_setting_ip_config_add_route(s_ip4, route);
     ASSERT_CHANGED(nm_setting_ip_config_clear_routes(s_ip4));
 
+    g_assert(!nm_setting_ip_config_has_dns_options(s_ip4));
+    g_assert_cmpint(nm_setting_ip_config_get_num_dns_options(s_ip4), ==, 0);
+
+    g_object_get(s_ip4, NM_SETTING_IP_CONFIG_DNS_OPTIONS, &strv, NULL);
+    g_assert_null(strv);
+
+    g_assert_null(nm_setting_ip_config_get_dns_option(s_ip4, 0));
+    NMTST_EXPECT_LIBNM_CRITICAL(NMTST_G_RETURN_MSG(_idx <= _len));
+    g_assert_null(nm_setting_ip_config_get_dns_option(s_ip4, 1));
+    g_test_assert_expected_messages();
+
     ASSERT_CHANGED(nm_setting_ip_config_add_dns_option(s_ip4, "debug"));
+
+    g_assert(nm_setting_ip_config_has_dns_options(s_ip4));
+    g_assert_cmpint(nm_setting_ip_config_get_num_dns_options(s_ip4), ==, 1);
+
+    g_object_get(s_ip4, NM_SETTING_IP_CONFIG_DNS_OPTIONS, &strv, NULL);
+    g_assert_nonnull(strv);
+    g_assert_cmpstr(strv[0], ==, "debug");
+    g_assert_cmpstr(strv[1], ==, NULL);
+    nm_clear_pointer(&strv, g_strfreev);
+
+    g_assert_cmpstr(nm_setting_ip_config_get_dns_option(s_ip4, 0), ==, "debug");
+    g_assert_null(nm_setting_ip_config_get_dns_option(s_ip4, 1));
+    NMTST_EXPECT_LIBNM_CRITICAL(NMTST_G_RETURN_MSG(_idx <= _len));
+    g_assert_null(nm_setting_ip_config_get_dns_option(s_ip4, 2));
+    g_test_assert_expected_messages();
+
     ASSERT_CHANGED(nm_setting_ip_config_remove_dns_option(s_ip4, 0));
 
-    NMTST_EXPECT_LIBNM_CRITICAL(NMTST_G_RETURN_MSG(idx >= 0 && idx < priv->dns_options->len));
+    g_assert(nm_setting_ip_config_has_dns_options(s_ip4));
+    g_assert_cmpint(nm_setting_ip_config_get_num_dns_options(s_ip4), ==, 0);
+
+    g_object_get(s_ip4, NM_SETTING_IP_CONFIG_DNS_OPTIONS, &strv, NULL);
+    g_assert_nonnull(strv);
+    g_assert_cmpstr(strv[0], ==, NULL);
+    nm_clear_pointer(&strv, g_strfreev);
+
+    g_assert_null(nm_setting_ip_config_get_dns_option(s_ip4, 0));
+    NMTST_EXPECT_LIBNM_CRITICAL(NMTST_G_RETURN_MSG(_idx <= _len));
+    g_assert_null(nm_setting_ip_config_get_dns_option(s_ip4, 1));
+    g_test_assert_expected_messages();
+
+    NMTST_EXPECT_LIBNM_CRITICAL(
+        NMTST_G_RETURN_MSG(idx >= 0 && idx < nm_g_array_len(priv->dns_options.arr)));
     ASSERT_UNCHANGED(nm_setting_ip_config_remove_dns_option(s_ip4, 1));
     g_test_assert_expected_messages();
 
@@ -5366,6 +5442,7 @@ test_setting_ip4_changed_signal(void)
 static void
 test_setting_ip6_changed_signal(void)
 {
+    gs_strfreev char **strv = NULL;
     NMConnection      *connection;
     gboolean           changed = FALSE;
     NMSettingIPConfig *s_ip6;
@@ -5393,10 +5470,35 @@ test_setting_ip6_changed_signal(void)
     nm_setting_ip_config_add_dns(s_ip6, "1:2:3::4:5:6");
     ASSERT_CHANGED(nm_setting_ip_config_clear_dns(s_ip6));
 
+    g_object_get(s_ip6, NM_SETTING_IP_CONFIG_DNS_SEARCH, &strv, NULL);
+    g_assert_null(strv);
+
     ASSERT_CHANGED(nm_setting_ip_config_add_dns_search(s_ip6, "foobar.com"));
+
+    g_object_get(s_ip6, NM_SETTING_IP_CONFIG_DNS_SEARCH, &strv, NULL);
+    g_assert_nonnull(strv);
+    g_assert_cmpstr(strv[0], ==, "foobar.com");
+    g_assert_cmpstr(strv[1], ==, NULL);
+    nm_clear_pointer(&strv, g_strfreev);
+
+    g_assert_cmpstr(nm_setting_ip_config_get_dns_search(s_ip6, 0), ==, "foobar.com");
+    g_assert_cmpstr(nm_setting_ip_config_get_dns_search(s_ip6, 1), ==, NULL);
+
+    NMTST_EXPECT_LIBNM_CRITICAL(NMTST_G_RETURN_MSG(_idx <= _len));
+    g_assert_cmpstr(nm_setting_ip_config_get_dns_search(s_ip6, -1), ==, NULL);
+    g_test_assert_expected_messages();
+
+    NMTST_EXPECT_LIBNM_CRITICAL(NMTST_G_RETURN_MSG(_idx <= _len));
+    g_assert_cmpstr(nm_setting_ip_config_get_dns_search(s_ip6, 2), ==, NULL);
+    g_test_assert_expected_messages();
+
     ASSERT_CHANGED(nm_setting_ip_config_remove_dns_search(s_ip6, 0));
 
-    NMTST_EXPECT_LIBNM_CRITICAL(NMTST_G_RETURN_MSG(idx >= 0 && idx < priv->dns_search->len));
+    g_object_get(s_ip6, NM_SETTING_IP_CONFIG_DNS_SEARCH, &strv, NULL);
+    g_assert_null(strv);
+
+    NMTST_EXPECT_LIBNM_CRITICAL(
+        NMTST_G_RETURN_MSG(idx >= 0 && idx < nm_g_array_len(priv->dns_search.arr)));
     ASSERT_UNCHANGED(nm_setting_ip_config_remove_dns_search(s_ip6, 1));
     g_test_assert_expected_messages();
 
@@ -5591,9 +5693,13 @@ test_setting_wireless_security_changed_signal(void)
                                                         "wep-key0",
                                                         NM_SETTING_SECRET_FLAG_AGENT_OWNED,
                                                         NULL)));
+    ASSERT_UNCHANGED(g_assert(nm_setting_set_secret_flags(NM_SETTING(s_wsec),
+                                                          "wep-key1",
+                                                          NM_SETTING_SECRET_FLAG_AGENT_OWNED,
+                                                          NULL)));
     ASSERT_CHANGED(g_assert(nm_setting_set_secret_flags(NM_SETTING(s_wsec),
                                                         "wep-key1",
-                                                        NM_SETTING_SECRET_FLAG_AGENT_OWNED,
+                                                        NM_SETTING_SECRET_FLAG_NOT_SAVED,
                                                         NULL)));
     ASSERT_CHANGED(g_assert(nm_setting_set_secret_flags(NM_SETTING(s_wsec),
                                                         "wep-key2",
@@ -5601,7 +5707,7 @@ test_setting_wireless_security_changed_signal(void)
                                                         NULL)));
     ASSERT_CHANGED(g_assert(nm_setting_set_secret_flags(NM_SETTING(s_wsec),
                                                         "wep-key3",
-                                                        NM_SETTING_SECRET_FLAG_AGENT_OWNED,
+                                                        NM_SETTING_SECRET_FLAG_NOT_SAVED,
                                                         NULL)));
 
     g_object_unref(connection);
@@ -6135,20 +6241,20 @@ test_connection_normalize_type(void)
 }
 
 static void
-test_connection_normalize_slave_type_1(void)
+test_connection_normalize_port_type_1(void)
 {
     gs_unref_object NMConnection *con = NULL;
     NMSettingConnection          *s_con;
 
-    con = nmtst_create_minimal_connection("test_connection_normalize_slave_type_1",
+    con = nmtst_create_minimal_connection("test_connection_normalize_port_type_1",
                                           "cc4cd5df-45dc-483e-b291-6b76c2338ecb",
                                           NM_SETTING_WIRED_SETTING_NAME,
                                           &s_con);
 
     g_object_set(s_con,
-                 NM_SETTING_CONNECTION_MASTER,
-                 "master0",
-                 NM_SETTING_CONNECTION_SLAVE_TYPE,
+                 NM_SETTING_CONNECTION_CONTROLLER,
+                 "controller0",
+                 NM_SETTING_CONNECTION_PORT_TYPE,
                  "invalid-type",
                  NULL);
 
@@ -6157,7 +6263,7 @@ test_connection_normalize_slave_type_1(void)
                                            NM_CONNECTION_ERROR_INVALID_PROPERTY);
     g_assert(!nm_connection_get_setting_by_name(con, NM_SETTING_BRIDGE_PORT_SETTING_NAME));
 
-    g_object_set(s_con, NM_SETTING_CONNECTION_SLAVE_TYPE, "bridge", NULL);
+    g_object_set(s_con, NM_SETTING_CONNECTION_PORT_TYPE, "bridge", NULL);
 
     g_assert(!nm_connection_get_setting_by_name(con, NM_SETTING_BRIDGE_PORT_SETTING_NAME));
     nmtst_assert_connection_verifies_after_normalization(con,
@@ -6165,26 +6271,24 @@ test_connection_normalize_slave_type_1(void)
                                                          NM_CONNECTION_ERROR_MISSING_SETTING);
     nmtst_connection_normalize(con);
     g_assert(nm_connection_get_setting_by_name(con, NM_SETTING_BRIDGE_PORT_SETTING_NAME));
-    g_assert_cmpstr(nm_setting_connection_get_slave_type(s_con),
-                    ==,
-                    NM_SETTING_BRIDGE_SETTING_NAME);
+    g_assert_cmpstr(nm_setting_connection_get_port_type(s_con), ==, NM_SETTING_BRIDGE_SETTING_NAME);
 }
 
 static void
-test_connection_normalize_slave_type_2(void)
+test_connection_normalize_port_type_2(void)
 {
     gs_unref_object NMConnection *con = NULL;
     NMSettingConnection          *s_con;
 
-    con = nmtst_create_minimal_connection("test_connection_normalize_slave_type_2",
+    con = nmtst_create_minimal_connection("test_connection_normalize_port_type_2",
                                           "40bea008-ca72-439a-946b-e65f827656f9",
                                           NM_SETTING_WIRED_SETTING_NAME,
                                           &s_con);
 
     g_object_set(s_con,
-                 NM_SETTING_CONNECTION_MASTER,
-                 "master0",
-                 NM_SETTING_CONNECTION_SLAVE_TYPE,
+                 NM_SETTING_CONNECTION_CONTROLLER,
+                 "controller0",
+                 NM_SETTING_CONNECTION_PORT_TYPE,
                  "invalid-type",
                  NULL);
 
@@ -6193,19 +6297,17 @@ test_connection_normalize_slave_type_2(void)
                                            NM_CONNECTION_ERROR_INVALID_PROPERTY);
     g_assert(!nm_connection_get_setting_by_name(con, NM_SETTING_BRIDGE_PORT_SETTING_NAME));
 
-    g_object_set(s_con, NM_SETTING_CONNECTION_SLAVE_TYPE, NULL, NULL);
+    g_object_set(s_con, NM_SETTING_CONNECTION_PORT_TYPE, NULL, NULL);
     nm_connection_add_setting(con, nm_setting_bridge_port_new());
 
     g_assert(nm_connection_get_setting_by_name(con, NM_SETTING_BRIDGE_PORT_SETTING_NAME));
-    g_assert_cmpstr(nm_setting_connection_get_slave_type(s_con), ==, NULL);
+    g_assert_cmpstr(nm_setting_connection_get_port_type(s_con), ==, NULL);
     nmtst_assert_connection_verifies_after_normalization(con,
                                                          NM_CONNECTION_ERROR,
                                                          NM_CONNECTION_ERROR_MISSING_PROPERTY);
     nmtst_connection_normalize(con);
     g_assert(nm_connection_get_setting_by_name(con, NM_SETTING_BRIDGE_PORT_SETTING_NAME));
-    g_assert_cmpstr(nm_setting_connection_get_slave_type(s_con),
-                    ==,
-                    NM_SETTING_BRIDGE_SETTING_NAME);
+    g_assert_cmpstr(nm_setting_connection_get_port_type(s_con), ==, NM_SETTING_BRIDGE_SETTING_NAME);
 }
 
 static void
@@ -6483,9 +6585,9 @@ test_connection_normalize_ovs_interface_type_system(gconstpointer test_data)
     switch (TEST_CASE) {
     case 1:
         g_object_set(s_con,
-                     NM_SETTING_CONNECTION_MASTER,
-                     "master0",
-                     NM_SETTING_CONNECTION_SLAVE_TYPE,
+                     NM_SETTING_CONNECTION_CONTROLLER,
+                     "controller0",
+                     NM_SETTING_CONNECTION_PORT_TYPE,
                      NM_SETTING_OVS_PORT_SETTING_NAME,
                      NULL);
 
@@ -6504,9 +6606,9 @@ test_connection_normalize_ovs_interface_type_system(gconstpointer test_data)
         break;
     case 2:
         g_object_set(s_con,
-                     NM_SETTING_CONNECTION_MASTER,
-                     "master0",
-                     NM_SETTING_CONNECTION_SLAVE_TYPE,
+                     NM_SETTING_CONNECTION_CONTROLLER,
+                     "controller0",
+                     NM_SETTING_CONNECTION_PORT_TYPE,
                      NM_SETTING_OVS_PORT_SETTING_NAME,
                      NULL);
 
@@ -6527,9 +6629,9 @@ test_connection_normalize_ovs_interface_type_system(gconstpointer test_data)
         break;
     case 3:
         g_object_set(s_con,
-                     NM_SETTING_CONNECTION_MASTER,
-                     "master0",
-                     NM_SETTING_CONNECTION_SLAVE_TYPE,
+                     NM_SETTING_CONNECTION_CONTROLLER,
+                     "controller0",
+                     NM_SETTING_CONNECTION_PORT_TYPE,
                      NM_SETTING_OVS_PORT_SETTING_NAME,
                      NULL);
 
@@ -6545,9 +6647,9 @@ test_connection_normalize_ovs_interface_type_system(gconstpointer test_data)
         break;
     case 4:
         g_object_set(s_con,
-                     NM_SETTING_CONNECTION_MASTER,
-                     "master0",
-                     NM_SETTING_CONNECTION_SLAVE_TYPE,
+                     NM_SETTING_CONNECTION_CONTROLLER,
+                     "controller0",
+                     NM_SETTING_CONNECTION_PORT_TYPE,
                      NM_SETTING_OVS_PORT_SETTING_NAME,
                      NULL);
 
@@ -6561,7 +6663,7 @@ test_connection_normalize_ovs_interface_type_system(gconstpointer test_data)
                                                NM_CONNECTION_ERROR_INVALID_PROPERTY);
         break;
     case 5:
-        g_object_set(s_con, NM_SETTING_CONNECTION_MASTER, "master0", NULL);
+        g_object_set(s_con, NM_SETTING_CONNECTION_CONTROLLER, "controller0", NULL);
 
         s_ovs_if = NM_SETTING_OVS_INTERFACE(nm_setting_ovs_interface_new());
         nm_connection_add_setting(con, NM_SETTING(s_ovs_if));
@@ -6576,15 +6678,15 @@ test_connection_normalize_ovs_interface_type_system(gconstpointer test_data)
                                              NM_SETTING_WIRED_SETTING_NAME,
                                              NM_SETTING_OVS_INTERFACE_SETTING_NAME);
         g_assert(s_con == nm_connection_get_setting_connection(con));
-        g_assert_cmpstr(nm_setting_connection_get_slave_type(s_con),
+        g_assert_cmpstr(nm_setting_connection_get_port_type(s_con),
                         ==,
                         NM_SETTING_OVS_PORT_SETTING_NAME);
         break;
     case 6:
         g_object_set(s_con,
-                     NM_SETTING_CONNECTION_MASTER,
-                     "master0",
-                     NM_SETTING_CONNECTION_SLAVE_TYPE,
+                     NM_SETTING_CONNECTION_CONTROLLER,
+                     "controller0",
+                     NM_SETTING_CONNECTION_PORT_TYPE,
                      NM_SETTING_BRIDGE_SETTING_NAME,
                      NULL);
 
@@ -6598,9 +6700,9 @@ test_connection_normalize_ovs_interface_type_system(gconstpointer test_data)
         break;
     case 7:
         g_object_set(s_con,
-                     NM_SETTING_CONNECTION_MASTER,
-                     "master0",
-                     NM_SETTING_CONNECTION_SLAVE_TYPE,
+                     NM_SETTING_CONNECTION_CONTROLLER,
+                     "controller0",
+                     NM_SETTING_CONNECTION_PORT_TYPE,
                      NM_SETTING_BRIDGE_SETTING_NAME,
                      NULL);
 
@@ -6646,7 +6748,7 @@ test_connection_normalize_ovs_interface_type_ovs_interface(gconstpointer test_da
                                                NM_CONNECTION_ERROR_INVALID_PROPERTY);
         break;
     case 2:
-        g_object_set(s_con, NM_SETTING_CONNECTION_MASTER, "master0", NULL);
+        g_object_set(s_con, NM_SETTING_CONNECTION_CONTROLLER, "controller0", NULL);
         nmtst_assert_connection_verifies_after_normalization(con,
                                                              NM_CONNECTION_ERROR,
                                                              NM_CONNECTION_ERROR_MISSING_PROPERTY);
@@ -6659,16 +6761,16 @@ test_connection_normalize_ovs_interface_type_ovs_interface(gconstpointer test_da
                                              NM_SETTING_OVS_INTERFACE_SETTING_NAME);
         g_assert(s_con == nm_connection_get_setting_connection(con));
         g_assert(s_ovs_if == nm_connection_get_setting_ovs_interface(con));
-        g_assert_cmpstr(nm_setting_connection_get_slave_type(s_con),
+        g_assert_cmpstr(nm_setting_connection_get_port_type(s_con),
                         ==,
                         NM_SETTING_OVS_PORT_SETTING_NAME);
         g_assert_cmpstr(nm_setting_ovs_interface_get_interface_type(s_ovs_if), ==, "internal");
         break;
     case 3:
         g_object_set(s_con,
-                     NM_SETTING_CONNECTION_MASTER,
-                     "master0",
-                     NM_SETTING_CONNECTION_SLAVE_TYPE,
+                     NM_SETTING_CONNECTION_CONTROLLER,
+                     "controller0",
+                     NM_SETTING_CONNECTION_PORT_TYPE,
                      NM_SETTING_OVS_PORT_SETTING_NAME,
                      NULL);
         nmtst_assert_connection_verifies_after_normalization(con,
@@ -6683,13 +6785,13 @@ test_connection_normalize_ovs_interface_type_ovs_interface(gconstpointer test_da
                                              NM_SETTING_OVS_INTERFACE_SETTING_NAME);
         g_assert(s_con == nm_connection_get_setting_connection(con));
         g_assert(s_ovs_if == nm_connection_get_setting_ovs_interface(con));
-        g_assert_cmpstr(nm_setting_connection_get_slave_type(s_con),
+        g_assert_cmpstr(nm_setting_connection_get_port_type(s_con),
                         ==,
                         NM_SETTING_OVS_PORT_SETTING_NAME);
         g_assert_cmpstr(nm_setting_ovs_interface_get_interface_type(s_ovs_if), ==, "internal");
         break;
     case 4:
-        g_object_set(s_con, NM_SETTING_CONNECTION_MASTER, "master0", NULL);
+        g_object_set(s_con, NM_SETTING_CONNECTION_CONTROLLER, "controller0", NULL);
         g_object_set(s_ovs_if, NM_SETTING_OVS_INTERFACE_TYPE, "internal", NULL);
         nmtst_assert_connection_verifies_after_normalization(con,
                                                              NM_CONNECTION_ERROR,
@@ -6703,16 +6805,16 @@ test_connection_normalize_ovs_interface_type_ovs_interface(gconstpointer test_da
                                              NM_SETTING_OVS_INTERFACE_SETTING_NAME);
         g_assert(s_con == nm_connection_get_setting_connection(con));
         g_assert(s_ovs_if == nm_connection_get_setting_ovs_interface(con));
-        g_assert_cmpstr(nm_setting_connection_get_slave_type(s_con),
+        g_assert_cmpstr(nm_setting_connection_get_port_type(s_con),
                         ==,
                         NM_SETTING_OVS_PORT_SETTING_NAME);
         g_assert_cmpstr(nm_setting_ovs_interface_get_interface_type(s_ovs_if), ==, "internal");
         break;
     case 5:
         g_object_set(s_con,
-                     NM_SETTING_CONNECTION_MASTER,
-                     "master0",
-                     NM_SETTING_CONNECTION_SLAVE_TYPE,
+                     NM_SETTING_CONNECTION_CONTROLLER,
+                     "controller0",
+                     NM_SETTING_CONNECTION_PORT_TYPE,
                      NM_SETTING_OVS_PORT_SETTING_NAME,
                      NULL);
         g_object_set(s_ovs_if, NM_SETTING_OVS_INTERFACE_TYPE, "internal", NULL);
@@ -6733,9 +6835,9 @@ test_connection_normalize_ovs_interface_type_ovs_interface(gconstpointer test_da
         break;
     case 6:
         g_object_set(s_con,
-                     NM_SETTING_CONNECTION_MASTER,
-                     "master0",
-                     NM_SETTING_CONNECTION_SLAVE_TYPE,
+                     NM_SETTING_CONNECTION_CONTROLLER,
+                     "controller0",
+                     NM_SETTING_CONNECTION_PORT_TYPE,
                      NM_SETTING_OVS_PORT_SETTING_NAME,
                      NULL);
         g_object_set(s_ovs_if, NM_SETTING_OVS_INTERFACE_TYPE, "internal", NULL);
@@ -6749,16 +6851,16 @@ test_connection_normalize_ovs_interface_type_ovs_interface(gconstpointer test_da
                                              NM_SETTING_OVS_INTERFACE_SETTING_NAME);
         g_assert(s_con == nm_connection_get_setting_connection(con));
         g_assert(s_ovs_if == nm_connection_get_setting_ovs_interface(con));
-        g_assert_cmpstr(nm_setting_connection_get_slave_type(s_con),
+        g_assert_cmpstr(nm_setting_connection_get_port_type(s_con),
                         ==,
                         NM_SETTING_OVS_PORT_SETTING_NAME);
         g_assert_cmpstr(nm_setting_ovs_interface_get_interface_type(s_ovs_if), ==, "internal");
         break;
     case 7:
         g_object_set(s_con,
-                     NM_SETTING_CONNECTION_MASTER,
-                     "master0",
-                     NM_SETTING_CONNECTION_SLAVE_TYPE,
+                     NM_SETTING_CONNECTION_CONTROLLER,
+                     "controller0",
+                     NM_SETTING_CONNECTION_PORT_TYPE,
                      NM_SETTING_OVS_PORT_SETTING_NAME,
                      NULL);
         g_object_set(s_ovs_if, NM_SETTING_OVS_INTERFACE_TYPE, "system", NULL);
@@ -6768,9 +6870,9 @@ test_connection_normalize_ovs_interface_type_ovs_interface(gconstpointer test_da
         break;
     case 8:
         g_object_set(s_con,
-                     NM_SETTING_CONNECTION_MASTER,
-                     "master0",
-                     NM_SETTING_CONNECTION_SLAVE_TYPE,
+                     NM_SETTING_CONNECTION_CONTROLLER,
+                     "controller0",
+                     NM_SETTING_CONNECTION_PORT_TYPE,
                      NM_SETTING_OVS_PORT_SETTING_NAME,
                      NULL);
         g_object_set(s_ovs_if, NM_SETTING_OVS_INTERFACE_TYPE, "bogus", NULL);
@@ -6780,9 +6882,9 @@ test_connection_normalize_ovs_interface_type_ovs_interface(gconstpointer test_da
         break;
     case 9:
         g_object_set(s_con,
-                     NM_SETTING_CONNECTION_MASTER,
-                     "master0",
-                     NM_SETTING_CONNECTION_SLAVE_TYPE,
+                     NM_SETTING_CONNECTION_CONTROLLER,
+                     "controller0",
+                     NM_SETTING_CONNECTION_PORT_TYPE,
                      NM_SETTING_OVS_PORT_SETTING_NAME,
                      NULL);
         g_object_set(s_ovs_if, NM_SETTING_OVS_INTERFACE_TYPE, "patch", NULL);
@@ -6792,9 +6894,9 @@ test_connection_normalize_ovs_interface_type_ovs_interface(gconstpointer test_da
         break;
     case 10:
         g_object_set(s_con,
-                     NM_SETTING_CONNECTION_MASTER,
-                     "master0",
-                     NM_SETTING_CONNECTION_SLAVE_TYPE,
+                     NM_SETTING_CONNECTION_CONTROLLER,
+                     "controller0",
+                     NM_SETTING_CONNECTION_PORT_TYPE,
                      NM_SETTING_OVS_PORT_SETTING_NAME,
                      NULL);
         g_object_set(s_ovs_if, NM_SETTING_OVS_INTERFACE_TYPE, "patch", NULL);
@@ -6805,9 +6907,9 @@ test_connection_normalize_ovs_interface_type_ovs_interface(gconstpointer test_da
         break;
     case 11:
         g_object_set(s_con,
-                     NM_SETTING_CONNECTION_MASTER,
-                     "master0",
-                     NM_SETTING_CONNECTION_SLAVE_TYPE,
+                     NM_SETTING_CONNECTION_CONTROLLER,
+                     "controller0",
+                     NM_SETTING_CONNECTION_PORT_TYPE,
                      NM_SETTING_OVS_PORT_SETTING_NAME,
                      NM_SETTING_CONNECTION_INTERFACE_NAME,
                      "adsf",
@@ -6820,9 +6922,9 @@ test_connection_normalize_ovs_interface_type_ovs_interface(gconstpointer test_da
         break;
     case 12:
         g_object_set(s_con,
-                     NM_SETTING_CONNECTION_MASTER,
-                     "master0",
-                     NM_SETTING_CONNECTION_SLAVE_TYPE,
+                     NM_SETTING_CONNECTION_CONTROLLER,
+                     "controller0",
+                     NM_SETTING_CONNECTION_PORT_TYPE,
                      NM_SETTING_OVS_PORT_SETTING_NAME,
                      NM_SETTING_CONNECTION_INTERFACE_NAME,
                      "adsf",
@@ -6842,7 +6944,7 @@ test_connection_normalize_ovs_interface_type_ovs_interface(gconstpointer test_da
                                              NM_SETTING_OVS_PATCH_SETTING_NAME);
         g_assert(s_con == nm_connection_get_setting_connection(con));
         g_assert(s_ovs_if == nm_connection_get_setting_ovs_interface(con));
-        g_assert_cmpstr(nm_setting_connection_get_slave_type(s_con),
+        g_assert_cmpstr(nm_setting_connection_get_port_type(s_con),
                         ==,
                         NM_SETTING_OVS_PORT_SETTING_NAME);
         g_assert_cmpstr(nm_setting_ovs_interface_get_interface_type(s_ovs_if), ==, "patch");
@@ -8713,23 +8815,35 @@ test_nm_ptrarray_len(void)
 
 static void
 test_nm_utils_dns_option_validate_do(char                       *option,
-                                     gboolean                    ipv6,
+                                     int                         addr_family,
                                      const NMUtilsDNSOptionDesc *descs,
                                      gboolean                    exp_result,
                                      char                       *exp_name,
                                      gboolean                    exp_value)
 {
-    char    *name;
-    long     value = 0;
-    gboolean result;
+    gs_free char *name  = NULL;
+    long          value = 0;
+    gboolean      result;
 
-    result = _nm_utils_dns_option_validate(option, &name, &value, ipv6, descs);
+    if (!descs) {
+        g_assert(addr_family == AF_UNSPEC);
+        addr_family = nmtst_rand_select(AF_UNSPEC, AF_INET, AF_INET6);
+    }
+
+    result = _nm_utils_dns_option_validate(option, &name, &value, addr_family, descs);
 
     g_assert(result == exp_result);
     g_assert_cmpstr(name, ==, exp_name);
     g_assert(value == exp_value);
 
-    g_free(name);
+    nm_clear_g_free(&name);
+
+    if (result && descs) {
+        result = _nm_utils_dns_option_validate(option, &name, &value, AF_UNSPEC, descs);
+        g_assert(result == exp_result);
+        g_assert_cmpstr(name, ==, exp_name);
+        g_assert(value == exp_value);
+    }
 }
 
 static const NMUtilsDNSOptionDesc opt_descs[] = {
@@ -8743,57 +8857,56 @@ static const NMUtilsDNSOptionDesc opt_descs[] = {
 static void
 test_nm_utils_dns_option_validate(void)
 {
-    /*                                    opt            ipv6    descs        result name       value */
-    test_nm_utils_dns_option_validate_do("", FALSE, NULL, FALSE, NULL, -1);
-    test_nm_utils_dns_option_validate_do(":", FALSE, NULL, FALSE, NULL, -1);
-    test_nm_utils_dns_option_validate_do(":1", FALSE, NULL, FALSE, NULL, -1);
-    test_nm_utils_dns_option_validate_do(":val", FALSE, NULL, FALSE, NULL, -1);
-    test_nm_utils_dns_option_validate_do("opt", FALSE, NULL, TRUE, "opt", -1);
-    test_nm_utils_dns_option_validate_do("opt:", FALSE, NULL, FALSE, NULL, -1);
-    test_nm_utils_dns_option_validate_do("opt:12", FALSE, NULL, TRUE, "opt", 12);
-    test_nm_utils_dns_option_validate_do("opt:12 ", FALSE, NULL, FALSE, NULL, -1);
-    test_nm_utils_dns_option_validate_do("opt:val", FALSE, NULL, FALSE, NULL, -1);
-    test_nm_utils_dns_option_validate_do("opt:2val", FALSE, NULL, FALSE, NULL, -1);
-    test_nm_utils_dns_option_validate_do("opt:2:3", FALSE, NULL, FALSE, NULL, -1);
-    test_nm_utils_dns_option_validate_do("opt-6", FALSE, NULL, TRUE, "opt-6", -1);
+    /*                                  (opt, addr_family, descs, result, name, value) */
+    test_nm_utils_dns_option_validate_do("", AF_UNSPEC, NULL, FALSE, NULL, -1);
+    test_nm_utils_dns_option_validate_do(":", AF_UNSPEC, NULL, FALSE, NULL, -1);
+    test_nm_utils_dns_option_validate_do(":1", AF_UNSPEC, NULL, FALSE, NULL, -1);
+    test_nm_utils_dns_option_validate_do(":val", AF_UNSPEC, NULL, FALSE, NULL, -1);
+    test_nm_utils_dns_option_validate_do("opt", AF_UNSPEC, NULL, TRUE, "opt", -1);
+    test_nm_utils_dns_option_validate_do("opt:", AF_UNSPEC, NULL, FALSE, NULL, -1);
+    test_nm_utils_dns_option_validate_do("opt:12", AF_UNSPEC, NULL, TRUE, "opt", 12);
+    test_nm_utils_dns_option_validate_do("opt:12 ", AF_UNSPEC, NULL, FALSE, NULL, -1);
+    test_nm_utils_dns_option_validate_do("opt:val", AF_UNSPEC, NULL, FALSE, NULL, -1);
+    test_nm_utils_dns_option_validate_do("opt:2val", AF_UNSPEC, NULL, FALSE, NULL, -1);
+    test_nm_utils_dns_option_validate_do("opt:2:3", AF_UNSPEC, NULL, FALSE, NULL, -1);
+    test_nm_utils_dns_option_validate_do("opt-6", AF_UNSPEC, NULL, TRUE, "opt-6", -1);
 
-    test_nm_utils_dns_option_validate_do("opt1", FALSE, opt_descs, TRUE, "opt1", -1);
-    test_nm_utils_dns_option_validate_do("opt1", TRUE, opt_descs, TRUE, "opt1", -1);
-    test_nm_utils_dns_option_validate_do("opt1:3", FALSE, opt_descs, FALSE, NULL, -1);
+    test_nm_utils_dns_option_validate_do("opt1", AF_INET, opt_descs, TRUE, "opt1", -1);
+    test_nm_utils_dns_option_validate_do("opt1", AF_INET6, opt_descs, TRUE, "opt1", -1);
+    test_nm_utils_dns_option_validate_do("opt1:3", AF_INET, opt_descs, FALSE, NULL, -1);
 
-    test_nm_utils_dns_option_validate_do("opt2", FALSE, opt_descs, FALSE, NULL, -1);
-    test_nm_utils_dns_option_validate_do("opt2:5", FALSE, opt_descs, TRUE, "opt2", 5);
+    test_nm_utils_dns_option_validate_do("opt2", AF_INET, opt_descs, FALSE, NULL, -1);
+    test_nm_utils_dns_option_validate_do("opt2:5", AF_INET, opt_descs, TRUE, "opt2", 5);
 
-    test_nm_utils_dns_option_validate_do("opt3", FALSE, opt_descs, FALSE, NULL, -1);
-    test_nm_utils_dns_option_validate_do("opt3", TRUE, opt_descs, TRUE, "opt3", -1);
+    test_nm_utils_dns_option_validate_do("opt3", AF_INET, opt_descs, FALSE, NULL, -1);
+    test_nm_utils_dns_option_validate_do("opt3", AF_INET6, opt_descs, TRUE, "opt3", -1);
 
-    test_nm_utils_dns_option_validate_do("opt4", FALSE, opt_descs, FALSE, NULL, -1);
-    test_nm_utils_dns_option_validate_do("opt4", TRUE, opt_descs, FALSE, NULL, -1);
-    test_nm_utils_dns_option_validate_do("opt4:40", FALSE, opt_descs, FALSE, NULL, -1);
-    test_nm_utils_dns_option_validate_do("opt4:40", TRUE, opt_descs, TRUE, "opt4", 40);
+    test_nm_utils_dns_option_validate_do("opt4", AF_INET, opt_descs, FALSE, NULL, -1);
+    test_nm_utils_dns_option_validate_do("opt4", AF_INET6, opt_descs, FALSE, NULL, -1);
+    test_nm_utils_dns_option_validate_do("opt4:40", AF_INET, opt_descs, FALSE, NULL, -1);
+    test_nm_utils_dns_option_validate_do("opt4:40", AF_INET6, opt_descs, TRUE, "opt4", 40);
 }
 
 static void
 test_nm_utils_dns_option_find_idx(void)
 {
-    GPtrArray *options;
+    const char *const options[] = {
+        "debug",
+        "timeout:5",
+        "edns0",
+    };
 
-    options = g_ptr_array_new();
+#define _find_idx(options, option) \
+    _nm_utils_dns_option_find_idx((options), G_N_ELEMENTS(options), ("" option ""))
 
-    g_ptr_array_add(options, "debug");
-    g_ptr_array_add(options, "timeout:5");
-    g_ptr_array_add(options, "edns0");
-
-    g_assert_cmpint(_nm_utils_dns_option_find_idx(options, "debug"), ==, 0);
-    g_assert_cmpint(_nm_utils_dns_option_find_idx(options, "debug:1"), ==, 0);
-    g_assert_cmpint(_nm_utils_dns_option_find_idx(options, "timeout"), ==, 1);
-    g_assert_cmpint(_nm_utils_dns_option_find_idx(options, "timeout:5"), ==, 1);
-    g_assert_cmpint(_nm_utils_dns_option_find_idx(options, "timeout:2"), ==, 1);
-    g_assert_cmpint(_nm_utils_dns_option_find_idx(options, "edns0"), ==, 2);
-    g_assert_cmpint(_nm_utils_dns_option_find_idx(options, "rotate"), ==, -1);
-    g_assert_cmpint(_nm_utils_dns_option_find_idx(options, ""), ==, -1);
-
-    g_ptr_array_free(options, TRUE);
+    g_assert_cmpint(_find_idx(options, "debug"), ==, 0);
+    g_assert_cmpint(_find_idx(options, "debug:1"), ==, 0);
+    g_assert_cmpint(_find_idx(options, "timeout"), ==, 1);
+    g_assert_cmpint(_find_idx(options, "timeout:5"), ==, 1);
+    g_assert_cmpint(_find_idx(options, "timeout:2"), ==, 1);
+    g_assert_cmpint(_find_idx(options, "edns0"), ==, 2);
+    g_assert_cmpint(_find_idx(options, "rotate"), ==, -1);
+    g_assert_cmpint(_find_idx(options, ""), ==, -1);
 }
 
 /*****************************************************************************/
@@ -10510,7 +10623,7 @@ test_integrate_maincontext(gconstpointer test_data)
 
         loop1 = g_main_loop_new(c1, FALSE);
 
-        d = (IntegData){
+        d = (IntegData) {
             .loop1 = loop1,
             .c2    = c2,
         };
@@ -10601,9 +10714,9 @@ test_connection_ovs_ifname(gconstpointer test_data)
                                               &s_con);
 
         g_object_set(s_con,
-                     NM_SETTING_CONNECTION_MASTER,
-                     "master0",
-                     NM_SETTING_CONNECTION_SLAVE_TYPE,
+                     NM_SETTING_CONNECTION_CONTROLLER,
+                     "controller0",
+                     NM_SETTING_CONNECTION_PORT_TYPE,
                      NM_SETTING_OVS_BRIDGE_SETTING_NAME,
                      NULL);
 
@@ -10619,9 +10732,9 @@ test_connection_ovs_ifname(gconstpointer test_data)
         g_assert(s_ovs_iface);
 
         g_object_set(s_con,
-                     NM_SETTING_CONNECTION_MASTER,
-                     "master0",
-                     NM_SETTING_CONNECTION_SLAVE_TYPE,
+                     NM_SETTING_CONNECTION_CONTROLLER,
+                     "controller0",
+                     NM_SETTING_CONNECTION_PORT_TYPE,
                      NM_SETTING_OVS_PORT_SETTING_NAME,
                      NULL);
 
@@ -10646,9 +10759,9 @@ test_connection_ovs_ifname(gconstpointer test_data)
         g_assert(s_ovs_iface);
 
         g_object_set(s_con,
-                     NM_SETTING_CONNECTION_MASTER,
-                     "master0",
-                     NM_SETTING_CONNECTION_SLAVE_TYPE,
+                     NM_SETTING_CONNECTION_CONTROLLER,
+                     "controller0",
+                     NM_SETTING_CONNECTION_PORT_TYPE,
                      NM_SETTING_OVS_PORT_SETTING_NAME,
                      NULL);
 
@@ -10662,9 +10775,9 @@ test_connection_ovs_ifname(gconstpointer test_data)
                                               &s_con);
 
         g_object_set(s_con,
-                     NM_SETTING_CONNECTION_MASTER,
-                     "master0",
-                     NM_SETTING_CONNECTION_SLAVE_TYPE,
+                     NM_SETTING_CONNECTION_CONTROLLER,
+                     "controller0",
+                     NM_SETTING_CONNECTION_PORT_TYPE,
                      NM_SETTING_OVS_PORT_SETTING_NAME,
                      NULL);
 
@@ -10688,9 +10801,9 @@ test_connection_ovs_ifname(gconstpointer test_data)
         g_assert(s_ovs_iface);
 
         g_object_set(s_con,
-                     NM_SETTING_CONNECTION_MASTER,
-                     "master0",
-                     NM_SETTING_CONNECTION_SLAVE_TYPE,
+                     NM_SETTING_CONNECTION_CONTROLLER,
+                     "controller0",
+                     NM_SETTING_CONNECTION_PORT_TYPE,
                      NM_SETTING_OVS_PORT_SETTING_NAME,
                      NULL);
 
@@ -10729,7 +10842,7 @@ test_connection_ovs_ifname(gconstpointer test_data)
     /* good if bridge, port, or patch interface */
     g_object_set(s_con, NM_SETTING_CONNECTION_INTERFACE_NAME, "ovs123123123123130123123", NULL);
 
-    if (!ovs_iface_type || nm_streq(ovs_iface_type, "patch"))
+    if (!ovs_iface_type || NM_IN_STRSET(ovs_iface_type, "patch", "dpdk"))
         nmtst_assert_connection_verifies(con);
     else {
         nmtst_assert_connection_unnormalizable(con,
@@ -11286,176 +11399,186 @@ test_connection_path(void)
 /*****************************************************************************/
 
 static void
-_t_dnsname_1(const char *str, const char *exp_addr, const char *exp_server_name)
+t_dns_0(const char *str)
 {
-    int           addr_family;
-    NMIPAddr      exp_addr_bin;
-    gboolean      addr_family_request;
-    gboolean      r;
-    int           detect_addr_family;
-    NMIPAddr      detect_addr;
-    const char   *detect_server_name;
-    int          *p_detect_addr_family = &detect_addr_family;
-    NMIPAddr     *p_detect_addr        = &detect_addr;
-    const char  **p_detect_server_name = &detect_server_name;
-    char          str_construct_buf[100];
-    char          str_construct_buf2[100];
-    const char   *str_construct;
-    const char   *str_construct2;
-    gsize         l;
-    const char   *str_normalized;
-    gs_free char *str_normalized_alloc = NULL;
+    gs_free_error GError *error  = NULL;
+    NMDnsServer           server = {};
+    gboolean              ret;
 
-    g_assert(str);
-    g_assert(exp_addr);
+    ret = nm_dns_uri_parse(AF_UNSPEC, str, &server, &error);
 
-    r = nm_inet_parse_bin(AF_UNSPEC, exp_addr, &addr_family, &exp_addr_bin);
-    g_assert(r);
-    g_assert(NM_IN_SET(addr_family, AF_INET, AF_INET6));
-
-    addr_family_request = nmtst_get_rand_bool();
-    if (nmtst_get_rand_bool())
-        p_detect_addr = NULL;
-    if ((addr_family_request || !p_detect_addr) && nmtst_get_rand_bool())
-        p_detect_addr_family = NULL;
-    if (nmtst_get_rand_bool())
-        p_detect_server_name = NULL;
-
-    r = nm_utils_dnsname_parse(addr_family_request ? addr_family : AF_UNSPEC,
-                               str,
-                               p_detect_addr_family,
-                               p_detect_addr,
-                               p_detect_server_name);
-    g_assert(r);
-
-    if (p_detect_addr_family)
-        g_assert_cmpint(addr_family, ==, detect_addr_family);
-    if (p_detect_addr)
-        g_assert_cmpstr(nmtst_inet_to_string(addr_family, &detect_addr), ==, exp_addr);
-    if (p_detect_server_name)
-        g_assert_cmpstr(detect_server_name, ==, exp_server_name);
-
-    r = nm_utils_dnsname_parse(addr_family == AF_INET ? AF_INET6 : AF_INET,
-                               str,
-                               p_detect_addr_family,
-                               p_detect_addr,
-                               p_detect_server_name);
-    g_assert(!r);
-
-    /* Construct the expected value. */
-    str_construct = nm_utils_dnsname_construct(addr_family,
-                                               &exp_addr_bin,
-                                               exp_server_name,
-                                               str_construct_buf,
-                                               sizeof(str_construct_buf));
-    g_assert(str_construct);
-    g_assert(str_construct == str_construct_buf);
-    g_assert(strlen(str_construct) < sizeof(str_construct_buf));
-
-    /* Check that a too short buffer causes truncation. */
-    l              = nmtst_get_rand_uint32() % (strlen(str_construct) + 10);
-    str_construct2 = nm_utils_dnsname_construct(addr_family,
-                                                &exp_addr_bin,
-                                                exp_server_name,
-                                                str_construct_buf2,
-                                                l);
-    if (str_construct2) {
-        g_assert(str_construct2 == str_construct_buf2);
-        g_assert_cmpstr(str_construct2, ==, str_construct);
-        g_assert(l > strlen(str_construct));
-    } else
-        g_assert(l <= strlen(str_construct));
-
-    if (!nm_streq(str_construct, str)) {
-        _t_dnsname_1(str_construct, exp_addr, exp_server_name);
-    }
-
-    str_normalized = nm_utils_dnsname_normalize(nmtst_get_rand_bool() ? addr_family : AF_UNSPEC,
-                                                str,
-                                                &str_normalized_alloc);
-    g_assert(str_normalized);
-    if (str_normalized_alloc) {
-        g_assert(str_normalized == str_normalized_alloc);
-        g_assert_cmpstr(str_normalized, !=, str);
-    } else {
-        g_assert(str == str_normalized);
-    }
-    g_assert_cmpstr(str_normalized, ==, str_construct);
-
-    nm_clear_g_free(&str_normalized_alloc);
-    str_normalized = nm_utils_dnsname_normalize(addr_family == AF_INET ? AF_INET6 : AF_INET,
-                                                str,
-                                                &str_normalized_alloc);
-    g_assert(!str_normalized);
-    g_assert(!str_normalized_alloc);
+    g_assert(!ret);
+    g_assert(error);
+    g_assert(error->message);
+    g_assert(error->message[0] != '\0');
 }
 
 static void
-_t_dnsname_0(const char *str)
+dns_uri_parse_ok(const char    *str,
+                 int            addr_family,
+                 NMDnsUriScheme scheme,
+                 const char    *addr,
+                 int            port,
+                 const char    *sname,
+                 const char    *ifname)
 {
-    gboolean      addr_family_request;
-    int           detect_addr_family;
-    NMIPAddr      detect_addr;
-    const char   *detect_server_name;
-    int          *p_detect_addr_family = &detect_addr_family;
-    NMIPAddr     *p_detect_addr        = &detect_addr;
-    const char  **p_detect_server_name = &detect_server_name;
-    const char   *str_normalized;
-    gs_free char *str_normalized_alloc = NULL;
-    gboolean      r;
+    NMDnsServer dns = {};
+    char        addrstr[NM_INET_ADDRSTRLEN];
+    gboolean    ret;
 
-    g_assert(str);
+    for (int i = 0; i < 2; i++) {
+        gs_free_error GError *error     = NULL;
+        gboolean              af_unspec = i;
 
-    addr_family_request = nmtst_get_rand_bool();
-    if (nmtst_get_rand_bool())
-        p_detect_addr = NULL;
-    if ((addr_family_request || !p_detect_addr) && nmtst_get_rand_bool())
-        p_detect_addr_family = NULL;
-    if (nmtst_get_rand_bool())
-        p_detect_server_name = NULL;
+        ret = nm_dns_uri_parse(af_unspec ? AF_UNSPEC : addr_family, str, &dns, &error);
+        g_assert(ret);
+        g_assert_no_error(error);
 
-    r = nm_utils_dnsname_parse(addr_family_request ? nmtst_rand_select(AF_INET, AF_INET6)
-                                                   : AF_UNSPEC,
-                               str,
-                               p_detect_addr_family,
-                               p_detect_addr,
-                               p_detect_server_name);
-    g_assert(!r);
+        g_assert_cmpint(addr_family, ==, dns.addr_family);
+        g_assert_cmpint(port, ==, dns.port);
+        g_assert_cmpstr(sname, ==, dns.servername);
+        g_assert_cmpstr(ifname ?: "", ==, dns.interface);
 
-    str_normalized = nm_utils_dnsname_normalize(nmtst_rand_select(AF_UNSPEC, AF_INET, AF_INET6),
-                                                str,
-                                                &str_normalized_alloc);
-    g_assert(!str_normalized);
-    g_assert(!str_normalized_alloc);
+        nm_inet_ntop(dns.addr_family, &dns.addr, addrstr);
+        g_assert_cmpstr(addrstr, ==, addr);
+
+        /* Parse with the wrong address family must fail */
+        ret = nm_dns_uri_parse(addr_family == AF_INET ? AF_INET6 : AF_INET, str, &dns, &error);
+        g_assert(!ret);
+        g_assert(error);
+    }
+}
+
+#define t_dns_1(str, af, scheme, addr, port, sname, ifname) \
+    dns_uri_parse_ok((str),                                 \
+                     (AF_##af),                             \
+                     (NM_DNS_URI_SCHEME_##scheme),          \
+                     (addr),                                \
+                     (port),                                \
+                     (sname),                               \
+                     (ifname))
+
+static void
+test_dns_uri_parse(void)
+{
+    /* clang-format off */
+    t_dns_1("dns+tls://8.8.8.8",                   INET,  TLS,  "8.8.8.8",            0,     NULL,      NULL);
+    t_dns_1("dns+tls://8.8.8.8",                   INET,  TLS,  "8.8.8.8",            0,     NULL,      NULL);
+    t_dns_1("dns+tls://1.2.3.4#name",              INET,  TLS,  "1.2.3.4",            0,     "name",    NULL);
+    t_dns_1("dns+tls://1.2.3.4#a.b.c",             INET,  TLS,  "1.2.3.4",            0,     "a.b.c",   NULL);
+    t_dns_1("dns+tls://1.2.3.4:53",                INET,  TLS,  "1.2.3.4",            53,    NULL,      NULL);
+    t_dns_1("dns+tls://1.2.3.4:53#foobar",         INET,  TLS,  "1.2.3.4",            53,    "foobar",  NULL);
+    t_dns_1("dns+tls://192.168.120.250:99",        INET,  TLS,  "192.168.120.250",    99,    NULL,      NULL);
+    t_dns_1("dns+udp://8.8.8.8:65535",             INET,  UDP,  "8.8.8.8",         65535,    NULL,      NULL);
+
+    t_dns_1("dns+udp://[fd01::1]",                 INET6, UDP,  "fd01::1",            0,     NULL,      NULL);
+    t_dns_1("dns+tls://[fd01::2]:5353",            INET6, UDP,  "fd01::2",            5353,  NULL,      NULL);
+    t_dns_1("dns+tls://[::1]#name",                INET6, UDP,  "::1",                0,     "name",    NULL);
+    t_dns_1("dns+tls://[::2]:65535#name",          INET6, UDP,  "::2",                65535, "name",    NULL);
+    t_dns_1("dns+udp://[::ffff:1.2.3.4]",          INET6, UDP,  "::ffff:1.2.3.4",     0,     NULL,      NULL);
+    t_dns_1("dns+tls://[fe80::1%eth0]",            INET6, UDP,  "fe80::1",            0,     NULL,      "eth0");
+    t_dns_1("dns+tls://[fe80::2%en1]:53#a",        INET6, UDP,  "fe80::2",            53,    "a",       "en1");
+    t_dns_1("dns+tls://[fe80::1%en3456789012345]", INET6, UDP,  "fe80::1",            0,     NULL,      "en3456789012345");
+
+    t_dns_1("1.2.3.4",                             INET,  NONE, "1.2.3.4",            0,     NULL,      NULL);
+    t_dns_1("1.2.3.4#foo",                         INET,  NONE, "1.2.3.4",            0,     "foo",     NULL);
+    t_dns_1("1::#x",                               INET6, NONE, "1::",                0,     "x",       NULL);
+    t_dns_1("1::0#x",                              INET6, NONE, "1::",                0,     "x",       NULL);
+    t_dns_1("192.168.0.1",                         INET,  NONE, "192.168.0.1",        0,     NULL,      NULL);
+    t_dns_1("192.168.0.1#tst.com",                 INET,  NONE, "192.168.0.1",        0,     "tst.com", NULL);
+    t_dns_1("fe80::18",                            INET6, NONE, "fe80::18",           0,     NULL,      NULL);
+    t_dns_1("fe80::18#foo.com",                    INET6, NONE, "fe80::18",           0,     "foo.com", NULL);
+    /* clang-format on */
+
+    t_dns_0("http://8.8.8.8");              /* unsupported schema */
+    t_dns_0("dns+udp://1.2.3.4#name");      /* servername not supported for plain UDP */
+    t_dns_0("dns+tls://1.2.3");             /* invalid address */
+    t_dns_0("dns+tls://fd01::1");           /* IPv6 requires brackets */
+    t_dns_0("dns+tls://[fd13:a:aaaa]");     /* invalid address */
+    t_dns_0("dns+tls://1.2.3.4:1:1");       /* invalid syntax */
+    t_dns_0("dns+tls://1.2.3.4#name#name"); /* invalid syntax */
+    t_dns_0("dns+tls://1.2.3.4%eth0");      /* interface only allowed for IPv6 */
+    t_dns_0("dns+tls://[2001::1%eth0]");    /* interface only allowed for IPv6 link-local */
+    t_dns_0("dns+tls://[fe80::1%en34567890123456]"); /* interface name too long */
+    t_dns_0("1.2.3.4#");
+    t_dns_0("1::0#");
+    t_dns_0("192.168.0.1:53");
+    t_dns_0("192.168.0.1:53#example.com");
+    t_dns_0("fe80::18%19");
+    t_dns_0("fe80::18%lo");
+    t_dns_0("[fe80::18]:53");
+    t_dns_0("[fe80::18]:53%19");
+    t_dns_0("[fe80::18]:53%lo");
+    t_dns_0("fe80::18%19#hoge.com");
+    t_dns_0("[fe80::18]:53#hoge.com");
+    t_dns_0("[fe80::18]:53%19");
+    t_dns_0("[fe80::18]:53%19#hoge.com");
+    t_dns_0("[fe80::18]:53%lo");
+    t_dns_0("[fe80::18]:53%lo#hoge.com");
 }
 
 static void
-test_dnsname(void)
+test_dns_uri_parse_plain(void)
 {
-    _t_dnsname_1("1.2.3.4", "1.2.3.4", NULL);
-    _t_dnsname_1("1.2.3.4#foo", "1.2.3.4", "foo");
-    _t_dnsname_1("1::#x", "1::", "x");
-    _t_dnsname_1("1::0#x", "1::", "x");
-    _t_dnsname_1("192.168.0.1", "192.168.0.1", NULL);
-    _t_dnsname_1("192.168.0.1#test.com", "192.168.0.1", "test.com");
-    _t_dnsname_1("fe80::18", "fe80::18", NULL);
-    _t_dnsname_1("fe80::18#hoge.com", "fe80::18", "hoge.com");
+    struct {
+        const char *input;
+        int         input_af;
+        gboolean    result;
+        const char *addrstr;
+    } values[] = {
+        {"1.2.3.4", AF_INET, TRUE, "1.2.3.4"},
+        {"1.2.3.4", AF_INET6, FALSE, NULL},
+        {"1.2.3.4", AF_UNSPEC, TRUE, "1.2.3.4"},
+        {"1234:5555:ffff:dddd::4321", AF_INET, FALSE, NULL},
+        {"1234:5555:ffff:dddd::4321", AF_INET6, TRUE, "1234:5555:ffff:dddd::4321"},
+        {"1234:5555:ffff:dddd::4321", AF_UNSPEC, TRUE, "1234:5555:ffff:dddd::4321"},
+        {"192.0.2.1#example.com", AF_INET, TRUE, "192.0.2.1"},
+        {"192.0.2.1#example.com", AF_UNSPEC, TRUE, "192.0.2.1"},
+        {"192.0.2.1#example.com", AF_INET6, FALSE, NULL},
+        {"dns+tls://1.2.3.4", AF_INET, FALSE, NULL},
+        {"dns+tls://[fd01::1]", AF_INET, FALSE, NULL},
+        {"dns+udp://1.2.3.4:53", AF_INET, TRUE, "1.2.3.4"},
+        {"dns+udp://1.2.3.4:54", AF_INET, FALSE, NULL},
+        {"dns+udp://[fd01::1]", AF_INET6, TRUE, "fd01::1"},
+        {"dns+udp://[fd01::1]:53", AF_INET6, TRUE, "fd01::1"},
+        {"dns+udp://[fd01::1]:60000", AF_INET, FALSE, NULL},
+    };
+    guint i;
 
-    _t_dnsname_0("1.2.3.4#");
-    _t_dnsname_0("1::0#");
-    _t_dnsname_0("192.168.0.1:53");
-    _t_dnsname_0("192.168.0.1:53#example.com");
-    _t_dnsname_0("fe80::18%19");
-    _t_dnsname_0("fe80::18%lo");
-    _t_dnsname_0("[fe80::18]:53");
-    _t_dnsname_0("[fe80::18]:53%19");
-    _t_dnsname_0("[fe80::18]:53%lo");
-    _t_dnsname_0("fe80::18%19#hoge.com");
-    _t_dnsname_0("[fe80::18]:53#hoge.com");
-    _t_dnsname_0("[fe80::18]:53%19");
-    _t_dnsname_0("[fe80::18]:53%19#hoge.com");
-    _t_dnsname_0("[fe80::18]:53%lo");
-    _t_dnsname_0("[fe80::18]:53%lo#hoge.com");
+    for (i = 0; i < G_N_ELEMENTS(values); i++) {
+        char     addrstr[NM_INET_ADDRSTRLEN];
+        gboolean result;
+        NMIPAddr addr;
+
+        result = nm_dns_uri_parse_plain(values[i].input_af, values[i].input, addrstr, &addr);
+        g_assert_cmpint(result, ==, values[i].result);
+        if (result) {
+            char buf[NM_INET_ADDRSTRLEN];
+
+            nm_inet_ntop(strchr(addrstr, ':') ? AF_INET6 : AF_INET, addr.addr_ptr, buf);
+            g_assert_cmpstr(buf, ==, addrstr);
+            g_assert_cmpstr(addrstr, ==, values[i].addrstr);
+        }
+    }
+}
+
+static void
+t_dns_uri_normalize(const char *input, const char *expected)
+{
+    const char   *str;
+    gs_free char *str_free = NULL;
+
+    str = nm_dns_uri_normalize(AF_UNSPEC, input, &str_free);
+    g_assert_cmpstr(str, ==, expected);
+}
+
+static void
+test_dns_uri_normalize(void)
+{
+    t_dns_uri_normalize("8.8.8.8", "8.8.8.8");
+    t_dns_uri_normalize("dns+tls://[2001:0:0::1234]:999#name", "dns+tls://[2001::1234]:999#name");
+    t_dns_uri_normalize("dns+udp://[0::1]:0123", "dns+udp://[::1]:123");
+    t_dns_uri_normalize("8.8.8.888", NULL);
 }
 
 /*****************************************************************************/
@@ -11614,10 +11737,10 @@ main(int argc, char **argv)
                     test_connection_normalize_virtual_iface_name);
     g_test_add_func("/core/general/test_connection_normalize_uuid", test_connection_normalize_uuid);
     g_test_add_func("/core/general/test_connection_normalize_type", test_connection_normalize_type);
-    g_test_add_func("/core/general/test_connection_normalize_slave_type_1",
-                    test_connection_normalize_slave_type_1);
-    g_test_add_func("/core/general/test_connection_normalize_slave_type_2",
-                    test_connection_normalize_slave_type_2);
+    g_test_add_func("/core/general/test_connection_normalize_port_type_1",
+                    test_connection_normalize_port_type_1);
+    g_test_add_func("/core/general/test_connection_normalize_port_type_2",
+                    test_connection_normalize_port_type_2);
     g_test_add_func("/core/general/test_connection_normalize_infiniband",
                     test_connection_normalize_infiniband);
     g_test_add_func("/core/general/test_connection_normalize_gateway_never_default",
@@ -11834,7 +11957,9 @@ main(int argc, char **argv)
     g_test_add_func("/core/general/test_system_encodings", test_system_encodings);
     g_test_add_func("/core/general/test_direct_string_is_refstr", test_direct_string_is_refstr);
     g_test_add_func("/core/general/test_connection_path", test_connection_path);
-    g_test_add_func("/core/general/test_dnsname", test_dnsname);
+    g_test_add_func("/core/general/test_dns_uri_parse", test_dns_uri_parse);
+    g_test_add_func("/core/general/test_dns_uri_get_legacy", test_dns_uri_parse_plain);
+    g_test_add_func("/core/general/test_dns_uri_normalize", test_dns_uri_normalize);
     g_test_add_func("/core/general/test_dhcp_iaid_hexstr", test_dhcp_iaid_hexstr);
 
     return g_test_run();

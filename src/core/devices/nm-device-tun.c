@@ -143,8 +143,7 @@ complete_connection(NMDevice            *device,
                               NULL,
                               _("TUN connection"),
                               NULL,
-                              NULL,
-                              TRUE);
+                              NULL);
 
     s_tun = nm_connection_get_setting_tun(connection);
     if (!s_tun) {
@@ -243,12 +242,14 @@ create_and_realize(NMDevice              *device,
         g_return_val_if_reached(FALSE);
     }
 
-    owner = _nm_utils_ascii_str_to_int64(nm_setting_tun_get_owner(s_tun), 10, 0, G_MAXINT32, -1);
+    owner =
+        _nm_utils_ascii_str_to_int64(nm_setting_tun_get_owner(s_tun), 10, 0, G_MAXUINT32 - 1, -1);
     if (owner != -1) {
         props.owner_valid = TRUE;
         props.owner       = owner;
     }
-    group = _nm_utils_ascii_str_to_int64(nm_setting_tun_get_group(s_tun), 10, 0, G_MAXINT32, -1);
+    group =
+        _nm_utils_ascii_str_to_int64(nm_setting_tun_get_group(s_tun), 10, 0, G_MAXUINT32 - 1, -1);
     if (group != -1) {
         props.group_valid = TRUE;
         props.group       = group;
@@ -279,7 +280,7 @@ _same_og(const char *str, gboolean og_valid, guint32 og_num)
 {
     gint64 v;
 
-    v = _nm_utils_ascii_str_to_int64(str, 10, 0, G_MAXINT32, -1);
+    v = _nm_utils_ascii_str_to_int64(str, 10, 0, G_MAXUINT32 - 1, -1);
     return (!og_valid && (v == (gint64) -1)) || (og_valid && (((guint32) v) == og_num));
 }
 
@@ -452,9 +453,11 @@ static const NMDBusInterfaceInfoExtended interface_info_device_tun = {
             NM_DEFINE_DBUS_PROPERTY_INFO_EXTENDED_READABLE("MultiQueue",
                                                            "b",
                                                            NM_DEVICE_TUN_MULTI_QUEUE),
-            NM_DEFINE_DBUS_PROPERTY_INFO_EXTENDED_READABLE("HwAddress",
-                                                           "s",
-                                                           NM_DEVICE_HW_ADDRESS), ), ),
+            NM_DEFINE_DBUS_PROPERTY_INFO_EXTENDED_READABLE(
+                "HwAddress",
+                "s",
+                NM_DEVICE_HW_ADDRESS,
+                .annotations = NM_GDBUS_ANNOTATION_INFO_LIST_DEPRECATED(), ), ), ),
 };
 
 static void

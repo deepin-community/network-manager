@@ -15,7 +15,6 @@
 #include <linux/if_ether.h>
 
 #include "NetworkManagerUtils.h"
-#include "NetworkManagerUtils.h"
 #include "libnm-core-aux-intern/nm-libnm-core-utils.h"
 #include "libnm-core-intern/nm-core-internal.h"
 #include "libnm-glib-aux/nm-uuid.h"
@@ -370,7 +369,7 @@ check_connection_compatible(NMDevice     *device,
     if (s_wired) {
         const char        *mac, *perm_hw_addr;
         gboolean           try_mac = TRUE;
-        const char *const *mac_blacklist;
+        const char *const *mac_denylist;
         int                i;
 
         if (!match_subchans(self, s_wired, &try_mac)) {
@@ -390,17 +389,17 @@ check_connection_compatible(NMDevice     *device,
                 return FALSE;
             }
 
-            /* Check for MAC address blacklist */
-            mac_blacklist = nm_setting_wired_get_mac_address_blacklist(s_wired);
-            for (i = 0; mac_blacklist[i]; i++) {
-                if (!nm_utils_hwaddr_valid(mac_blacklist[i], ETH_ALEN)) {
+            /* Check for MAC address denylist */
+            mac_denylist = nm_setting_wired_get_mac_address_denylist(s_wired);
+            for (i = 0; mac_denylist[i]; i++) {
+                if (!nm_utils_hwaddr_valid(mac_denylist[i], ETH_ALEN)) {
                     nm_utils_error_set_literal(error,
                                                NM_UTILS_ERROR_CONNECTION_AVAILABLE_TEMPORARY,
                                                "invalid MAC in blacklist");
                     return FALSE;
                 }
 
-                if (nm_utils_hwaddr_matches(mac_blacklist[i], -1, perm_hw_addr, -1)) {
+                if (nm_utils_hwaddr_matches(mac_denylist[i], -1, perm_hw_addr, -1)) {
                     nm_utils_error_set_literal(error,
                                                NM_UTILS_ERROR_CONNECTION_AVAILABLE_TEMPORARY,
                                                "permanent MAC address of device blacklisted");
@@ -630,10 +629,17 @@ build_supplicant_config(NMDeviceEthernet *self, GError **error)
     mtu      = nm_platform_link_get_mtu(nm_device_get_platform(NM_DEVICE(self)),
                                    nm_device_get_ifindex(NM_DEVICE(self)));
 
-    config = nm_supplicant_config_new(NM_SUPPL_CAP_MASK_NONE);
+    config = nm_supplicant_config_new(NM_SUPPL_CAP_MASK_NONE,
+                                      nm_utils_get_connection_first_permissions_user(connection));
 
     security = nm_connection_get_setting_802_1x(connection);
-    if (!nm_supplicant_config_add_setting_8021x(config, security, con_uuid, mtu, TRUE, error)) {
+    if (!nm_supplicant_config_add_setting_8021x(config,
+                                                security,
+                                                con_uuid,
+                                                mtu,
+                                                TRUE,
+                                                nm_device_get_private_files(NM_DEVICE(self)),
+                                                error)) {
         g_prefix_error(error, "802-1x-setting: ");
         g_clear_object(&config);
     }
@@ -701,6 +707,9 @@ supplicant_iface_start(NMDeviceEthernet *self)
     NMDeviceEthernetPrivate            *priv   = NM_DEVICE_ETHERNET_GET_PRIVATE(self);
     gs_unref_object NMSupplicantConfig *config = NULL;
     gs_free_error GError               *error  = NULL;
+    NMActRequest                       *request;
+    NMActiveConnection                 *controller_ac;
+    NMDevice                           *controller;
 
     config = build_supplicant_config(self, &error);
     if (!config) {
@@ -715,6 +724,16 @@ supplicant_iface_start(NMDeviceEthernet *self)
     }
 
     nm_supplicant_interface_disconnect(priv->supplicant.iface);
+
+    /* Tell the supplicant in which bridge the interface is */
+    if ((request = nm_device_get_act_request(NM_DEVICE(self)))
+        && (controller_ac = nm_active_connection_get_controller(NM_ACTIVE_CONNECTION(request)))
+        && (controller = nm_active_connection_get_device(controller_ac))
+        && nm_device_get_device_type(controller) == NM_DEVICE_TYPE_BRIDGE) {
+        nm_supplicant_interface_set_bridge(priv->supplicant.iface, nm_device_get_iface(controller));
+    } else
+        nm_supplicant_interface_set_bridge(priv->supplicant.iface, NULL);
+
     nm_supplicant_interface_assoc(priv->supplicant.iface, config, supplicant_iface_assoc_cb, self);
     return TRUE;
 }
@@ -988,8 +1007,8 @@ act_stage1_prepare(NMDevice *device, NMDeviceStateReason *out_failure_reason)
     NMDeviceEthernet        *self = NM_DEVICE_ETHERNET(device);
     NMDeviceEthernetPrivate *priv = NM_DEVICE_ETHERNET_GET_PRIVATE(self);
 
-    if (nm_device_sys_iface_state_is_external_or_assume(device)) {
-        if (!priv->ethtool_prev_set && !nm_device_sys_iface_state_is_external(device)) {
+    if (nm_device_managed_type_is_external_or_assume(device)) {
+        if (!priv->ethtool_prev_set && !nm_device_managed_type_is_external(device)) {
             NMSettingWired *s_wired;
 
             /* During restart of NetworkManager service we forget the original auto
@@ -1431,7 +1450,7 @@ act_stage2_config(NMDevice *device, NMDeviceStateReason *out_failure_reason)
 
                 mtu = nm_setting_ppp_get_mtu(s_ppp);
                 mru = nm_setting_ppp_get_mru(s_ppp);
-                mxu = MAX(mru, mtu);
+                mxu = NM_MAX(mru, mtu);
                 if (mxu) {
                     _LOGD(LOGD_PPP,
                           "set MTU to %u (PPP interface MRU %u, MTU %u)",
@@ -1451,7 +1470,7 @@ act_stage2_config(NMDevice *device, NMDeviceStateReason *out_failure_reason)
             g_return_val_if_fail(s_pppoe, NM_ACT_STAGE_RETURN_FAILURE);
 
             priv->ppp_data.ppp_mgr =
-                nm_ppp_mgr_start(&((const NMPppMgrConfig){
+                nm_ppp_mgr_start(&((const NMPppMgrConfig) {
                                      .netns         = nm_device_get_netns(device),
                                      .parent_iface  = nm_device_get_iface(device),
                                      .callback      = _ppp_mgr_callback,
@@ -1640,8 +1659,7 @@ complete_connection(NMDevice            *device,
                                   NULL,
                                   _("Veth connection"),
                                   "veth",
-                                  NULL,
-                                  TRUE);
+                                  NULL);
 
         s_veth = _nm_connection_ensure_setting(connection, NM_TYPE_SETTING_VETH);
 
@@ -1698,8 +1716,7 @@ complete_connection(NMDevice            *device,
         NULL,
         s_pppoe ? _("PPPoE connection") : _("Wired connection"),
         NULL,
-        nm_setting_wired_get_mac_address(s_wired) ? NULL : nm_device_get_iface(device),
-        s_pppoe ? FALSE : TRUE); /* No IPv6 by default yet for PPPoE */
+        nm_setting_wired_get_mac_address(s_wired) ? NULL : nm_device_get_iface(device));
 
     return TRUE;
 }
@@ -1711,10 +1728,8 @@ new_default_connection(NMDevice *self)
     NMSettingsConnection *const   *connections;
     NMSetting                     *setting;
     gs_unref_hashtable GHashTable *existing_ids = NULL;
-    struct udev_device            *dev;
     const char                    *perm_hw_addr;
     const char                    *iface;
-    const char                    *uprop   = "0";
     gs_free char                  *defname = NULL;
     gs_free char                  *uuid    = NULL;
     guint                          i, n_connections;
@@ -1759,30 +1774,6 @@ new_default_connection(NMDevice *self)
                  NM_SETTING_CONNECTION_INTERFACE_NAME,
                  iface,
                  NULL);
-
-    /* Check if we should create a Link-Local only connection */
-    dev = nm_platform_link_get_udev_device(nm_device_get_platform(NM_DEVICE(self)),
-                                           nm_device_get_ip_ifindex(self));
-    if (dev)
-        uprop = udev_device_get_property_value(dev, "NM_AUTO_DEFAULT_LINK_LOCAL_ONLY");
-
-    if (_nm_utils_ascii_str_to_bool(uprop, FALSE)) {
-        setting = nm_setting_ip4_config_new();
-        g_object_set(setting,
-                     NM_SETTING_IP_CONFIG_METHOD,
-                     NM_SETTING_IP4_CONFIG_METHOD_LINK_LOCAL,
-                     NULL);
-        nm_connection_add_setting(connection, setting);
-
-        setting = nm_setting_ip6_config_new();
-        g_object_set(setting,
-                     NM_SETTING_IP_CONFIG_METHOD,
-                     NM_SETTING_IP6_CONFIG_METHOD_LINK_LOCAL,
-                     NM_SETTING_IP_CONFIG_MAY_FAIL,
-                     TRUE,
-                     NULL);
-        nm_connection_add_setting(connection, setting);
-    }
 
     return connection;
 }
@@ -1922,7 +1913,7 @@ get_ip_method_auto(NMDevice *device, int addr_family)
         /* We cannot do DHCPv4 on a PPP link, instead we get "auto" IP addresses
          * by pppd. Return "manual" here, which has the suitable effect to a
          * (zero) manual addresses in addition. */
-        return NM_SETTING_IP6_CONFIG_METHOD_MANUAL;
+        return NM_SETTING_IP4_CONFIG_METHOD_MANUAL;
     }
 
     return NM_SETTING_IP6_CONFIG_METHOD_AUTO;
@@ -2043,14 +2034,20 @@ static const NMDBusInterfaceInfoExtended interface_info_device_wired = {
         NM_DBUS_INTERFACE_DEVICE_WIRED,
         .properties = NM_DEFINE_GDBUS_PROPERTY_INFOS(
             NM_DEFINE_DBUS_PROPERTY_INFO_EXTENDED_READABLE("HwAddress", "s", NM_DEVICE_HW_ADDRESS),
-            NM_DEFINE_DBUS_PROPERTY_INFO_EXTENDED_READABLE("PermHwAddress",
-                                                           "s",
-                                                           NM_DEVICE_PERM_HW_ADDRESS),
+            NM_DEFINE_DBUS_PROPERTY_INFO_EXTENDED_READABLE(
+                "PermHwAddress",
+                "s",
+                NM_DEVICE_PERM_HW_ADDRESS,
+                .annotations = NM_GDBUS_ANNOTATION_INFO_LIST_DEPRECATED(), ),
             NM_DEFINE_DBUS_PROPERTY_INFO_EXTENDED_READABLE("Speed", "u", NM_DEVICE_ETHERNET_SPEED),
             NM_DEFINE_DBUS_PROPERTY_INFO_EXTENDED_READABLE("S390Subchannels",
                                                            "as",
                                                            NM_DEVICE_ETHERNET_S390_SUBCHANNELS),
-            NM_DEFINE_DBUS_PROPERTY_INFO_EXTENDED_READABLE("Carrier", "b", NM_DEVICE_CARRIER), ), ),
+            NM_DEFINE_DBUS_PROPERTY_INFO_EXTENDED_READABLE(
+                "Carrier",
+                "b",
+                NM_DEVICE_CARRIER,
+                .annotations = NM_GDBUS_ANNOTATION_INFO_LIST_DEPRECATED(), ), ), ),
 };
 
 static void

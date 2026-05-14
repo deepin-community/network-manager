@@ -14,7 +14,7 @@
 # API (like NM.Client.new()) is for simple programs but usually not best
 # for using NMClient for real applications.
 #
-# To learn more about GMainContext, read https://developer.gnome.org/SearchProvider/documentation/tutorials/main-contexts.html
+# To learn more about GMainContext, read https://developer.gnome.org/documentation/tutorials/main-contexts.html
 # When I say "mainloop" or "event loop", I mean GMainContext. GMainLoop is
 # a small wrapper around GMainContext to run the context with a boolean
 # flag.
@@ -70,6 +70,7 @@ def error_is_cancelled(e):
 
 
 ###############################################################################
+
 
 # A Context manager for running a mainloop. Of course, this does
 # not do anything magically. You can run the context/mainloop without
@@ -187,7 +188,7 @@ def create_nmc(dbus_connection):
     # which has an overhead.
     #
     # Also, split the GObject creation and the init_async() call in two.
-    # That allows to pass construct-only parameters, in particular like
+    # That allows one to pass construct-only parameters, in particular like
     # the instance_flags.
 
     # Create a separate context for the NMClient. The NMClient is strongly
@@ -265,7 +266,6 @@ def create_nmc(dbus_connection):
 
 
 def make_call(nmc):
-
     log("[make_call]: make some async D-Bus call")
 
     if not nmc:
@@ -273,7 +273,6 @@ def make_call(nmc):
         return
 
     with MainLoopRun("make_call", nmc.get_main_context(), 1) as r:
-
         # There are two reasons why async operations are preferable with
         # D-Bus and libnm:
         #
@@ -405,7 +404,6 @@ def destroy_nmc(nmc_holder, destroy_mode):
             raise Exception("Failure to destroy NMClient: something keeps it alive")
 
     else:
-
         if destroy_mode == 1:
             ctx = GLib.MainContext.default()
         else:

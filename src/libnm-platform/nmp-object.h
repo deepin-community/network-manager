@@ -38,11 +38,12 @@ G_STATIC_ASSERT(sizeof(NMSockAddrUnion) == sizeof(((NMSockAddrUnion *) NULL)->in
 
 /* we initialize the largest union member, to ensure that all fields are initialized. */
 
-#define NM_SOCK_ADDR_UNION_INIT_UNSPEC \
-    {                                  \
-        .in6 = {                       \
-            .sin6_family = AF_UNSPEC,  \
-        },                             \
+#define NM_SOCK_ADDR_UNION_INIT_UNSPEC    \
+    {                                     \
+        .in6 =                            \
+            {                             \
+                .sin6_family = AF_UNSPEC, \
+            },                            \
     }
 
 int nm_sock_addr_union_cmp(const NMSockAddrUnion *a, const NMSockAddrUnion *b);
@@ -254,6 +255,10 @@ typedef struct {
 } NMPObjectLnkGre;
 
 typedef struct {
+    NMPlatformLnkHsr _public;
+} NMPObjectLnkHsr;
+
+typedef struct {
     NMPlatformLnkInfiniband _public;
 } NMPObjectLnkInfiniband;
 
@@ -264,6 +269,10 @@ typedef struct {
 typedef struct {
     NMPlatformLnkIpIp _public;
 } NMPObjectLnkIpIp;
+
+typedef struct {
+    NMPlatformLnkIpvlan _public;
+} NMPObjectLnkIpvlan;
 
 typedef struct {
     NMPlatformLnkMacsec _public;
@@ -377,6 +386,9 @@ struct _NMPObject {
         NMPlatformLnkGre lnk_gre;
         NMPObjectLnkGre  _lnk_gre;
 
+        NMPlatformLnkHsr lnk_hsr;
+        NMPObjectLnkHsr  _lnk_hsr;
+
         NMPlatformLnkInfiniband lnk_infiniband;
         NMPObjectLnkInfiniband  _lnk_infiniband;
 
@@ -385,6 +397,9 @@ struct _NMPObject {
 
         NMPlatformLnkIp6Tnl lnk_ip6tnl;
         NMPObjectLnkIp6Tnl  _lnk_ip6tnl;
+
+        NMPlatformLnkIpvlan lnk_ipvlan;
+        NMPObjectLnkIpvlan  _lnk_ipvlan;
 
         NMPlatformLnkMacsec lnk_macsec;
         NMPObjectLnkMacsec  _lnk_macsec;
@@ -530,11 +545,13 @@ _NMP_OBJECT_TYPE_IS_OBJ_WITH_IFINDEX(NMPObjectType obj_type)
     case NMP_OBJECT_TYPE_LNK_BOND:
     case NMP_OBJECT_TYPE_LNK_GRE:
     case NMP_OBJECT_TYPE_LNK_GRETAP:
+    case NMP_OBJECT_TYPE_LNK_HSR:
     case NMP_OBJECT_TYPE_LNK_INFINIBAND:
     case NMP_OBJECT_TYPE_LNK_IP6TNL:
     case NMP_OBJECT_TYPE_LNK_IP6GRE:
     case NMP_OBJECT_TYPE_LNK_IP6GRETAP:
     case NMP_OBJECT_TYPE_LNK_IPIP:
+    case NMP_OBJECT_TYPE_LNK_IPVLAN:
     case NMP_OBJECT_TYPE_LNK_MACSEC:
     case NMP_OBJECT_TYPE_LNK_MACVLAN:
     case NMP_OBJECT_TYPE_LNK_MACVTAP:
@@ -943,15 +960,15 @@ const NMPObject *nmp_cache_lookup_link_full(const NMPCache  *cache,
                                             NMPObjectMatchFn match_fn,
                                             gpointer         user_data);
 
-gboolean         nmp_cache_link_connected_for_slave(int ifindex_master, const NMPObject *slave);
+gboolean         nmp_cache_link_connected_for_port(int ifindex_controller, const NMPObject *port);
 gboolean         nmp_cache_link_connected_needs_toggle(const NMPCache  *cache,
-                                                       const NMPObject *master,
-                                                       const NMPObject *potential_slave,
-                                                       const NMPObject *ignore_slave);
-const NMPObject *nmp_cache_link_connected_needs_toggle_by_ifindex(const NMPCache  *cache,
-                                                                  int              master_ifindex,
-                                                                  const NMPObject *potential_slave,
-                                                                  const NMPObject *ignore_slave);
+                                                       const NMPObject *controller,
+                                                       const NMPObject *potential_port,
+                                                       const NMPObject *ignore_port);
+const NMPObject *nmp_cache_link_connected_needs_toggle_by_ifindex(const NMPCache *cache,
+                                                                  int controller_ifindex,
+                                                                  const NMPObject *potential_port,
+                                                                  const NMPObject *ignore_port);
 
 gboolean nmp_cache_use_udev_get(const NMPCache *cache);
 
@@ -985,10 +1002,10 @@ NMPCacheOpsType nmp_cache_update_link_udev(NMPCache           *cache,
                                            struct udev_device *udevice,
                                            const NMPObject   **out_obj_old,
                                            const NMPObject   **out_obj_new);
-NMPCacheOpsType nmp_cache_update_link_master_connected(NMPCache         *cache,
-                                                       int               ifindex,
-                                                       const NMPObject **out_obj_old,
-                                                       const NMPObject **out_obj_new);
+NMPCacheOpsType nmp_cache_update_link_controller_connected(NMPCache         *cache,
+                                                           int               ifindex,
+                                                           const NMPObject **out_obj_old,
+                                                           const NMPObject **out_obj_new);
 
 static inline const NMDedupMultiEntry *
 nmp_cache_reresolve_main_entry(NMPCache                *cache,

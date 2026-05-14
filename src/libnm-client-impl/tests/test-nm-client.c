@@ -1023,7 +1023,7 @@ _test_connection_invalid_find_connections(gpointer element, gpointer needle, gpo
     G_STMT_START                                                                          \
     {                                                                                     \
         g_assert_cmpint(idx[i], >=, 0);                                                   \
-        g_assert(path##i &&*path##i);                                                     \
+        g_assert(path##i && *path##i);                                                    \
         g_assert(NM_IS_REMOTE_CONNECTION(connections->pdata[idx[i]]));                    \
         g_assert_cmpstr(nm_connection_get_path(connections->pdata[idx[i]]), ==, path##i); \
     }                                                                                     \
@@ -1099,7 +1099,7 @@ test_connection_invalid(void)
     g_assert_cmpint(connections->len, ==, 3);
     n_found = nmtst_find_all_indexes(connections->pdata,
                                      connections->len,
-                                     (gpointer *) ((const char *[]){path0, path1, path2}),
+                                     (gpointer *) ((const char *[]) {path0, path1, path2}),
                                      3,
                                      _test_connection_invalid_find_connections,
                                      NULL,
@@ -1134,7 +1134,7 @@ test_connection_invalid(void)
     g_assert_cmpint(connections->len, ==, 4);
     n_found = nmtst_find_all_indexes(connections->pdata,
                                      connections->len,
-                                     (gpointer *) ((const char *[]){path0, path1, path2, path3}),
+                                     (gpointer *) ((const char *[]) {path0, path1, path2, path3}),
                                      4,
                                      _test_connection_invalid_find_connections,
                                      NULL,
@@ -1166,7 +1166,7 @@ test_connection_invalid(void)
     g_assert_cmpint(connections->len, ==, 4);
     n_found = nmtst_find_all_indexes(connections->pdata,
                                      connections->len,
-                                     (gpointer *) ((const char *[]){path0, path1, path2, path3}),
+                                     (gpointer *) ((const char *[]) {path0, path1, path2, path3}),
                                      4,
                                      _test_connection_invalid_find_connections,
                                      NULL,
@@ -1202,7 +1202,7 @@ test_connection_invalid(void)
     g_assert_cmpint(connections->len, ==, 4);
     n_found = nmtst_find_all_indexes(connections->pdata,
                                      connections->len,
-                                     (gpointer *) ((const char *[]){path0, path1, path2, path3}),
+                                     (gpointer *) ((const char *[]) {path0, path1, path2, path3}),
                                      4,
                                      _test_connection_invalid_find_connections,
                                      NULL,
@@ -1232,7 +1232,7 @@ test_connection_invalid(void)
     g_assert_cmpint(connections->len, ==, 4);
     n_found = nmtst_find_all_indexes(connections->pdata,
                                      connections->len,
-                                     (gpointer *) ((const char *[]){path0, path1, path2, path3}),
+                                     (gpointer *) ((const char *[]) {path0, path1, path2, path3}),
                                      4,
                                      _test_connection_invalid_find_connections,
                                      NULL,
@@ -1279,7 +1279,7 @@ test_connection_invalid(void)
     g_assert_cmpint(connections->len, ==, 4);
     n_found = nmtst_find_all_indexes(connections->pdata,
                                      connections->len,
-                                     (gpointer *) ((const char *[]){path0, path1, path2, path3}),
+                                     (gpointer *) ((const char *[]) {path0, path1, path2, path3}),
                                      4,
                                      _test_connection_invalid_find_connections,
                                      NULL,
@@ -1326,7 +1326,7 @@ test_connection_invalid(void)
     g_assert_cmpint(connections->len, ==, 4);
     n_found = nmtst_find_all_indexes(connections->pdata,
                                      connections->len,
-                                     (gpointer *) ((const char *[]){path0, path1, path2, path3}),
+                                     (gpointer *) ((const char *[]) {path0, path1, path2, path3}),
                                      4,
                                      _test_connection_invalid_find_connections,
                                      NULL,
@@ -1432,13 +1432,13 @@ test_client_wait_shutdown(void)
     nmtst_assert_success(dbus_connection, error);
 
     for (i_run = 0; i_run < N_RUN; i_run++) {
-        gs_unref_object GCancellable          *init_cancellable = g_cancellable_new();
-        gs_unref_object NMClient              *nmc              = NULL;
-        nm_auto_pop_gmaincontext GMainContext *client_context   = NULL;
-        gboolean                               b;
-        gboolean                               context_integrated = FALSE;
-        gs_unref_object GCancellable          *cancellable_1      = NULL;
-        GMainContext                          *ctx;
+        gs_unref_object GCancellable                    *init_cancellable = g_cancellable_new();
+        gs_unref_object NMClient                        *nmc              = NULL;
+        nm_auto_pop_and_unref_gmaincontext GMainContext *client_context   = NULL;
+        gboolean                                         b;
+        gboolean                                         context_integrated = FALSE;
+        gs_unref_object GCancellable                    *cancellable_1      = NULL;
+        GMainContext                                    *ctx;
 
         /* Choose a random context for the client. */
         ctx = contexts->pdata[nmtst_get_rand_uint32() % contexts->len];

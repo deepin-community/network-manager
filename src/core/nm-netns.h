@@ -41,15 +41,22 @@ NML3Cfg *nm_netns_l3cfg_acquire(NMNetns *netns, int ifindex);
 
 /*****************************************************************************/
 
+typedef enum {
+    NM_NETNS_IP_RESERVATION_TYPE_SHARED4,
+
+    _NM_NETNS_IP_RESERVATION_TYPE_NUM,
+} NMNetnsIPReservationType;
+
 typedef struct {
-    in_addr_t addr;
-    int       _ref_count;
-    NMNetns  *_self;
-} NMNetnsSharedIPHandle;
+    in_addr_t                addr;
+    int                      _ref_count;
+    NMNetnsIPReservationType _type;
+    NMNetns                 *_self;
+} NMNetnsIPReservation;
 
-NMNetnsSharedIPHandle *nm_netns_shared_ip_reserve(NMNetns *self);
+NMNetnsIPReservation *nm_netns_ip_reservation_get(NMNetns *self, NMNetnsIPReservationType type);
 
-void nm_netns_shared_ip_release(NMNetnsSharedIPHandle *handle);
+void nm_netns_ip_reservation_release(NMNetnsIPReservation *reservation);
 
 /*****************************************************************************/
 
@@ -98,7 +105,7 @@ void nm_netns_watcher_add(NMNetns                  *self,
                           NMNetnsWatcherCallback    callback,
                           gpointer                  user_data);
 
-void
-nm_netns_watcher_remove_all(NMNetns *self, gconstpointer tag, gboolean all /* or only dirty */);
+void nm_netns_watcher_remove_all(NMNetns *self, gconstpointer tag);
+void nm_netns_watcher_remove_dirty(NMNetns *self, gconstpointer tag);
 
 #endif /* __NM_NETNS_H__ */

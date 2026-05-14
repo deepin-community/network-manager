@@ -255,8 +255,8 @@ _assert_expected_content(NMConnection *connection, const char *filename, const c
         GError        *_error           = NULL;                           \
         gboolean       _success;                                          \
                                                                           \
-        g_assert(_ifcfg_dir &&_ifcfg_dir[0]);                             \
-        g_assert(_filename &&_filename[0]);                               \
+        g_assert(_ifcfg_dir && _ifcfg_dir[0]);                            \
+        g_assert(_filename && _filename[0]);                              \
                                                                           \
         _success = nms_ifcfg_rh_writer_write_connection(_connection,      \
                                                         _ifcfg_dir,       \
@@ -2212,7 +2212,7 @@ test_read_dns_options(void)
 }
 
 static void
-test_clear_master(void)
+test_clear_controller(void)
 {
     nmtst_auto_unlinkfile char   *testfile   = NULL;
     gs_free char                 *keyfile    = NULL;
@@ -2221,7 +2221,7 @@ test_clear_master(void)
     char                         *unmanaged = NULL;
     shvarFile                    *f;
 
-    /* 1. load the bridge slave connection from disk */
+    /* 1. load the bridge port connection from disk */
     connection = _connection_from_file(TEST_IFCFG_DIR "/ifcfg-test-bridge-component",
                                        NULL,
                                        TYPE_ETHERNET,
@@ -2230,8 +2230,8 @@ test_clear_master(void)
 
     s_con = nmtst_connection_assert_setting(connection, NM_TYPE_SETTING_CONNECTION);
 
-    g_assert_cmpstr(nm_setting_connection_get_master(s_con), ==, "br0");
-    g_assert_cmpstr(nm_setting_connection_get_slave_type(s_con), ==, "bridge");
+    g_assert_cmpstr(nm_setting_connection_get_controller(s_con), ==, "br0");
+    g_assert_cmpstr(nm_setting_connection_get_port_type(s_con), ==, "bridge");
 
     /* 2. write the connection to a new file */
     _writer_new_connec_exp(connection,
@@ -2239,7 +2239,7 @@ test_clear_master(void)
                            TEST_IFCFG_DIR "/ifcfg-System_test-bridge-component-a.cexpected",
                            &testfile);
 
-    /* 3. clear master and slave-type */
+    /* 3. clear controller and port-type */
     g_object_set(s_con,
                  NM_SETTING_CONNECTION_MASTER,
                  NULL,
@@ -2247,8 +2247,8 @@ test_clear_master(void)
                  NULL,
                  NULL);
 
-    g_assert_cmpstr(nm_setting_connection_get_master(s_con), ==, NULL);
-    g_assert_cmpstr(nm_setting_connection_get_slave_type(s_con), ==, NULL);
+    g_assert_cmpstr(nm_setting_connection_get_controller(s_con), ==, NULL);
+    g_assert_cmpstr(nm_setting_connection_get_port_type(s_con), ==, NULL);
 
     nmtst_assert_connection_verifies_after_normalization(connection, 0, 0);
 
@@ -3622,6 +3622,12 @@ test_roundtrip_ethtool(void)
 
             optname = nm_ethtool_data[ethtool_id]->optname;
             vtype   = nm_ethtool_id_get_variant_type(ethtool_id);
+
+            if (nm_ethtool_optname_is_channels(optname) || nm_ethtool_optname_is_eee(optname)
+                || nm_ethtool_optname_is_fec(optname)) {
+                /* Not supported */
+                continue;
+            }
 
             if (NM_IN_SET(ethtool_id,
                           NM_ETHTOOL_ID_COALESCE_ADAPTIVE_RX,
@@ -5312,6 +5318,8 @@ test_write_wired_dhcp_8021x_peap_mschapv2(void)
                  "1",
                  NM_SETTING_802_1X_PHASE2_AUTH,
                  "mschapv2",
+                 NM_SETTING_802_1X_OPENSSL_CIPHERS,
+                 "DEFAULT@SECLEVEL=0",
                  NULL);
     nm_setting_802_1x_add_eap_method(s_8021x, "peap");
 
@@ -7663,10 +7671,8 @@ test_read_bridge_component(void)
                                        NULL);
 
     s_con = nmtst_connection_assert_setting(connection, NM_TYPE_SETTING_CONNECTION);
-    g_assert_cmpstr(nm_setting_connection_get_master(s_con), ==, "br0");
-    g_assert_cmpstr(nm_setting_connection_get_slave_type(s_con),
-                    ==,
-                    NM_SETTING_BRIDGE_SETTING_NAME);
+    g_assert_cmpstr(nm_setting_connection_get_controller(s_con), ==, "br0");
+    g_assert_cmpstr(nm_setting_connection_get_port_type(s_con), ==, NM_SETTING_BRIDGE_SETTING_NAME);
 
     s_port = nmtst_connection_assert_setting(connection, NM_TYPE_SETTING_BRIDGE_PORT);
     g_assert(nm_setting_bridge_port_get_hairpin_mode(s_port));
@@ -8246,24 +8252,26 @@ test_write_bond_main(void)
 }
 
 static void
-test_read_bond_slave(void)
+test_read_bond_port(void)
 {
     gs_unref_object NMConnection *connection = NULL;
     NMSettingConnection          *s_con;
 
-    connection =
-        _connection_from_file(TEST_IFCFG_DIR "/ifcfg-test-bond-slave", NULL, TYPE_ETHERNET, NULL);
+    connection = _connection_from_file(TEST_IFCFG_DIR "/ifcfg-test-bond-port-bond0",
+                                       NULL,
+                                       TYPE_ETHERNET,
+                                       NULL);
     g_test_assert_expected_messages();
 
     s_con = nmtst_connection_assert_setting(connection, NM_TYPE_SETTING_CONNECTION);
 
-    g_assert_cmpstr(nm_setting_connection_get_master(s_con), ==, "bond0");
+    g_assert_cmpstr(nm_setting_connection_get_controller(s_con), ==, "bond0");
 
-    g_assert_cmpstr(nm_setting_connection_get_slave_type(s_con), ==, NM_SETTING_BOND_SETTING_NAME);
+    g_assert_cmpstr(nm_setting_connection_get_port_type(s_con), ==, NM_SETTING_BOND_SETTING_NAME);
 }
 
 static void
-test_write_bond_slave(void)
+test_write_bond_port(void)
 {
     nmtst_auto_unlinkfile char   *testfile   = NULL;
     gs_unref_object NMConnection *connection = NULL;
@@ -8304,7 +8312,7 @@ test_write_bond_slave(void)
 }
 
 static void
-test_read_bond_port(void)
+test_read_bond_port_setting(void)
 {
     gs_unref_object NMConnection *connection = NULL;
     NMSettingConnection          *s_con      = NULL;
@@ -8314,15 +8322,15 @@ test_read_bond_port(void)
         _connection_from_file(TEST_IFCFG_DIR "/ifcfg-test-bond-port", NULL, TYPE_ETHERNET, NULL);
 
     s_con = nmtst_connection_assert_setting(connection, NM_TYPE_SETTING_CONNECTION);
-    g_assert_cmpstr(nm_setting_connection_get_master(s_con), ==, "bond99");
-    g_assert_cmpstr(nm_setting_connection_get_slave_type(s_con), ==, NM_SETTING_BOND_SETTING_NAME);
+    g_assert_cmpstr(nm_setting_connection_get_controller(s_con), ==, "bond99");
+    g_assert_cmpstr(nm_setting_connection_get_port_type(s_con), ==, NM_SETTING_BOND_SETTING_NAME);
 
     s_port = nmtst_connection_assert_setting(connection, NM_TYPE_SETTING_BOND_PORT);
     g_assert_cmpuint(nm_setting_bond_port_get_queue_id(s_port), ==, 1);
 }
 
 static void
-test_write_bond_port(void)
+test_write_bond_port_setting(void)
 {
     nmtst_auto_unlinkfile char   *testfile   = NULL;
     gs_unref_object NMConnection *connection = NULL;
@@ -8543,22 +8551,21 @@ test_write_infiniband(gconstpointer test_data)
 }
 
 static void
-test_read_bond_slave_ib(void)
+test_read_bond_port_ib(void)
 {
     gs_unref_object NMConnection *connection = NULL;
     NMSettingConnection          *s_con;
 
-    connection =
-        _connection_from_file(TEST_IFCFG_DIR "/ifcfg-test-bond-slave-ib", NULL, NULL, NULL);
+    connection = _connection_from_file(TEST_IFCFG_DIR "/ifcfg-test-bond-port-ib", NULL, NULL, NULL);
 
     s_con = nmtst_connection_assert_setting(connection, NM_TYPE_SETTING_CONNECTION);
 
-    g_assert_cmpstr(nm_setting_connection_get_master(s_con), ==, "bond0");
-    g_assert_cmpstr(nm_setting_connection_get_slave_type(s_con), ==, NM_SETTING_BOND_SETTING_NAME);
+    g_assert_cmpstr(nm_setting_connection_get_controller(s_con), ==, "bond0");
+    g_assert_cmpstr(nm_setting_connection_get_port_type(s_con), ==, NM_SETTING_BOND_SETTING_NAME);
 }
 
 static void
-test_write_bond_slave_ib(void)
+test_write_bond_port_ib(void)
 {
     nmtst_auto_unlinkfile char   *testfile   = NULL;
     gs_unref_object NMConnection *connection = NULL;
@@ -8985,7 +8992,7 @@ test_write_fcoe_mode(gconstpointer user_data)
 }
 
 static void
-test_read_team_master(gconstpointer user_data)
+test_read_team_controller(gconstpointer user_data)
 {
     const char *const             PATH_NAME  = user_data;
     gs_unref_object NMConnection *connection = NULL;
@@ -9008,7 +9015,7 @@ test_read_team_master(gconstpointer user_data)
 }
 
 static void
-test_read_team_master_invalid(gconstpointer user_data)
+test_read_team_controller_invalid(gconstpointer user_data)
 {
     const char *const             PATH_NAME  = user_data;
     gs_free_error GError         *error      = NULL;
@@ -9024,7 +9031,7 @@ test_read_team_master_invalid(gconstpointer user_data)
 }
 
 static void
-test_write_team_master(void)
+test_write_team_controller(void)
 {
     nmtst_auto_unlinkfile char   *testfile   = NULL;
     gs_unref_object NMConnection *connection = NULL;
@@ -9093,7 +9100,7 @@ test_read_team_port(gconstpointer user_data)
     g_assert_cmpstr(nm_setting_connection_get_connection_type(s_con),
                     ==,
                     NM_SETTING_WIRED_SETTING_NAME);
-    g_assert_cmpstr(nm_setting_connection_get_master(s_con), ==, "team0");
+    g_assert_cmpstr(nm_setting_connection_get_controller(s_con), ==, "team0");
 
     s_team_port = nmtst_connection_assert_setting(connection, NM_TYPE_SETTING_TEAM_PORT);
     g_assert_cmpstr(nm_setting_team_port_get_config(s_team_port), ==, expected_config);
@@ -9221,7 +9228,7 @@ test_read_team_port_empty_config(void)
     g_assert_cmpstr(nm_setting_connection_get_connection_type(s_con),
                     ==,
                     NM_SETTING_WIRED_SETTING_NAME);
-    g_assert_cmpstr(nm_setting_connection_get_master(s_con), ==, "team0");
+    g_assert_cmpstr(nm_setting_connection_get_controller(s_con), ==, "team0");
 
     /* Normalization adds a team-port setting */
     s_team_port = nmtst_connection_assert_setting(connection, NM_TYPE_SETTING_TEAM_PORT);
@@ -9231,7 +9238,7 @@ test_read_team_port_empty_config(void)
 }
 
 static void
-test_team_reread_slave(void)
+test_team_reread_port(void)
 {
     nmtst_auto_unlinkfile char   *testfile     = NULL;
     gs_unref_object NMConnection *connection_1 = NULL;
@@ -9242,14 +9249,14 @@ test_team_reread_slave(void)
 
     connection_1 =
         nmtst_create_connection_from_keyfile("[connection]\n"
-                                             "id=team-slave-enp31s0f1-142\n"
+                                             "id=team-port-enp31s0f1-142\n"
                                              "uuid=74f435bb-ede4-415a-9d48-f580b60eba04\n"
                                              "type=vlan\n"
                                              "autoconnect=false\n"
                                              "interface-name=enp31s0f1-142\n"
-                                             "master=team142\n"
+                                             "controller=team142\n"
                                              "permissions=\n"
-                                             "slave-type=team\n"
+                                             "port-type=team\n"
                                              "\n"
                                              "[vlan]\n"
                                              "egress-priority-map=\n"
@@ -9257,10 +9264,10 @@ test_team_reread_slave(void)
                                              "id=142\n"
                                              "ingress-priority-map=\n"
                                              "parent=enp31s0f1\n",
-                                             "/test_team_reread_slave");
+                                             "/test_team_reread_port");
 
     /* to double-check keyfile syntax, re-create the connection by hand. */
-    connection_2 = nmtst_create_minimal_connection("team-slave-enp31s0f1-142",
+    connection_2 = nmtst_create_minimal_connection("team-port-enp31s0f1-142",
                                                    "74f435bb-ede4-415a-9d48-f580b60eba04",
                                                    NM_SETTING_VLAN_SETTING_NAME,
                                                    &s_con);
@@ -9292,7 +9299,7 @@ test_team_reread_slave(void)
     _writer_new_connection_reread((nmtst_get_rand_uint32() % 2) ? connection_1 : connection_2,
                                   TEST_SCRATCH_DIR,
                                   &testfile,
-                                  TEST_IFCFG_DIR "/ifcfg-team-slave-enp31s0f1-142.cexpected",
+                                  TEST_IFCFG_DIR "/ifcfg-team-port-enp31s0f1-142.cexpected",
                                   &reread,
                                   &reread_same);
     _assert_reread_same((nmtst_get_rand_uint32() % 2) ? connection_1 : connection_2, reread);
@@ -9514,13 +9521,17 @@ do_svUnescape_combine_ansi(GString                *str_val,
 static void
 test_svUnescape(void)
 {
-#define V0(v_value, v_expected)                                       \
-    {                                                                 \
-        .val = "" v_value "", .exp = v_expected, .can_concat = FALSE, \
+#define V0(v_value, v_expected)      \
+    {                                \
+        .val        = "" v_value "", \
+        .exp        = v_expected,    \
+        .can_concat = FALSE,         \
     }
-#define V1(v_value, v_expected)                                              \
-    {                                                                        \
-        .val = "" v_value "", .exp = v_expected, .can_concat = !!v_expected, \
+#define V1(v_value, v_expected)      \
+    {                                \
+        .val        = "" v_value "", \
+        .exp        = v_expected,    \
+        .can_concat = !!v_expected,  \
     }
 #define V2(v_value, v_expected)                                      \
     {                                                                \
@@ -10529,7 +10540,7 @@ main(int argc, char **argv)
                          test_write_wired_static_ip6_only_gw);
     g_test_add_func(TPATH "ip6/disabled", test_write_ip6_disabled);
     g_test_add_func(TPATH "read-dns-options", test_read_dns_options);
-    g_test_add_func(TPATH "clear-master", test_clear_master);
+    g_test_add_func(TPATH "clear-controller", test_clear_controller);
 
     nmtst_add_test_func(TPATH "read-static",
                         test_read_wired_static,
@@ -10887,33 +10898,33 @@ main(int argc, char **argv)
                          (gpointer) NM_SETTING_DCB_FCOE_MODE_VN2VN,
                          test_write_fcoe_mode);
 
-    g_test_add_func(TPATH "bond/read-master", test_read_bond_main);
-    g_test_add_func(TPATH "bond/read-master-eth-type", test_read_bond_eth_type);
-    g_test_add_func(TPATH "bond/read-slave", test_read_bond_slave);
-    g_test_add_func(TPATH "bond/read-slave-ib", test_read_bond_slave_ib);
-    g_test_add_func(TPATH "bond/write-master", test_write_bond_main);
-    g_test_add_func(TPATH "bond/write-slave", test_write_bond_slave);
-    g_test_add_func(TPATH "bond/write-slave-ib", test_write_bond_slave_ib);
+    g_test_add_func(TPATH "bond/read-controller", test_read_bond_main);
+    g_test_add_func(TPATH "bond/read-controller-eth-type", test_read_bond_eth_type);
+    g_test_add_func(TPATH "bond/read-port", test_read_bond_port);
+    g_test_add_func(TPATH "bond/read-port-ib", test_read_bond_port_ib);
+    g_test_add_func(TPATH "bond/write-controller", test_write_bond_main);
+    g_test_add_func(TPATH "bond/write-port", test_write_bond_port);
+    g_test_add_func(TPATH "bond/write-port-ib", test_write_bond_port_ib);
     g_test_add_func(TPATH "bond/bonding-opts-numeric-mode", test_read_bond_opts_mode_numeric);
-    g_test_add_func(TPATH "bond/read-bond-port", test_read_bond_port);
-    g_test_add_func(TPATH "bond/write-bond-port", test_write_bond_port);
+    g_test_add_func(TPATH "bond/read-bond-port", test_read_bond_port_setting);
+    g_test_add_func(TPATH "bond/write-bond-port_setting", test_write_bond_port_setting);
 
-    g_test_add_func(TPATH "bridge/read-master", test_read_bridge_main);
-    g_test_add_func(TPATH "bridge/write-master", test_write_bridge_main);
+    g_test_add_func(TPATH "bridge/read-controller", test_read_bridge_main);
+    g_test_add_func(TPATH "bridge/write-controller", test_write_bridge_main);
     g_test_add_func(TPATH "bridge/read-component", test_read_bridge_component);
     g_test_add_func(TPATH "bridge/write-component", test_write_bridge_component);
     g_test_add_func(TPATH "bridge/read-missing-stp", test_read_bridge_missing_stp);
 
-    g_test_add_data_func(TPATH "team/read-master-1",
-                         TEST_IFCFG_DIR "/ifcfg-test-team-master-1",
-                         test_read_team_master);
-    g_test_add_data_func(TPATH "team/read-master-2",
-                         TEST_IFCFG_DIR "/ifcfg-test-team-master-2",
-                         test_read_team_master);
-    g_test_add_data_func(TPATH "team/read-master-invalid",
-                         TEST_IFCFG_DIR "/ifcfg-test-team-master-invalid",
-                         test_read_team_master_invalid);
-    g_test_add_func(TPATH "team/write-master", test_write_team_master);
+    g_test_add_data_func(TPATH "team/read-controller-1",
+                         TEST_IFCFG_DIR "/ifcfg-test-team-controller-1",
+                         test_read_team_controller);
+    g_test_add_data_func(TPATH "team/read-controller-2",
+                         TEST_IFCFG_DIR "/ifcfg-test-team-controller-2",
+                         test_read_team_controller);
+    g_test_add_data_func(TPATH "team/read-controller-invalid",
+                         TEST_IFCFG_DIR "/ifcfg-test-team-controller-invalid",
+                         test_read_team_controller_invalid);
+    g_test_add_func(TPATH "team/write-controller", test_write_team_controller);
     g_test_add_data_func(TPATH "team/read-port-1",
                          TEST_IFCFG_DIR "/ifcfg-test-team-port-1",
                          test_read_team_port);
@@ -10923,7 +10934,7 @@ main(int argc, char **argv)
     g_test_add_func(TPATH "team/write-port", test_write_team_port);
     g_test_add_func(TPATH "team/write-infiniband-port", test_write_team_infiniband_port);
     g_test_add_func(TPATH "team/read-port-empty-config", test_read_team_port_empty_config);
-    g_test_add_func(TPATH "team/reread-slave", test_team_reread_slave);
+    g_test_add_func(TPATH "team/reread-port", test_team_reread_port);
 
     g_test_add_func(TPATH "proxy/read-proxy-basic", test_read_proxy_basic);
     g_test_add_func(TPATH "proxy/write-proxy-basic", test_write_proxy_basic);

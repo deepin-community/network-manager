@@ -91,6 +91,11 @@ typedef struct _NMDhcpClientPrivate {
 
     union {
         struct {
+            /* Timer for restarting DHCP after the IPv6-only timeout */
+            GSource *ipv6_only_restart_source;
+            /* Minimum value accepted for the IPv6-only option. For test/debug only.*/
+            guint ipv6_only_min_wait;
+
             struct {
                 NML3CfgCommitTypeHandle *l3cfg_commit_handle;
                 GSource                 *done_source;
@@ -275,10 +280,25 @@ nm_dhcp_client_create_options_dict(NMDhcpClient *self, gboolean static_keys)
     return options;
 }
 
+/**
+ * nm_dhcp_client_get_lease():
+ * @self: the client
+ * @ignore_acd_pending: FALSE means to only return the lease that already
+ * passed ACD, thus it is in use by us. TRUE means to return a new lease
+ * that might still be pending of Address Collision Detection (ACD) check,
+ * if there is one, or return the current lease that passed ACD if not.
+ *
+ * Returns the current lease that passed ACD or a pending lease still under
+ * ACD check.
+ *
+ */
 const NML3ConfigData *
-nm_dhcp_client_get_lease(NMDhcpClient *self)
+nm_dhcp_client_get_lease(NMDhcpClient *self, gboolean ignore_acd_pending)
 {
-    return NM_DHCP_CLIENT_GET_PRIVATE(self)->l3cd_curr;
+    if (ignore_acd_pending)
+        return NM_DHCP_CLIENT_GET_PRIVATE(self)->l3cd_curr;
+    else
+        return NM_DHCP_CLIENT_GET_PRIVATE(self)->l3cd_next;
 }
 
 /*****************************************************************************/
@@ -321,7 +341,7 @@ _emit_notify_data(NMDhcpClient *self, const NMDhcpClientNotifyData *notify_data)
 #define _emit_notify(self, _notify_type, ...) \
     _emit_notify_data(                        \
         (self),                               \
-        &((const NMDhcpClientNotifyData){.notify_type = (_notify_type), __VA_ARGS__}))
+        &((const NMDhcpClientNotifyData) {.notify_type = (_notify_type), __VA_ARGS__}))
 
 /*****************************************************************************/
 
@@ -527,7 +547,7 @@ _acd_reglist_data_remove(NMDhcpClient *self, guint idx, gboolean do_log)
 
     nm_clear_l3cd(&reglist_data->l3cd);
 
-    nm_l3cfg_commit_on_idle_schedule(priv->config.l3cfg, NM_L3_CFG_COMMIT_TYPE_UPDATE);
+    nm_l3cfg_commit_on_idle_schedule(priv->config.l3cfg, NM_L3_CFG_COMMIT_TYPE_AUTO);
 
     g_array_remove_index(priv->v4.acd.reglist, idx);
 
@@ -669,7 +689,7 @@ _acd_check_lease(NMDhcpClient *self, NMOptionBool *out_acd_state)
     now_msec = nm_utils_get_monotonic_timestamp_msec();
 
     g_array_append_val(priv->v4.acd.reglist,
-                       ((AcdRegListData){
+                       ((AcdRegListData) {
                            .l3cd        = nm_l3_config_data_ref(priv->l3cd_next),
                            .addr        = addr,
                            .expiry_msec = now_msec + ACD_REGLIST_GRACE_PERIOD_MSEC,
@@ -824,9 +844,10 @@ _nm_dhcp_client_notify(NMDhcpClient         *self,
 
     _acd_check_lease(self, &acd_state);
 
-    options = priv->l3cd_next ? nm_dhcp_lease_get_options(
-                  nm_l3_config_data_get_dhcp_lease(priv->l3cd_next, priv->config.addr_family))
-                              : NULL;
+    options = priv->l3cd_next
+                  ? nm_dhcp_lease_get_options(
+                        nm_l3_config_data_get_dhcp_lease(priv->l3cd_next, priv->config.addr_family))
+                  : NULL;
 
     if (_LOGI_ENABLED()) {
         const char *req_str =
@@ -898,6 +919,12 @@ _nm_dhcp_client_notify(NMDhcpClient         *self,
     }
 
     l3_cfg_notify_check_connected(self);
+
+    if (!priv->l3cd_curr) {
+        /* When the lease is lost, any cached ACD information is no longer relevant.
+         * Remove it so that it doesn't interfere with a new lease we might get. */
+        _acd_state_reset(self, TRUE, TRUE);
+    }
 
     _emit_notify(self,
                  NM_DHCP_CLIENT_NOTIFY_TYPE_LEASE_UPDATE,
@@ -1353,6 +1380,8 @@ nm_dhcp_client_start(NMDhcpClient *self, GError **error)
     g_return_val_if_fail(priv->config.uuid, FALSE);
     nm_assert(!priv->effective_client_id);
 
+    priv->is_stopped = FALSE;
+
     IS_IPv4 = NM_IS_IPv4(priv->config.addr_family);
 
     if (!IS_IPv4) {
@@ -1393,6 +1422,51 @@ nm_dhcp_client_start(NMDhcpClient *self, GError **error)
 }
 
 /*****************************************************************************/
+
+static gboolean
+ipv6_only_restart_timeout_cb(gpointer user_data)
+{
+    NMDhcpClient         *self  = user_data;
+    NMDhcpClientPrivate  *priv  = NM_DHCP_CLIENT_GET_PRIVATE(self);
+    gs_free_error GError *error = NULL;
+
+    nm_assert(priv->config.addr_family == AF_INET);
+
+    nm_clear_g_source_inst(&priv->v4.ipv6_only_restart_source);
+    if (!nm_dhcp_client_start(self, &error)) {
+        _LOGW("failed to restart the DHCP client after the IPv6-only timeout: %s", error->message);
+        _emit_notify(self,
+                     NM_DHCP_CLIENT_NOTIFY_TYPE_IT_LOOKS_BAD,
+                     .it_looks_bad.reason = error->message);
+    }
+
+    return G_SOURCE_CONTINUE;
+}
+
+/**
+ * nm_dhcp_client_schedule_ipv6_only_restart():
+ * @self: the client
+ * @timeout: the raw value from the DHCP option
+ *
+ * Stops the DHCPv4 client and restarts it after the timeout announced
+ * by the "IPv6-Only preferred" option.
+ */
+void
+nm_dhcp_client_schedule_ipv6_only_restart(NMDhcpClient *self, guint timeout)
+{
+    NMDhcpClientPrivate *priv = NM_DHCP_CLIENT_GET_PRIVATE(self);
+
+    nm_assert(priv->config.addr_family == AF_INET);
+    nm_assert(!priv->is_stopped);
+
+    timeout = NM_MAX(priv->v4.ipv6_only_min_wait, timeout);
+    _LOGI("received option \"ipv6-only-preferred\": stopping DHCPv4 for %u seconds", timeout);
+
+    nm_dhcp_client_stop(self, FALSE);
+    nm_clear_g_source_inst(&priv->no_lease_timeout_source);
+    priv->v4.ipv6_only_restart_source =
+        nm_g_timeout_add_seconds_source(timeout, ipv6_only_restart_timeout_cb, self);
+}
 
 void
 nm_dhcp_client_stop_existing(const char *pid_file, const char *binary_name)
@@ -1466,7 +1540,10 @@ nm_dhcp_client_stop(NMDhcpClient *self, gboolean release)
     if (priv->is_stopped)
         return;
 
+    nm_clear_pointer(&priv->effective_client_id, g_bytes_unref);
     nm_clear_g_source_inst(&priv->previous_lease_timeout_source);
+    if (priv->config.addr_family == AF_INET)
+        nm_clear_g_source_inst(&priv->v4.ipv6_only_restart_source);
 
     priv->is_stopped = TRUE;
 
@@ -1912,6 +1989,8 @@ static void
 set_property(GObject *object, guint prop_id, const GValue *value, GParamSpec *pspec)
 {
     NMDhcpClientPrivate *priv = NM_DHCP_CLIENT_GET_PRIVATE(object);
+    const char          *str;
+    guint                min_wait;
 
     switch (prop_id) {
     case PROP_CONFIG:
@@ -1921,7 +2000,8 @@ set_property(GObject *object, guint prop_id, const GValue *value, GParamSpec *ps
         /* I know, this is technically not necessary. It just feels nicer to
          * explicitly initialize the respective union member. */
         if (NM_IS_IPv4(priv->config.addr_family)) {
-            priv->v4 = (typeof(priv->v4)){
+            priv->v4 = (typeof(priv->v4)) {
+                .ipv6_only_min_wait = NM_DHCP_MIN_V6ONLY_WAIT_DEFAULT,
                 .acd =
                     {
                         .addr                = INADDR_ANY,
@@ -1930,8 +2010,16 @@ set_property(GObject *object, guint prop_id, const GValue *value, GParamSpec *ps
                         .done_source         = NULL,
                     },
             };
+
+            str = g_getenv("NM_TEST_IPV6_ONLY_MIN_WAIT");
+            if (str) {
+                min_wait = _nm_utils_ascii_str_to_int64(str, 10, 1, G_MAXUINT, 0);
+                if (min_wait != 0) {
+                    priv->v4.ipv6_only_min_wait = min_wait;
+                }
+            }
         } else {
-            priv->v6 = (typeof(priv->v6)){
+            priv->v6 = (typeof(priv->v6)) {
                 .lladdr_timeout_source = NULL,
             };
         }
@@ -1968,12 +2056,12 @@ dispose(GObject *object)
     nm_clear_g_source_inst(&priv->previous_lease_timeout_source);
     nm_clear_g_source_inst(&priv->no_lease_timeout_source);
 
-    if (!NM_IS_IPv4(priv->config.addr_family)) {
+    if (priv->config.addr_family == AF_INET) {
+        nm_clear_g_source_inst(&priv->v4.ipv6_only_restart_source);
+    } else {
         nm_clear_g_source_inst(&priv->v6.lladdr_timeout_source);
         nm_clear_g_source_inst(&priv->v6.dad_timeout_source);
     }
-
-    nm_clear_pointer(&priv->effective_client_id, g_bytes_unref);
 
     nm_assert(!priv->watch_source);
     nm_assert(!priv->l3cd_next);

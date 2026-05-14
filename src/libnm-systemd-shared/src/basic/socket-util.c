@@ -6,6 +6,8 @@
 #include <errno.h>
 #include <limits.h>
 #include <net/if.h>
+#include <linux/if.h>
+#include <linux/if_arp.h>
 #include <netdb.h>
 #include <netinet/ip.h>
 #include <poll.h>
@@ -15,22 +17,20 @@
 #include <stdlib.h>
 #include <sys/ioctl.h>
 #include <unistd.h>
-#if 0 /* NM_IGNORED */
-#include <linux/if.h>
-#endif /* NM_IGNORED */
 
 #include "alloc-util.h"
 #include "errno-util.h"
 #include "escape.h"
 #include "fd-util.h"
 #include "fileio.h"
-#include "format-util.h"
+#include "format-ifname.h"
 #include "io-util.h"
 #include "log.h"
 #include "memory-util.h"
 #include "parse-util.h"
 #include "path-util.h"
 #include "process-util.h"
+#include "random-util.h"
 #include "socket-util.h"
 #include "string-table.h"
 #include "string-util.h"
@@ -44,6 +44,11 @@
 #  define IDN_FLAGS NI_IDN
 #else
 #  define IDN_FLAGS 0
+#endif
+
+/* From the kernel's include/net/scm.h */
+#ifndef SCM_MAX_FD
+#  define SCM_MAX_FD 253
 #endif
 
 static const char* const socket_address_type_table[] = {
@@ -453,6 +458,7 @@ int sockaddr_pretty(
 
         assert(sa);
         assert(salen >= sizeof(sa->sa.sa_family));
+        assert(ret);
 
         switch (sa->sa.sa_family) {
 
@@ -547,7 +553,7 @@ int sockaddr_pretty(
                         } else {
                                 if (path[path_len - 1] == '\0')
                                         /* We expect a terminating NUL and don't print it */
-                                        path_len --;
+                                        path_len--;
 
                                 p = cescape_length(path, path_len);
                         }
@@ -628,29 +634,27 @@ int getsockname_pretty(int fd, char **ret) {
         return sockaddr_pretty(&sa.sa, salen, false, true, ret);
 }
 
-int socknameinfo_pretty(union sockaddr_union *sa, socklen_t salen, char **_ret) {
+int socknameinfo_pretty(const struct sockaddr *sa, socklen_t salen, char **ret) {
+        char host[NI_MAXHOST];
         int r;
-        char host[NI_MAXHOST], *ret;
 
-        assert(_ret);
+        assert(sa);
+        assert(salen >= sizeof(sa_family_t));
+        assert(ret);
 
-        r = getnameinfo(&sa->sa, salen, host, sizeof(host), NULL, 0, IDN_FLAGS);
+        r = getnameinfo(sa, salen, host, sizeof(host), /* service= */ NULL, /* service_len= */ 0, IDN_FLAGS);
         if (r != 0) {
-                int saved_errno = errno;
+                if (r == EAI_MEMORY)
+                        return log_oom_debug();
+                if (r == EAI_SYSTEM)
+                        log_debug_errno(errno, "getnameinfo() failed, ignoring: %m");
+                else
+                        log_debug("getnameinfo() failed, ignoring: %s", gai_strerror(r));
 
-                r = sockaddr_pretty(&sa->sa, salen, true, true, &ret);
-                if (r < 0)
-                        return r;
-
-                log_debug_errno(saved_errno, "getnameinfo(%s) failed: %m", ret);
-        } else {
-                ret = strdup(host);
-                if (!ret)
-                        return -ENOMEM;
+                return sockaddr_pretty(sa, salen, /* translate_ipv6= */ true, /* include_port= */ true, ret);
         }
 
-        *_ret = ret;
-        return 0;
+        return strdup_to(ret, host);
 }
 
 static const char* const netlink_family_table[] = {
@@ -874,13 +878,11 @@ bool address_label_valid(const char *p) {
 int getpeercred(int fd, struct ucred *ucred) {
         socklen_t n = sizeof(struct ucred);
         struct ucred u;
-        int r;
 
         assert(fd >= 0);
         assert(ucred);
 
-        r = getsockopt(fd, SOL_SOCKET, SO_PEERCRED, &u, &n);
-        if (r < 0)
+        if (getsockopt(fd, SOL_SOCKET, SO_PEERCRED, &u, &n) < 0)
                 return -errno;
 
         if (n != sizeof(struct ucred))
@@ -909,8 +911,10 @@ int getpeersec(int fd, char **ret) {
                 if (!s)
                         return -ENOMEM;
 
-                if (getsockopt(fd, SOL_SOCKET, SO_PEERSEC, s, &n) >= 0)
+                if (getsockopt(fd, SOL_SOCKET, SO_PEERSEC, s, &n) >= 0) {
+                        s[n] = 0;
                         break;
+                }
 
                 if (errno != ERANGE)
                         return -errno;
@@ -927,11 +931,15 @@ int getpeersec(int fd, char **ret) {
 }
 
 int getpeergroups(int fd, gid_t **ret) {
-        socklen_t n = sizeof(gid_t) * 64;
+        socklen_t n = sizeof(gid_t) * 64U;
         _cleanup_free_ gid_t *d = NULL;
 
         assert(fd >= 0);
         assert(ret);
+
+        long ngroups_max = sysconf(_SC_NGROUPS_MAX);
+        if (ngroups_max > 0)
+                n = MAX(n, sizeof(gid_t) * (socklen_t) ngroups_max);
 
         for (;;) {
                 d = malloc(n);
@@ -950,12 +958,96 @@ int getpeergroups(int fd, gid_t **ret) {
         assert_se(n % sizeof(gid_t) == 0);
         n /= sizeof(gid_t);
 
-        if ((socklen_t) (int) n != n)
+        if (n > INT_MAX)
                 return -E2BIG;
 
         *ret = TAKE_PTR(d);
 
         return (int) n;
+}
+
+int getpeerpidfd(int fd) {
+        socklen_t n = sizeof(int);
+        int pidfd = -EBADF;
+
+        assert(fd >= 0);
+
+        if (getsockopt(fd, SOL_SOCKET, SO_PEERPIDFD, &pidfd, &n) < 0)
+                return -errno;
+
+        if (n != sizeof(int))
+                return -EIO;
+
+        return pidfd;
+}
+
+int getpeerpidref(int fd, PidRef *ret) {
+        int r;
+
+        assert(fd >= 0);
+        assert(ret);
+
+        int pidfd = getpeerpidfd(fd);
+        if (pidfd < 0) {
+                if (!ERRNO_IS_NEG_NOT_SUPPORTED(pidfd))
+                        return pidfd;
+
+                struct ucred ucred;
+                r = getpeercred(fd, &ucred);
+                if (r < 0)
+                        return r;
+
+                return pidref_set_pid(ret, ucred.pid);
+        }
+
+        return pidref_set_pidfd_consume(ret, pidfd);
+}
+
+ssize_t send_many_fds_iov_sa(
+                int transport_fd,
+                int *fds_array, size_t n_fds_array,
+                const struct iovec *iov, size_t iovlen,
+                const struct sockaddr *sa, socklen_t len,
+                int flags) {
+
+        _cleanup_free_ struct cmsghdr *cmsg = NULL;
+        struct msghdr mh = {
+                .msg_name = (struct sockaddr*) sa,
+                .msg_namelen = len,
+                .msg_iov = (struct iovec *)iov,
+                .msg_iovlen = iovlen,
+        };
+        ssize_t k;
+
+        assert(transport_fd >= 0);
+        assert(fds_array || n_fds_array == 0);
+
+        /* The kernel will reject sending more than SCM_MAX_FD FDs at once */
+        if (n_fds_array > SCM_MAX_FD)
+                return -E2BIG;
+
+        /* We need either an FD array or data to send. If there's nothing, return an error. */
+        if (n_fds_array == 0 && !iov)
+                return -EINVAL;
+
+        if (n_fds_array > 0) {
+                mh.msg_controllen = CMSG_SPACE(sizeof(int) * n_fds_array);
+                mh.msg_control = cmsg = malloc(mh.msg_controllen);
+                if (!cmsg)
+                        return -ENOMEM;
+
+                *cmsg = (struct cmsghdr) {
+                        .cmsg_len = CMSG_LEN(sizeof(int) * n_fds_array),
+                        .cmsg_level = SOL_SOCKET,
+                        .cmsg_type = SCM_RIGHTS,
+                };
+                memcpy(CMSG_DATA(cmsg), fds_array, sizeof(int) * n_fds_array);
+        }
+        k = sendmsg(transport_fd, &mh, MSG_NOSIGNAL | flags);
+        if (k < 0)
+                return (ssize_t) -errno;
+
+        return k;
 }
 
 ssize_t send_one_fd_iov_sa(
@@ -1011,6 +1103,74 @@ int send_one_fd_sa(
         assert(fd >= 0);
 
         return (int) send_one_fd_iov_sa(transport_fd, fd, NULL, 0, sa, len, flags);
+}
+
+ssize_t receive_many_fds_iov(
+                int transport_fd,
+                struct iovec *iov, size_t iovlen,
+                int **ret_fds_array, size_t *ret_n_fds_array,
+                int flags) {
+
+        CMSG_BUFFER_TYPE(CMSG_SPACE(sizeof(int) * SCM_MAX_FD)) control;
+        struct msghdr mh = {
+                .msg_control = &control,
+                .msg_controllen = sizeof(control),
+                .msg_iov = iov,
+                .msg_iovlen = iovlen,
+        };
+        _cleanup_free_ int *fds_array = NULL;
+        size_t n_fds_array = 0;
+        struct cmsghdr *cmsg;
+        ssize_t k;
+
+        assert(transport_fd >= 0);
+        assert(ret_fds_array);
+        assert(ret_n_fds_array);
+
+        /*
+         * Receive many FDs via @transport_fd. We don't care for the transport-type. We retrieve all the FDs
+         * at once. This is best used in combination with send_many_fds().
+         */
+
+        k = recvmsg_safe(transport_fd, &mh, MSG_CMSG_CLOEXEC | flags);
+        if (k < 0)
+                return k;
+
+        CMSG_FOREACH(cmsg, &mh)
+                if (cmsg->cmsg_level == SOL_SOCKET && cmsg->cmsg_type == SCM_RIGHTS) {
+                        size_t n = (cmsg->cmsg_len - CMSG_LEN(0)) / sizeof(int);
+
+                        if (!GREEDY_REALLOC_APPEND(fds_array, n_fds_array, CMSG_TYPED_DATA(cmsg, int), n)) {
+                                cmsg_close_all(&mh);
+                                return -ENOMEM;
+                        }
+                }
+
+        if (n_fds_array == 0) {
+                cmsg_close_all(&mh);
+
+                /* If didn't receive an FD or any data, return an error. */
+                if (k == 0)
+                        return -EIO;
+        }
+
+        *ret_fds_array = TAKE_PTR(fds_array);
+        *ret_n_fds_array = n_fds_array;
+
+        return k;
+}
+
+int receive_many_fds(int transport_fd, int **ret_fds_array, size_t *ret_n_fds_array, int flags) {
+        ssize_t k;
+
+        k = receive_many_fds_iov(transport_fd, NULL, 0, ret_fds_array, ret_n_fds_array, flags);
+        if (k == 0)
+                return 0;
+
+        /* k must be negative, since receive_many_fds_iov() only returns a positive value if data was received
+         * through the iov. */
+        assert(k < 0);
+        return (int) k;
 }
 
 ssize_t receive_one_fd_iov(
@@ -1189,7 +1349,7 @@ void* cmsg_find_and_copy_data(struct msghdr *mh, int level, int type, void *buf,
         assert(buf_len > 0);
 
         /* This is similar to cmsg_find_data(), but copy the found data to buf. This should be typically used
-         * when reading possibly unaligned data such as timestamp, as time_t is 64bit and size_t is 32bit on
+         * when reading possibly unaligned data such as timestamp, as time_t is 64-bit and size_t is 32-bit on
          * RISCV32. See issue #27241. */
 
         cmsg = cmsg_find(mh, level, type, CMSG_LEN(buf_len));
@@ -1200,6 +1360,53 @@ void* cmsg_find_and_copy_data(struct msghdr *mh, int level, int type, void *buf,
 }
 
 #if 0 /* NM_IGNORED */
+size_t sockaddr_ll_len(const struct sockaddr_ll *sa) {
+        /* Certain hardware address types (e.g Infiniband) do not fit into sll_addr
+         * (8 bytes) and run over the structure. This function returns the correct size that
+         * must be passed to kernel. */
+
+        assert(sa->sll_family == AF_PACKET);
+
+        size_t mac_len = sizeof(sa->sll_addr);
+
+        if (be16toh(sa->sll_hatype) == ARPHRD_ETHER)
+                mac_len = MAX(mac_len, (size_t) ETH_ALEN);
+        if (be16toh(sa->sll_hatype) == ARPHRD_INFINIBAND)
+                mac_len = MAX(mac_len, (size_t) INFINIBAND_ALEN);
+
+        return offsetof(struct sockaddr_ll, sll_addr) + mac_len;
+}
+
+size_t sockaddr_un_len(const struct sockaddr_un *sa) {
+        /* Covers only file system and abstract AF_UNIX socket addresses, but not unnamed socket addresses. */
+
+        assert(sa->sun_family == AF_UNIX);
+
+        return offsetof(struct sockaddr_un, sun_path) +
+                (sa->sun_path[0] == 0 ?
+                        1 + strnlen(sa->sun_path+1, sizeof(sa->sun_path)-1) :
+                        strnlen(sa->sun_path, sizeof(sa->sun_path))+1);
+}
+
+size_t sockaddr_len(const union sockaddr_union *sa) {
+        switch (sa->sa.sa_family) {
+        case AF_INET:
+                return sizeof(struct sockaddr_in);
+        case AF_INET6:
+                return sizeof(struct sockaddr_in6);
+        case AF_UNIX:
+                return sockaddr_un_len(&sa->un);
+        case AF_PACKET:
+                return sockaddr_ll_len(&sa->ll);
+        case AF_NETLINK:
+                return sizeof(struct sockaddr_nl);
+        case AF_VSOCK:
+                return sizeof(struct sockaddr_vm);
+        default:
+                assert_not_reached();
+        }
+}
+
 int socket_ioctl_fd(void) {
         int fd;
 
@@ -1296,42 +1503,64 @@ int socket_bind_to_ifname(int fd, const char *ifname) {
 }
 
 int socket_bind_to_ifindex(int fd, int ifindex) {
-        char ifname[IF_NAMESIZE];
-        int r;
-
         assert(fd >= 0);
 
         if (ifindex <= 0)
                 /* Drop binding */
                 return RET_NERRNO(setsockopt(fd, SOL_SOCKET, SO_BINDTODEVICE, NULL, 0));
 
-        r = setsockopt_int(fd, SOL_SOCKET, SO_BINDTOIFINDEX, ifindex);
-        if (r != -ENOPROTOOPT)
-                return r;
+        return setsockopt_int(fd, SOL_SOCKET, SO_BINDTOIFINDEX, ifindex);
+}
 
-        /* Fall back to SO_BINDTODEVICE on kernels < 5.0 which didn't have SO_BINDTOIFINDEX */
-        r = format_ifname(ifindex, ifname);
+int socket_autobind(int fd, char **ret_name) {
+        _cleanup_free_ char *name = NULL;
+        uint64_t random;
+        int r;
+
+        /* Generate a random abstract socket name and bind fd to it. This is modeled after the kernel
+         * "autobind" feature, but uses 64-bit random number internally. */
+
+        assert(fd >= 0);
+        assert(ret_name);
+
+        random = random_u64();
+
+        if (asprintf(&name, "@%" PRIu64, random) < 0)
+                return -ENOMEM;
+
+        union sockaddr_union sa;
+        assert_cc(DECIMAL_STR_MAX(uint64_t) < sizeof(sa.un.sun_path));
+
+        r = sockaddr_un_set_path(&sa.un, name);
         if (r < 0)
                 return r;
 
-        return socket_bind_to_ifname(fd, ifname);
+        if (bind(fd, &sa.sa, r) < 0)
+                return -errno;
+
+        *ret_name = TAKE_PTR(name);
+        return 0;
 }
 
 ssize_t recvmsg_safe(int sockfd, struct msghdr *msg, int flags) {
         ssize_t n;
 
-        /* A wrapper around recvmsg() that checks for MSG_CTRUNC, and turns it into an error, in a reasonably
-         * safe way, closing any SCM_RIGHTS fds in the error path.
+        /* A wrapper around recvmsg() that checks for MSG_CTRUNC and MSG_TRUNC, and turns them into an error,
+         * in a reasonably safe way, closing any received fds in the error path.
          *
          * Note that unlike our usual coding style this might modify *msg on failure. */
+
+        assert(sockfd >= 0);
+        assert(msg);
 
         n = recvmsg(sockfd, msg, flags);
         if (n < 0)
                 return -errno;
 
-        if (FLAGS_SET(msg->msg_flags, MSG_CTRUNC)) {
+        if (FLAGS_SET(msg->msg_flags, MSG_CTRUNC) ||
+            (!FLAGS_SET(flags, MSG_PEEK) && FLAGS_SET(msg->msg_flags, MSG_TRUNC))) {
                 cmsg_close_all(msg);
-                return -EXFULL; /* a recognizable error code */
+                return FLAGS_SET(msg->msg_flags, MSG_CTRUNC) ? -ECHRNG : -EXFULL;
         }
 
         return n;
@@ -1532,6 +1761,50 @@ int socket_address_parse_unix(SocketAddress *ret_address, const char *s) {
 }
 
 #if 0 /* NM_IGNORED */
+int vsock_parse_port(const char *s, unsigned *ret) {
+        int r;
+
+        assert(ret);
+
+        if (!s)
+                return -EINVAL;
+
+        unsigned u;
+        r = safe_atou(s, &u);
+        if (r < 0)
+                return r;
+
+        /* Port 0 is apparently valid and not special in AF_VSOCK (unlike on IP). But VMADDR_PORT_ANY
+         * (UINT32_MAX) is. Hence refuse that. */
+
+        if (u == VMADDR_PORT_ANY)
+                return -EINVAL;
+
+        *ret = u;
+        return 0;
+}
+
+int vsock_parse_cid(const char *s, unsigned *ret) {
+        assert(ret);
+
+        if (!s)
+                return -EINVAL;
+
+        /* Parsed an AF_VSOCK "CID". This is a 32bit entity, and the usual type is "unsigned". We recognize
+         * the three special CIDs as strings, and otherwise parse the numeric CIDs. */
+
+        if (streq(s, "hypervisor"))
+                *ret = VMADDR_CID_HYPERVISOR;
+        else if (streq(s, "local"))
+                *ret = VMADDR_CID_LOCAL;
+        else if (streq(s, "host"))
+                *ret = VMADDR_CID_HOST;
+        else
+                return safe_atou(s, ret);
+
+        return 0;
+}
+
 int socket_address_parse_vsock(SocketAddress *ret_address, const char *s) {
         /* AF_VSOCK socket in vsock:cid:port notation */
         _cleanup_free_ char *n = NULL;
@@ -1557,7 +1830,7 @@ int socket_address_parse_vsock(SocketAddress *ret_address, const char *s) {
         if (!e)
                 return -EINVAL;
 
-        r = safe_atou(e+1, &port);
+        r = vsock_parse_port(e+1, &port);
         if (r < 0)
                 return r;
 
@@ -1568,20 +1841,67 @@ int socket_address_parse_vsock(SocketAddress *ret_address, const char *s) {
         if (isempty(n))
                 cid = VMADDR_CID_ANY;
         else {
-                r = safe_atou(n, &cid);
+                r = vsock_parse_cid(n, &cid);
                 if (r < 0)
                         return r;
         }
 
         *ret_address = (SocketAddress) {
                 .sockaddr.vm = {
-                        .svm_cid = cid,
                         .svm_family = AF_VSOCK,
+                        .svm_cid = cid,
                         .svm_port = port,
                 },
                 .type = type,
                 .size = sizeof(struct sockaddr_vm),
         };
+
+        return 0;
+}
+
+int vsock_get_local_cid(unsigned *ret) {
+        _cleanup_close_ int vsock_fd = -EBADF;
+
+        vsock_fd = open("/dev/vsock", O_RDONLY|O_CLOEXEC);
+        if (vsock_fd < 0)
+                return log_debug_errno(errno, "Failed to open /dev/vsock: %m");
+
+        unsigned tmp;
+        if (ioctl(vsock_fd, IOCTL_VM_SOCKETS_GET_LOCAL_CID, ret ?: &tmp) < 0)
+                return log_debug_errno(errno, "Failed to query local AF_VSOCK CID: %m");
+
+        return 0;
+}
+
+int netlink_socket_get_multicast_groups(int fd, size_t *ret_len, uint32_t **ret_groups) {
+        _cleanup_free_ uint32_t *groups = NULL;
+        socklen_t len = 0, old_len;
+
+        assert(fd >= 0);
+
+        if (getsockopt(fd, SOL_NETLINK, NETLINK_LIST_MEMBERSHIPS, NULL, &len) < 0)
+                return -errno;
+
+        if (len == 0)
+                goto finalize;
+
+        groups = new0(uint32_t, len);
+        if (!groups)
+                return -ENOMEM;
+
+        old_len = len;
+
+        if (getsockopt(fd, SOL_NETLINK, NETLINK_LIST_MEMBERSHIPS, groups, &len) < 0)
+                return -errno;
+
+        if (old_len != len)
+                return -EIO;
+
+finalize:
+        if (ret_len)
+                *ret_len = len;
+        if (ret_groups)
+                *ret_groups = TAKE_PTR(groups);
 
         return 0;
 }

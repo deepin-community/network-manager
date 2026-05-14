@@ -246,10 +246,11 @@ wireless_band_channel_changed_cb(GObject *object, GParamSpec *pspec, gpointer us
 
     mode = nm_setting_wireless_get_mode(NM_SETTING_WIRELESS(object));
     if (!mode || !*mode || strcmp(mode, NM_SETTING_WIRELESS_MODE_INFRA) == 0) {
-        nmc_print(_("Warning: %s.%s set to '%s', but it might be ignored in infrastructure mode\n"),
-                  nm_setting_get_name(NM_SETTING(s_wireless)),
-                  g_param_spec_get_name(pspec),
-                  value);
+        nmc_printerr(
+            _("Warning: %s.%s set to '%s', but it might be ignored in infrastructure mode\n"),
+            nm_setting_get_name(NM_SETTING(s_wireless)),
+            g_param_spec_get_name(pspec),
+            value);
     }
 }
 
@@ -261,14 +262,14 @@ connection_controller_changed_cb(GObject *object, GParamSpec *pspec, gpointer us
     NMSetting           *s_ipv4, *s_ipv6;
     const char          *value, *tmp_str;
 
-    value = nm_setting_connection_get_master(s_con);
+    value = nm_setting_connection_get_controller(s_con);
     if (value) {
         s_ipv4 = nm_connection_get_setting_by_name(connection, NM_SETTING_IP4_CONFIG_SETTING_NAME);
         s_ipv6 = nm_connection_get_setting_by_name(connection, NM_SETTING_IP6_CONFIG_SETTING_NAME);
         if (s_ipv4 || s_ipv6) {
-            nmc_print(_("Warning: setting %s.%s requires removing ipv4 and ipv6 settings\n"),
-                      nm_setting_get_name(NM_SETTING(s_con)),
-                      g_param_spec_get_name(pspec));
+            nmc_printerr(_("Warning: setting %s.%s requires removing ipv4 and ipv6 settings\n"),
+                         nm_setting_get_name(NM_SETTING(s_con)),
+                         g_param_spec_get_name(pspec));
             tmp_str = nmc_get_user_input(_("Do you want to remove them? [yes] "));
             if (!tmp_str || matches(tmp_str, "yes")) {
                 if (s_ipv4)
@@ -342,7 +343,7 @@ nmc_setting_connection_connect_handlers(NMSettingConnection *setting, NMConnecti
     g_return_if_fail(NM_IS_SETTING_CONNECTION(setting));
 
     g_signal_connect(setting,
-                     "notify::" NM_SETTING_CONNECTION_MASTER,
+                     "notify::" NM_SETTING_CONNECTION_CONTROLLER,
                      G_CALLBACK(connection_controller_changed_cb),
                      connection);
 }
@@ -376,8 +377,8 @@ _set_fcn_precheck_connection_secondaries(NMClient   *client,
         if (nm_utils_is_uuid(*iter)) {
             con = nmc_find_connection(connections, "uuid", *iter, NULL, FALSE);
             if (!con) {
-                nmc_print(_("Warning: %s is not an UUID of any existing connection profile\n"),
-                          *iter);
+                nmc_printerr(_("Warning: %s is not an UUID of any existing connection profile\n"),
+                             *iter);
             } else {
                 /* Currently, NM only supports VPN connections as secondaries */
                 if (!nm_connection_is_type(con, NM_SETTING_VPN_SETTING_NAME)) {
@@ -434,13 +435,13 @@ _env_warn_fcn_handle(
 
     switch (warn_level) {
     case NM_META_ENV_WARN_LEVEL_WARN:
-        nmc_print(_("Warning: %s\n"), m);
+        nmc_printerr(_("Warning: %s\n"), m);
         return;
     case NM_META_ENV_WARN_LEVEL_INFO:
         nmc_print(_("Info: %s\n"), m);
         return;
     }
-    nmc_print(_("Error: %s\n"), m);
+    nmc_printerr(_("Error: %s\n"), m);
 }
 
 static NMDevice *const *
@@ -503,7 +504,7 @@ _env_get_env_flags(const NMMetaEnvironment *environment, gpointer environment_us
 
 /*****************************************************************************/
 
-const NMMetaEnvironment *const nmc_meta_environment = &((NMMetaEnvironment){
+const NMMetaEnvironment *const nmc_meta_environment = &((NMMetaEnvironment) {
     .warn_fcn           = _env_warn_fcn_handle,
     .get_nm_devices     = _env_get_nm_devices,
     .get_nm_connections = _env_get_nm_connections,
@@ -524,6 +525,8 @@ get_property_val(NMSetting            *setting,
     g_return_val_if_fail(
         NM_IN_SET(get_type, NM_META_ACCESSOR_GET_TYPE_PARSABLE, NM_META_ACCESSOR_GET_TYPE_PRETTY),
         NULL);
+
+    prop = nmc_setting_propname_user_to_libnm(nm_setting_get_name(setting), prop);
 
     if ((property_info = nm_meta_property_info_find_by_setting(setting, prop))) {
         if (property_info->property_type->get_fcn) {
@@ -593,8 +596,11 @@ nmc_setting_set_property(NMClient              *client,
                                    NM_META_ACCESSOR_MODIFIER_ADD),
                          FALSE);
 
+    prop = nmc_setting_propname_user_to_libnm(nm_setting_get_name(setting), prop);
+
     if (!(property_info = nm_meta_property_info_find_by_setting(setting, prop)))
         goto out_fail_read_only;
+
     if (!property_info->property_type->set_fcn)
         goto out_fail_read_only;
 
@@ -661,8 +667,12 @@ nmc_setting_get_valid_properties(NMSetting *setting)
     num = setting_info ? setting_info->properties_num : 0;
 
     valid_props = g_new(char *, num + 1);
-    for (i = 0; i < num; i++)
-        valid_props[i] = g_strdup(setting_info->properties[i]->property_name);
+    for (i = 0; i < num; i++) {
+        const char *prop =
+            nmc_setting_propname_libnm_to_user(setting_info->general->setting_name,
+                                               setting_info->properties[i]->property_name);
+        valid_props[i] = g_strdup(prop);
+    }
 
     valid_props[num] = NULL;
     return valid_props;
@@ -677,6 +687,8 @@ nmc_setting_get_property_allowed_values(NMSetting *setting, const char *prop, ch
     g_return_val_if_fail(out_to_free, FALSE);
 
     *out_to_free = NULL;
+
+    prop = nmc_setting_propname_user_to_libnm(nm_setting_get_name(setting), prop);
 
     if ((property_info = nm_meta_property_info_find_by_setting(setting, prop))) {
         if (property_info->property_type->values_fcn) {
@@ -710,6 +722,8 @@ nmc_setting_get_property_desc(NMSetting *setting, const char *prop)
     const char               *desc = NULL;
 
     g_return_val_if_fail(NM_IS_SETTING(setting), FALSE);
+
+    prop = nmc_setting_propname_user_to_libnm(nm_setting_get_name(setting), prop);
 
     property_info = nm_meta_property_info_find_by_setting(setting, prop);
     if (!property_info)
@@ -764,13 +778,43 @@ setting_details(const NmcConfig *nmc_config, NMSetting *setting, const char *one
 
     if (!nmc_print_table(
             nmc_config,
-            (gpointer[]){setting, NULL},
+            (gpointer[]) {setting, NULL},
             NULL,
             NULL,
-            (const NMMetaAbstractInfo *const[]){(const NMMetaAbstractInfo *) setting_info, NULL},
+            (const NMMetaAbstractInfo *const[]) {(const NMMetaAbstractInfo *) setting_info, NULL},
             fields_str,
             &error))
         return FALSE;
 
     return TRUE;
+}
+
+const char *
+nmc_setting_propname_user_to_libnm(const char *setting_name, const char *prop)
+{
+    if (NM_IN_STRSET(setting_name,
+                     NM_SETTING_IP4_CONFIG_SETTING_NAME,
+                     NM_SETTING_IP6_CONFIG_SETTING_NAME)) {
+        if (nm_streq0(prop, "dhcp-send-hostname"))
+            return NM_SETTING_IP_CONFIG_DHCP_SEND_HOSTNAME_V2;
+        else if (nm_streq0(prop, "dhcp-send-hostname-deprecated"))
+            return NM_SETTING_IP_CONFIG_DHCP_SEND_HOSTNAME;
+    }
+
+    return prop;
+}
+
+const char *
+nmc_setting_propname_libnm_to_user(const char *setting_name, const char *prop)
+{
+    if (NM_IN_STRSET(setting_name,
+                     NM_SETTING_IP4_CONFIG_SETTING_NAME,
+                     NM_SETTING_IP6_CONFIG_SETTING_NAME)) {
+        if (nm_streq0(prop, NM_SETTING_IP_CONFIG_DHCP_SEND_HOSTNAME_V2))
+            return "dhcp-send-hostname";
+        else if (nm_streq0(prop, NM_SETTING_IP_CONFIG_DHCP_SEND_HOSTNAME))
+            return "dhcp-send-hostname-deprecated";
+    }
+
+    return prop;
 }

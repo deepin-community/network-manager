@@ -24,7 +24,7 @@ libn_acd = static_library(
     'n-acd/src/n-acd.c',
     'n-acd/src/n-acd-probe.c',
     'n-acd/src/util/timer.c',
-    enable_ebpf ? 'n-acd/src/n-acd-bpf.c' : 'n-acd/src/n-acd-bpf-fallback.c',
+    'n-acd/src/n-acd-bpf.c',
   ),
   include_directories: include_directories(
     'c-list/src',
@@ -69,6 +69,14 @@ libn_dhcp4 = static_library(
 
 ###############################################################################
 
+libnm_systemd_common_cflags = [ ]
+
+libnm_systemd_common_cflags += cc.get_supported_arguments([
+  '-Wno-nonnull-compare',
+])
+
+###############################################################################
+
 subdir('libnm-std-aux')
 subdir('libnm-glib-aux')
 subdir('libnm-log-null')
@@ -95,8 +103,7 @@ if enable_nmtui
 endif
 subdir('nmcli')
 subdir('nm-dispatcher')
-subdir('nm-priv-helper')
-subdir('nm-daemon-helper')
+subdir('nm-helpers')
 subdir('nm-online')
 if enable_nmtui
   subdir('nmtui')
@@ -112,6 +119,7 @@ if enable_tests
   subdir('libnm-client-test')
   subdir('libnm-glib-aux/tests')
   subdir('libnm-platform/tests')
+  subdir('libnm-core-aux-intern/tests')
   subdir('libnm-core-impl/tests')
   subdir('libnm-client-impl/tests')
   subdir('libnm-client-aux-extern/tests')

@@ -1,3 +1,9 @@
+network-manager (1.44.2-7deepin8) unstable; urgency=medium
+
+  * feat: add autoconnect-reset-retries configuration
+
+ -- donghualin <donghualin@uniontech.com>  Mon, 18 May 2026 13:07:26 +0800
+
 network-manager (1.44.2-7deepin7) unstable; urgency=medium
 
   * early request dbus name to improve boot performance.

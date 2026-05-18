@@ -1,0 +1,383 @@
+Index: network-manager/man/NetworkManager.conf.xml
+===================================================================
+--- network-manager.orig/man/NetworkManager.conf.xml
++++ network-manager/man/NetworkManager.conf.xml
+@@ -470,6 +470,25 @@ no-auto-default=*
+       </varlistentry>
+ 
+       <varlistentry>
++        <term><varname>autoconnect-reset-retries</varname></term>
++        <listitem>
++          <para>
++            Controls whether NetworkManager should reset the autoconnect
++            retry count and try again after the retries are exhausted.
++            If set to <literal>true</literal> (the default), the connection
++            will be blocked for 5 minutes and then the retry count is
++            reset so the connection can be attempted again automatically.
++            If set to <literal>false</literal>, once the connection fails
++            the configured number of times, it will no longer be retried
++            automatically until manually reactivated or NetworkManager
++            is restarted. This is the global default value and can be
++            overridden per connection with the
++            <literal>connection.autoconnect-reset-retries</literal> property.
++          </para>
++        </listitem>
++      </varlistentry>
++
++      <varlistentry>
+         <term><varname>slaves-order</varname></term>
+         <listitem>
+           <para>
+Index: network-manager/src/core/nm-config-data.c
+===================================================================
+--- network-manager.orig/src/core/nm-config-data.c
++++ network-manager/src/core/nm-config-data.c
+@@ -88,7 +88,8 @@ typedef struct {
+         guint    interval;
+     } connectivity;
+ 
+-    int autoconnect_retries_default;
++    int  autoconnect_retries_default;
++    bool autoconnect_reset_retries;
+ 
+     struct {
+         /* from /var/lib/NetworkManager/no-auto-default.state */
+@@ -320,6 +321,14 @@ nm_config_data_get_autoconnect_retries_d
+     return NM_CONFIG_DATA_GET_PRIVATE(self)->autoconnect_retries_default;
+ }
+ 
++gboolean
++nm_config_data_get_autoconnect_reset_retries(const NMConfigData *self)
++{
++    g_return_val_if_fail(self, TRUE);
++
++    return NM_CONFIG_DATA_GET_PRIVATE(self)->autoconnect_reset_retries;
++}
++
+ const char *const *
+ nm_config_data_get_no_auto_default(const NMConfigData *self)
+ {
+@@ -2207,6 +2216,12 @@ constructed(GObject *object)
+     priv->autoconnect_retries_default = _nm_utils_ascii_str_to_int64(str, 10, 0, G_MAXINT32, 4);
+     g_free(str);
+ 
++    priv->autoconnect_reset_retries =
++        nm_config_keyfile_get_boolean(priv->keyfile,
++                                     NM_CONFIG_KEYFILE_GROUP_MAIN,
++                                     NM_CONFIG_KEYFILE_KEY_MAIN_AUTOCONNECT_RESET_RETRIES,
++                                     TRUE);
++
+     /* On missing config value, fallback to 300. On invalid value, disable connectivity checking by setting
+      * the interval to zero. */
+     str = g_key_file_get_string(priv->keyfile,
+Index: network-manager/src/core/nm-config-data.h
+===================================================================
+--- network-manager.orig/src/core/nm-config-data.h
++++ network-manager/src/core/nm-config-data.h
+@@ -174,7 +174,8 @@ const char *nm_config_data_get_connectiv
+ guint       nm_config_data_get_connectivity_interval(const NMConfigData *config_data);
+ const char *nm_config_data_get_connectivity_response(const NMConfigData *config_data);
+ 
+-int nm_config_data_get_autoconnect_retries_default(const NMConfigData *config_data);
++int      nm_config_data_get_autoconnect_retries_default(const NMConfigData *config_data);
++gboolean nm_config_data_get_autoconnect_reset_retries(const NMConfigData *config_data);
+ 
+ NMAuthPolkitMode nm_config_data_get_main_auth_polkit(const NMConfigData *config_data);
+ 
+Index: network-manager/src/core/nm-manager.c
+===================================================================
+--- network-manager.orig/src/core/nm-manager.c
++++ network-manager/src/core/nm-manager.c
+@@ -1276,6 +1276,26 @@ _autoconnect_retries_initial(NMSettingsC
+     return (guint32) retries;
+ }
+ 
++gboolean
++nm_manager_devcon_autoconnect_reset_retries_enabled(NMManager            *self,
++                                                    NMSettingsConnection *sett_conn)
++{
++    NMSettingConnection *s_con;
++    int                  val = -1;
++
++    nm_assert(NM_IS_MANAGER(self));
++    nm_assert(NM_IS_SETTINGS_CONNECTION(sett_conn));
++
++    s_con = nm_connection_get_setting_connection(nm_settings_connection_get_connection(sett_conn));
++    if (s_con)
++        val = nm_setting_connection_get_autoconnect_reset_retries(s_con);
++
++    if (val == -1)
++        return nm_config_data_get_autoconnect_reset_retries(NM_CONFIG_GET_DATA);
++
++    return val != 0;
++}
++
+ static gboolean
+ _autoconnect_retries_set(NMManager *self, DevConData *data, guint32 retries, gboolean is_reset)
+ {
+@@ -1292,13 +1312,15 @@ _autoconnect_retries_set(NMManager *self
+ 
+     if (retries != 0) {
+         blocked_until_sec = 0;
+-    } else {
++    } else if (nm_manager_devcon_autoconnect_reset_retries_enabled(self, data->sett_conn)) {
+         /* NOTE: the blocked time must be identical for all connections, otherwise
+          * the tracking of resetting the retry count in NMPolicy needs adjustment
+          * in _connection_autoconnect_retries_set() (as it would need to re-evaluate
+          * the next-timeout every time a connection gets blocked). */
+         blocked_until_sec =
+             nm_utils_get_monotonic_timestamp_sec() + AUTOCONNECT_RESET_RETRIES_TIMER_SEC;
++    } else {
++        blocked_until_sec = 0;
+     }
+ 
+     if (data->autoconnect.blocked_until_sec != blocked_until_sec) {
+Index: network-manager/src/core/nm-manager.h
+===================================================================
+--- network-manager.orig/src/core/nm-manager.h
++++ network-manager/src/core/nm-manager.h
+@@ -256,6 +256,9 @@ gint32 nm_manager_devcon_autoconnect_ret
+                                                            NMDevice             *device,
+                                                            NMSettingsConnection *sett_conn);
+ 
++gboolean nm_manager_devcon_autoconnect_reset_retries_enabled(NMManager            *self,
++                                                            NMSettingsConnection *sett_conn);
++
+ gboolean nm_manager_devcon_autoconnect_is_blocked(NMManager            *self,
+                                                   NMDevice             *device,
+                                                   NMSettingsConnection *sett_conn);
+Index: network-manager/src/core/nm-policy.c
+===================================================================
+--- network-manager.orig/src/core/nm-policy.c
++++ network-manager/src/core/nm-policy.c
+@@ -1757,18 +1757,20 @@ _connection_autoconnect_retries_set(NMPo
+ 
+     if (tries == 0) {
+         /* Schedule a handler to reset retries count */
+-        if (!priv->reset_connections_retries_idle_source) {
+-            gint32 retry_time;
++        if (nm_manager_devcon_autoconnect_reset_retries_enabled(priv->manager, connection)) {
++            if (!priv->reset_connections_retries_idle_source) {
++                gint32 retry_time;
+ 
+-            retry_time = nm_manager_devcon_autoconnect_retries_blocked_until(priv->manager,
+-                                                                             device,
+-                                                                             connection);
+-            nm_assert(retry_time != 0);
++                retry_time = nm_manager_devcon_autoconnect_retries_blocked_until(priv->manager,
++                                                                                 device,
++                                                                                 connection);
++                nm_assert(retry_time != 0);
+ 
+-            priv->reset_connections_retries_idle_source = nm_g_timeout_add_seconds_source(
+-                MAX(0, retry_time - nm_utils_get_monotonic_timestamp_sec()),
+-                reset_connections_retries,
+-                self);
++                priv->reset_connections_retries_idle_source = nm_g_timeout_add_seconds_source(
++                    MAX(0, retry_time - nm_utils_get_monotonic_timestamp_sec()),
++                    reset_connections_retries,
++                    self);
++            }
+         }
+     }
+ }
+Index: network-manager/src/libnm-base/nm-config-base.h
+===================================================================
+--- network-manager.orig/src/libnm-base/nm-config-base.h
++++ network-manager/src/libnm-base/nm-config-base.h
+@@ -22,6 +22,7 @@
+ #define NM_CONFIG_KEYFILE_KEY_MAIN_ASSUME_IPV6LL_ONLY          "assume-ipv6ll-only"
+ #define NM_CONFIG_KEYFILE_KEY_MAIN_AUTH_POLKIT                 "auth-polkit"
+ #define NM_CONFIG_KEYFILE_KEY_MAIN_AUTOCONNECT_RETRIES_DEFAULT "autoconnect-retries-default"
++#define NM_CONFIG_KEYFILE_KEY_MAIN_AUTOCONNECT_RESET_RETRIES   "autoconnect-reset-retries"
+ #define NM_CONFIG_KEYFILE_KEY_MAIN_CONFIGURE_AND_QUIT          "configure-and-quit"
+ #define NM_CONFIG_KEYFILE_KEY_MAIN_DEBUG                       "debug"
+ #define NM_CONFIG_KEYFILE_KEY_MAIN_DHCP                        "dhcp"
+Index: network-manager/src/libnm-core-impl/gen-metadata-nm-settings-libnm-core.xml.in
+===================================================================
+--- network-manager.orig/src/libnm-core-impl/gen-metadata-nm-settings-libnm-core.xml.in
++++ network-manager/src/libnm-core-impl/gen-metadata-nm-settings-libnm-core.xml.in
+@@ -775,6 +775,10 @@
+                   dbus-type="i"
+                   gprop-type="gint"
+                   />
++        <property name="autoconnect-reset-retries"
++                  dbus-type="i"
++                  gprop-type="gint"
++                  />
+         <property name="autoconnect-slaves"
+                   dbus-type="i"
+                   gprop-type="NMSettingConnectionAutoconnectSlaves"
+Index: network-manager/src/libnm-core-impl/nm-setting-connection.c
+===================================================================
+--- network-manager.orig/src/libnm-core-impl/nm-setting-connection.c
++++ network-manager/src/libnm-core-impl/nm-setting-connection.c
+@@ -51,6 +51,7 @@ NM_GOBJECT_PROPERTIES_DEFINE(NMSettingCo
+                              PROP_AUTOCONNECT,
+                              PROP_AUTOCONNECT_PRIORITY,
+                              PROP_AUTOCONNECT_RETRIES,
++                             PROP_AUTOCONNECT_RESET_RETRIES,
+                              PROP_MULTI_CONNECT,
+                              PROP_TIMESTAMP,
+                              PROP_READ_ONLY,
+@@ -89,6 +90,7 @@ typedef struct {
+     int         metered;
+     gint32      autoconnect_priority;
+     gint32      autoconnect_retries;
++    gint32      autoconnect_reset_retries;
+     gint32      multi_connect;
+     gint32      auth_retries;
+     gint32      mdns;
+@@ -576,6 +578,25 @@ nm_setting_connection_get_autoconnect_re
+ }
+ 
+ /**
++ * nm_setting_connection_get_autoconnect_reset_retries:
++ * @setting: the #NMSettingConnection
++ *
++ * Returns the autoconnect-reset-retries property. A value of -1 means
++ * to use the global default from NetworkManager.conf, 0 means not to
++ * reset (no more autoconnect attempts after retries are exhausted),
++ * 1 means to reset after a timeout and try again.
++ *
++ * Returns: the autoconnect-reset-retries value (-1, 0, or 1)
++ **/
++int
++nm_setting_connection_get_autoconnect_reset_retries(NMSettingConnection *setting)
++{
++    g_return_val_if_fail(NM_IS_SETTING_CONNECTION(setting), -1);
++
++    return NM_SETTING_CONNECTION_GET_PRIVATE(setting)->autoconnect_reset_retries;
++}
++
++/**
+  * nm_setting_connection_get_multi_connect:
+  * @setting: the #NMSettingConnection
+  *
+@@ -2147,6 +2168,37 @@ nm_setting_connection_class_init(NMSetti
+                                              autoconnect_retries);
+ 
+     /**
++     * NMSettingConnection:autoconnect-reset-retries:
++     *
++     * Controls whether the connection should be automatically retried after
++     * the autoconnect retry count is exhausted. %TRUE means the connection
++     * will be blocked for a period and then the retry count is reset so the
++     * connection can be attempted again automatically. %FALSE means once the
++     * connection fails the configured number of times, it will not be retried
++     * automatically. The value -1 means to use the global default setting
++     * from NetworkManager.conf.
++     **/
++    /* ---ifcfg-rh---
++     * property: autoconnect-reset-retries
++     * variable: AUTOCONNECT_RESET_RETRIES(+)
++     * description: Whether to reset the retry count after the connection
++     * fails the configured number of times.
++     * values: -1 (use global default), 0 (don't reset), 1 (reset after timeout)
++     * example: AUTOCONNECT_RESET_RETRIES=-1
++     * ---end---
++     */
++    _nm_setting_property_define_direct_int32(properties_override,
++                                             obj_properties,
++                                             NM_SETTING_CONNECTION_AUTOCONNECT_RESET_RETRIES,
++                                             PROP_AUTOCONNECT_RESET_RETRIES,
++                                             -1,
++                                             1,
++                                             -1,
++                                             0,
++                                             NMSettingConnectionPrivate,
++                                             autoconnect_reset_retries);
++
++    /**
+      * NMSettingConnection:multi-connect:
+      *
+      * Specifies whether the profile can be active multiple times at a particular
+Index: network-manager/src/libnm-core-public/nm-setting-connection.h
+===================================================================
+--- network-manager.orig/src/libnm-core-public/nm-setting-connection.h
++++ network-manager/src/libnm-core-public/nm-setting-connection.h
+@@ -40,7 +40,8 @@ G_BEGIN_DECLS
+ #define NM_SETTING_CONNECTION_TYPE                  "type"
+ #define NM_SETTING_CONNECTION_AUTOCONNECT           "autoconnect"
+ #define NM_SETTING_CONNECTION_AUTOCONNECT_PRIORITY  "autoconnect-priority"
+-#define NM_SETTING_CONNECTION_AUTOCONNECT_RETRIES   "autoconnect-retries"
++#define NM_SETTING_CONNECTION_AUTOCONNECT_RETRIES      "autoconnect-retries"
++#define NM_SETTING_CONNECTION_AUTOCONNECT_RESET_RETRIES "autoconnect-reset-retries"
+ #define NM_SETTING_CONNECTION_MULTI_CONNECT         "multi-connect"
+ #define NM_SETTING_CONNECTION_TIMESTAMP             "timestamp"
+ #define NM_SETTING_CONNECTION_READ_ONLY             "read-only"
+@@ -167,6 +168,7 @@ gboolean    nm_setting_connection_get_au
+ int         nm_setting_connection_get_autoconnect_priority(NMSettingConnection *setting);
+ NM_AVAILABLE_IN_1_6
+ int nm_setting_connection_get_autoconnect_retries(NMSettingConnection *setting);
++int nm_setting_connection_get_autoconnect_reset_retries(NMSettingConnection *setting);
+ NM_AVAILABLE_IN_1_14
+ NMConnectionMultiConnect nm_setting_connection_get_multi_connect(NMSettingConnection *setting);
+ guint64                  nm_setting_connection_get_timestamp(NMSettingConnection *setting);
+Index: network-manager/src/libnmc-setting/nm-meta-setting-desc.c
+===================================================================
+--- network-manager.orig/src/libnmc-setting/nm-meta-setting-desc.c
++++ network-manager/src/libnmc-setting/nm-meta-setting-desc.c
+@@ -5523,6 +5523,25 @@ static const NMMetaPropertyInfo *const p
+             ),
+         ),
+     ),
++    PROPERTY_INFO_WITH_DESC (NM_SETTING_CONNECTION_AUTOCONNECT_RESET_RETRIES,
++        .property_type =                &_pt_gobject_int,
++        .property_typ_data = DEFINE_PROPERTY_TYP_DATA_SUBTYPE (gobject_int,
++            .value_infos =              INT_VALUE_INFOS (
++                {
++                    .value.i64 = -1,
++                    .nick = "default",
++                },
++                {
++                    .value.i64 = 0,
++                    .nick = "no",
++                },
++                {
++                    .value.i64 = 1,
++                    .nick = "yes",
++                },
++            ),
++        ),
++    ),
+     PROPERTY_INFO_WITH_DESC (NM_SETTING_CONNECTION_MULTI_CONNECT,
+         .property_type =                &_pt_gobject_enum,
+         .property_typ_data = DEFINE_PROPERTY_TYP_DATA (
+Index: network-manager/src/libnmc-setting/settings-docs.h
+===================================================================
+--- network-manager.orig/src/libnmc-setting/settings-docs.h
++++ network-manager/src/libnmc-setting/settings-docs.h
+@@ -4,6 +4,7 @@
+ #define DESCRIBE_DOC_NM_SETTING_CONNECTION_AUTOCONNECT N_("Whether or not the connection should be automatically connected by NetworkManager when the resources for the connection are available. TRUE to automatically activate the connection, FALSE to require manual intervention to activate the connection. Autoconnect happens when the circumstances are suitable. That means for example that the device is currently managed and not active. Autoconnect thus never replaces or competes with an already active profile. Note that autoconnect is not implemented for VPN profiles. See \"secondaries\" as an alternative to automatically connect VPN profiles. If multiple profiles are ready to autoconnect on the same device, the one with the better \"connection.autoconnect-priority\" is chosen. If the priorities are equal, then the most recently connected profile is activated. If the profiles were not connected earlier or their \"connection.timestamp\" is identical, the choice is undefined. Depending on \"connection.multi-connect\", a profile can (auto)connect only once at a time or multiple times.")
+ #define DESCRIBE_DOC_NM_SETTING_CONNECTION_AUTOCONNECT_PRIORITY N_("The autoconnect priority in range -999 to 999. If the connection is set to autoconnect, connections with higher priority will be preferred. The higher number means higher priority. Defaults to 0. Note that this property only matters if there are more than one candidate profile to select for autoconnect. In case of equal priority, the profile used most recently is chosen.")
+ #define DESCRIBE_DOC_NM_SETTING_CONNECTION_AUTOCONNECT_RETRIES N_("The number of times a connection should be tried when autoactivating before giving up. Zero means forever, -1 means the global default (4 times if not overridden). Setting this to 1 means to try activation only once before blocking autoconnect. Note that after a timeout, NetworkManager will try to autoconnect again.")
++#define DESCRIBE_DOC_NM_SETTING_CONNECTION_AUTOCONNECT_RESET_RETRIES N_("Controls whether the autoconnect retry count is reset after being exhausted. -1 means to use the global default from NetworkManager.conf (which defaults to true), 0 means not to reset (no more autoconnect attempts after retries are exhausted), 1 means to reset after a timeout and try autoconnecting again.")
+ #define DESCRIBE_DOC_NM_SETTING_CONNECTION_AUTOCONNECT_SLAVES N_("Whether or not slaves of this connection should be automatically brought up when NetworkManager activates this connection. This only has a real effect for master connections. The properties \"autoconnect\", \"autoconnect-priority\" and \"autoconnect-retries\" are unrelated to this setting. The permitted values are: 0: leave slave connections untouched, 1: activate all the slave connections with this connection, -1: default. If -1 (default) is set, global connection.autoconnect-slaves is read to determine the real value. If it is default as well, this fallbacks to 0.")
+ #define DESCRIBE_DOC_NM_SETTING_CONNECTION_DNS_OVER_TLS N_("Whether DNSOverTls (dns-over-tls) is enabled for the connection. DNSOverTls is a technology which uses TLS to encrypt dns traffic. The permitted values are: \"yes\" (2) use DNSOverTls and disabled fallback, \"opportunistic\" (1) use DNSOverTls but allow fallback to unencrypted resolution, \"no\" (0) don't ever use DNSOverTls. If unspecified \"default\" depends on the plugin used. Systemd-resolved uses global setting. This feature requires a plugin which supports DNSOverTls. Otherwise, the setting has no effect. One such plugin is dns-systemd-resolved.")
+ #define DESCRIBE_DOC_NM_SETTING_CONNECTION_GATEWAY_PING_TIMEOUT N_("If greater than zero, delay success of IP addressing until either the timeout is reached, or an IP gateway replies to a ping.")
+Index: network-manager/src/libnmc-setting/settings-docs.h.in
+===================================================================
+--- network-manager.orig/src/libnmc-setting/settings-docs.h.in
++++ network-manager/src/libnmc-setting/settings-docs.h.in
+@@ -4,6 +4,7 @@
+ #define DESCRIBE_DOC_NM_SETTING_CONNECTION_AUTOCONNECT N_("Whether or not the connection should be automatically connected by NetworkManager when the resources for the connection are available. TRUE to automatically activate the connection, FALSE to require manual intervention to activate the connection. Autoconnect happens when the circumstances are suitable. That means for example that the device is currently managed and not active. Autoconnect thus never replaces or competes with an already active profile. Note that autoconnect is not implemented for VPN profiles. See \"secondaries\" as an alternative to automatically connect VPN profiles. If multiple profiles are ready to autoconnect on the same device, the one with the better \"connection.autoconnect-priority\" is chosen. If the priorities are equal, then the most recently connected profile is activated. If the profiles were not connected earlier or their \"connection.timestamp\" is identical, the choice is undefined. Depending on \"connection.multi-connect\", a profile can (auto)connect only once at a time or multiple times.")
+ #define DESCRIBE_DOC_NM_SETTING_CONNECTION_AUTOCONNECT_PRIORITY N_("The autoconnect priority in range -999 to 999. If the connection is set to autoconnect, connections with higher priority will be preferred. The higher number means higher priority. Defaults to 0. Note that this property only matters if there are more than one candidate profile to select for autoconnect. In case of equal priority, the profile used most recently is chosen.")
+ #define DESCRIBE_DOC_NM_SETTING_CONNECTION_AUTOCONNECT_RETRIES N_("The number of times a connection should be tried when autoactivating before giving up. Zero means forever, -1 means the global default (4 times if not overridden). Setting this to 1 means to try activation only once before blocking autoconnect. Note that after a timeout, NetworkManager will try to autoconnect again.")
++#define DESCRIBE_DOC_NM_SETTING_CONNECTION_AUTOCONNECT_RESET_RETRIES N_("Controls whether the autoconnect retry count is reset after being exhausted. -1 means to use the global default from NetworkManager.conf (which defaults to true), 0 means not to reset (no more autoconnect attempts after retries are exhausted), 1 means to reset after a timeout and try autoconnecting again.")
+ #define DESCRIBE_DOC_NM_SETTING_CONNECTION_AUTOCONNECT_SLAVES N_("Whether or not slaves of this connection should be automatically brought up when NetworkManager activates this connection. This only has a real effect for master connections. The properties \"autoconnect\", \"autoconnect-priority\" and \"autoconnect-retries\" are unrelated to this setting. The permitted values are: 0: leave slave connections untouched, 1: activate all the slave connections with this connection, -1: default. If -1 (default) is set, global connection.autoconnect-slaves is read to determine the real value. If it is default as well, this fallbacks to 0.")
+ #define DESCRIBE_DOC_NM_SETTING_CONNECTION_DNS_OVER_TLS N_("Whether DNSOverTls (dns-over-tls) is enabled for the connection. DNSOverTls is a technology which uses TLS to encrypt dns traffic. The permitted values are: \"yes\" (2) use DNSOverTls and disabled fallback, \"opportunistic\" (1) use DNSOverTls but allow fallback to unencrypted resolution, \"no\" (0) don't ever use DNSOverTls. If unspecified \"default\" depends on the plugin used. Systemd-resolved uses global setting. This feature requires a plugin which supports DNSOverTls. Otherwise, the setting has no effect. One such plugin is dns-systemd-resolved.")
+ #define DESCRIBE_DOC_NM_SETTING_CONNECTION_GATEWAY_PING_TIMEOUT N_("If greater than zero, delay success of IP addressing until either the timeout is reached, or an IP gateway replies to a ping.")
+Index: network-manager/src/nmcli/gen-metadata-nm-settings-nmcli.xml.in
+===================================================================
+--- network-manager.orig/src/nmcli/gen-metadata-nm-settings-nmcli.xml.in
++++ network-manager/src/nmcli/gen-metadata-nm-settings-nmcli.xml.in
+@@ -384,6 +384,8 @@
+                   nmcli-description="The autoconnect priority in range -999 to 999. If the connection is set to autoconnect, connections with higher priority will be preferred. The higher number means higher priority. Defaults to 0. Note that this property only matters if there are more than one candidate profile to select for autoconnect. In case of equal priority, the profile used most recently is chosen." />
+         <property name="autoconnect-retries"
+                   nmcli-description="The number of times a connection should be tried when autoactivating before giving up. Zero means forever, -1 means the global default (4 times if not overridden). Setting this to 1 means to try activation only once before blocking autoconnect. Note that after a timeout, NetworkManager will try to autoconnect again." />
++        <property name="autoconnect-reset-retries"
++                  nmcli-description="Controls whether the autoconnect retry count is reset after being exhausted. -1 means to use the global default from NetworkManager.conf (which defaults to true), 0 means not to reset (no more autoconnect attempts after retries are exhausted), 1 means to reset after a timeout and try autoconnecting again." />
+         <property name="multi-connect"
+                   nmcli-description="Specifies whether the profile can be active multiple times at a particular moment. The value is of type NMConnectionMultiConnect." />
+         <property name="auth-retries"

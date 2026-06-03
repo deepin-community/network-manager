@@ -1,3 +1,11 @@
+network-manager (1.44.2-7deepin8.1) UNRELEASED; urgency=medium
+
+  * Non-maintainer upload.
+  * CVE-2025-9615: avoid that non-admin user using other users'
+    certificates
+
+ -- 胡登 <ut000081@golf66work>  Wed, 03 Jun 2026 15:21:35 +0800
+
 network-manager (1.44.2-7deepin8) unstable; urgency=medium
 
   * feat: add autoconnect-reset-retries configuration

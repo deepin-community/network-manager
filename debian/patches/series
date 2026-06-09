@@ -11,3 +11,4 @@ uniontech003-deepin-wifi6.patch
 uniontech-early-request-dbus-name.patch
 uniontech004-add-autoresetretry-config.patch
 uniontech005-hotspot-retry-when-failure.patch
+uniontech004-update-unittest.patch

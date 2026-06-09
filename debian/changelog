@@ -1,3 +1,9 @@
+network-manager (1.44.2-7deepin9) unstable; urgency=medium
+
+  * fix(wifi/hotspot): retry with different frequency on AP mode timeout
+
+ -- donghualin <donghualin@uniontech.com>  Tue, 09 Jun 2026 09:47:58 +0800
+
 network-manager (1.44.2-7deepin8) unstable; urgency=medium
 
   * feat: add autoconnect-reset-retries configuration

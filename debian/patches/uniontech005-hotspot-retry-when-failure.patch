@@ -1,0 +1,146 @@
+Index: network-manager/src/core/devices/wifi/nm-device-wifi.c
+===================================================================
+--- network-manager.orig/src/core/devices/wifi/nm-device-wifi.c
++++ network-manager/src/core/devices/wifi/nm-device-wifi.c
+@@ -56,6 +56,8 @@
+ #define SCAN_REQUEST_SSIDS_MAX_NUM      32u
+ #define SCAN_REQUEST_SSIDS_MAX_AGE_MSEC (3 * 60 * NM_UTILS_MSEC_PER_SEC)
+ 
++#define HOTSPOT_FREQ_RETRY_MAX         4
++
+ #define _LOGT_scan(...) _LOGT(LOGD_WIFI_SCAN, "wifi-scan: " __VA_ARGS__)
+ 
+ /*****************************************************************************/
+@@ -128,6 +130,10 @@ typedef struct {
+ 
+     guint8 scan_periodic_interval_sec;
+ 
++    int hotspot_retry_count;
++    guint32 hotspot_failed_freqs[16];
++    guint hotspot_failed_freqs_num;
++
+     bool enabled : 1; /* rfkilled or not */
+     bool scan_is_scanning : 1;
+     bool scan_periodic_allowed : 1;
+@@ -2874,7 +2880,37 @@ supplicant_connection_timeout_cb(gpointe
+         /* In Ad-Hoc and AP modes there's nothing to check the encryption key
+          * (if any), so supplicant timeouts here are almost certainly the wifi
+          * driver being really stupid.
++         *
++         * For Hotspot/AP mode, retry with a different frequency before giving
++         * up. The driver may fail to initialize AP mode on some channels due to
++         * regulatory restrictions or hardware issues.
+          */
++        if (priv->mode == _NM_802_11_MODE_AP && priv->hotspot_retry_count < HOTSPOT_FREQ_RETRY_MAX) {
++            NMWifiAP *ap = priv->current_ap;
++            guint32   failed_freq = ap ? nm_wifi_ap_get_freq(ap) : 0;
++
++            /* Record the failed frequency so ensure_hotspot_frequency() skips it. */
++            if (failed_freq > 0
++                && priv->hotspot_failed_freqs_num < G_N_ELEMENTS(priv->hotspot_failed_freqs)) {
++                priv->hotspot_failed_freqs[priv->hotspot_failed_freqs_num++] = failed_freq;
++            }
++
++            priv->hotspot_retry_count++;
++
++            _LOGI(LOGD_DEVICE | LOGD_WIFI,
++                  "Activation: (wifi) Hotspot network creation took too long on freq %u, "
++                  "retrying with a different frequency (attempt %d/%d)",
++                  failed_freq, priv->hotspot_retry_count, HOTSPOT_FREQ_RETRY_MAX);
++
++            /* Clear the frequency on the AP so ensure_hotspot_frequency() picks a new one. */
++            if (ap)
++                nm_wifi_ap_set_freq(ap, 0);
++
++            /* Reschedule from stage1 to re-enter act_stage2_config with a new frequency. */
++            nm_device_activate_schedule_stage1_device_prepare(device, FALSE);
++            return FALSE;
++        }
++
+         _LOGW(LOGD_DEVICE | LOGD_WIFI,
+               "Activation: (wifi) %s network creation took too long, failing activation",
+               priv->mode == _NM_802_11_MODE_ADHOC ? "Ad-Hoc" : "Hotspot");
+@@ -3125,6 +3161,13 @@ act_stage1_prepare(NMDevice *device, NMD
+     else if (g_strcmp0(mode, NM_SETTING_WIRELESS_MODE_AP) == 0) {
+         priv->mode = _NM_802_11_MODE_AP;
+ 
++        /* Reset hotspot frequency retry state for a new activation attempt.
++         * Don't reset during a retry cycle (hotspot_retry_count > 0), where
++         * act_stage1_prepare is re-entered via
++         * nm_device_activate_schedule_stage1_device_prepare(). */
++        if (priv->hotspot_retry_count == 0)
++            priv->hotspot_failed_freqs_num = 0;
++
+         /* Scanning not done in AP mode; clear the scan list */
+         remove_all_aps(self);
+     } else if (g_strcmp0(mode, NM_SETTING_WIRELESS_MODE_MESH) == 0)
+@@ -3179,6 +3222,7 @@ act_stage1_prepare(NMDevice *device, NMD
+ static void
+ ensure_hotspot_frequency(NMDeviceWifi *self, NMSettingWireless *s_wifi, NMWifiAP *ap)
+ {
++	NMDeviceWifiPrivate *priv = NM_DEVICE_WIFI_GET_PRIVATE(self);
+     guint32     a_freqs[]  = {5180, 5200, 5220, 5745, 5765, 5785, 5805, 0};
+     guint32     bg_freqs[] = {2412, 2437, 2462, 2472, 0};
+     guint32    *rnd_freqs;
+@@ -3188,6 +3232,7 @@ ensure_hotspot_frequency(NMDeviceWifi *s
+     guint32     freq;
+     guint64     rnd;
+     guint       i;
++    guint		j;
+     guint       l;
+ 
+     nm_assert(ap);
+@@ -3241,6 +3286,30 @@ ensure_hotspot_frequency(NMDeviceWifi *s
+         NM_SWAP(&rnd_freqs[i], &rnd_freqs[i + (rnd % l)]);
+     }
+ 
++    /* Skip frequencies that failed in previous hotspot attempts. */
++    if (priv->hotspot_failed_freqs_num > 0) {
++        l = 0;
++        for (i = 0; i < rnd_freqs_len; i++) {
++            gboolean skip = FALSE;
++            for (j = 0; j < priv->hotspot_failed_freqs_num; j++) {
++                if (rnd_freqs[i] == priv->hotspot_failed_freqs[j]) {
++                    skip = TRUE;
++                    break;
++                }
++            }
++            if (!skip)
++                rnd_freqs[l++] = rnd_freqs[i];
++        }
++        rnd_freqs[l] = 0;
++        rnd_freqs_len = l;
++        if (rnd_freqs_len == 0) {
++            _LOGW(LOGD_WIFI,
++                  "hotspot: all %u candidate frequencies have been tried and failed",
++                  priv->hotspot_failed_freqs_num);
++            return;
++        }
++    }
++
+     freq = nm_platform_wifi_find_frequency(nm_device_get_platform(device),
+                                            nm_device_get_ifindex(device),
+                                            rnd_freqs,
+@@ -3248,7 +3317,12 @@ ensure_hotspot_frequency(NMDeviceWifi *s
+     if (freq == 0)
+         freq = rnd_freqs[0];
+ 
+-    _LOGD(LOGD_WIFI, "set frequency for hotspot AP to %u", freq);
++    if (priv->hotspot_retry_count > 0)
++        _LOGI(LOGD_WIFI,
++              "hotspot: retry %d, trying frequency %u",
++              priv->hotspot_retry_count, freq);
++    else
++        _LOGD(LOGD_WIFI, "set frequency for hotspot AP to %u", freq);
+ 
+     if (nm_wifi_ap_set_freq(ap, freq))
+         _ap_dump(self, LOGL_DEBUG, ap, "updated", 0);
+@@ -3567,6 +3641,8 @@ device_state_changed(NMDevice
+         _indicate_addressing_running_reset(self);
+         break;
+     case NM_DEVICE_STATE_DISCONNECTED:
++        priv->hotspot_retry_count      = 0;
++        priv->hotspot_failed_freqs_num = 0;
+         break;
+     default:
+         break;

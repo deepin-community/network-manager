@@ -1,3 +1,15 @@
+network-manager (1.44.2-7deepin10) unstable; urgency=medium
+
+  * fix(network-manager): CVE-2025-9615 - certificate permission validation
+    A flaw was found in NetworkManager where non-admin users could use other
+    users' certificates for network authentication. The fix:
+    - Remove modify_system build option that bypassed permission checks
+    - Add permission helpers to validate connection ownership
+    - Read certificate files as the connection owner via daemon-helper
+    - Pass certificates as blobs to supplicant for private connections
+
+ -- deepin-community-bot <bot@deepin.org>  Fri, 12 Jun 2026 09:32:00 +0800
+
 network-manager (1.44.2-7deepin9) unstable; urgency=medium
 
   * fix(wifi/hotspot): retry with different frequency on AP mode timeout

@@ -12,3 +12,10 @@ uniontech-early-request-dbus-name.patch
 uniontech004-add-autoresetretry-config.patch
 uniontech005-hotspot-retry-when-failure.patch
 uniontech004-update-unittest.patch
+CVE-2025-9615-01-polkit.patch
+CVE-2025-9615-02-std-utils.patch
+CVE-2025-9615-03-permission-helpers.patch
+CVE-2025-9615-04-cert-flag.patch
+CVE-2025-9615-05-daemon-helper.patch
+CVE-2025-9615-06-device-supplicant.patch
+CVE-2025-9615-07-vpn.patch

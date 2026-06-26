@@ -1,0 +1,182 @@
+Index: network-manager/src/core/devices/nm-device.c
+===================================================================
+--- network-manager.orig/src/core/devices/nm-device.c
++++ network-manager/src/core/devices/nm-device.c
+@@ -229,6 +229,7 @@ typedef struct {
+     bool is_disabled : 1;
+     bool is_ignore : 1;
+     bool do_reapply : 1;
++    bool preserve_dhcp : 1;
+ } IPStateData;
+ 
+ typedef struct {
+@@ -3783,6 +3784,7 @@ _dev_ip_state_cleanup(NMDevice *self, in
+     priv->ip_data_x[IS_IPv4].is_disabled      = FALSE;
+     priv->ip_data_x[IS_IPv4].is_ignore        = FALSE;
+     priv->ip_data_x[IS_IPv4].do_reapply       = FALSE;
++    priv->ip_data_x[IS_IPv4].preserve_dhcp     = FALSE;
+ }
+ 
+ /*****************************************************************************/
+@@ -10468,6 +10470,19 @@ _dev_ipdhcpx_cleanup(NMDevice *self, int
+ {
+     NMDevicePrivate *priv    = NM_DEVICE_GET_PRIVATE(self);
+     const int        IS_IPv4 = NM_IS_IPv4(addr_family);
++    gboolean         preserve_dhcp = priv->ip_data_x[IS_IPv4].preserve_dhcp;
++
++    _LOGD_ipdhcp(addr_family, "cleanup: full_cleanup=%d, preserve_dhcp=%d", full_cleanup, preserve_dhcp);
++
++    /* PRESERVE_DHCP reapply flag: keep the running DHCP client alive and preserve its state.
++     * This avoids unnecessary lease renegotiation when only never-default changes.
++     * The DHCP l3cd (addresses/routes from lease) stays registered, and the MANUALIP l3cd
++     * will be rebuilt with the new never-default value. l3cfg commit then correctly
++     * adds/removes default routes without touching DHCP. */
++    if (preserve_dhcp) {
++        _dev_ip_state_check_async(self, addr_family);
++        return;
++    }
+ 
+     _dev_ipdhcpx_set_state(self, addr_family, NM_DEVICE_IP_STATE_NONE);
+ 
+@@ -10625,12 +10640,16 @@ _dev_ipdhcpx_start(NMDevice *self, int a
+         _dev_ipdhcpx_set_state(self, addr_family, NM_DEVICE_IP_STATE_PENDING);
+     else if (priv->ipdhcp_data_x[IS_IPv4].state > NM_DEVICE_IP_STATE_PENDING) {
+         /* already succeeded or failed */
++        _LOGD_ipdhcp(addr_family, "start: skip, state=%d (already succeeded or failed)", priv->ipdhcp_data_x[IS_IPv4].state);
+         return;
+     } else if (priv->ipdhcp_data_x[IS_IPv4].client) {
+         /* DHCP client already started */
++        _LOGD_ipdhcp(addr_family, "start: skip, DHCP client already running");
+         return;
+     }
+ 
++    _LOGD_ipdhcp(addr_family, "start: creating new DHCP client, preserve_dhcp=%d", priv->ip_data_x[IS_IPv4].preserve_dhcp);
++
+     if (nm_device_sys_iface_state_is_external(self)) {
+         fail_reason = nm_assert_unreachable_val("cannot run DHCP on external interface");
+         goto out_fail;
+@@ -12419,21 +12438,31 @@ activate_stage3_ip_config(NMDevice *self
+         ipv6_method = klass->get_ip_method_auto(self, AF_INET6);
+     }
+ 
++    gboolean any_preserve_dhcp = FALSE;
++    
+     if (priv->ip_data_4.do_reapply) {
+-        _LOGD_ip(AF_INET, "reapply...");
+-        priv->ip_data_4.do_reapply = FALSE;
++        gboolean preserve_dhcp_4     = priv->ip_data_4.preserve_dhcp;
++        priv->ip_data_4.do_reapply    = FALSE;
++        /* 注意：不要在这里清除 preserve_dhcp，因为 _dev_ipdhcpx_cleanup 内部
++         * 需要读取这个值来决定是否跳过 DHCP 停止。必须在 _cleanup_ip_pre 之后清除。 */
++        _LOGD_ip(AF_INET, "reapply: preserve_dhcp=%d", preserve_dhcp_4);
+         _cleanup_ip_pre(self,
+                         AF_INET,
+                         CLEANUP_TYPE_KEEP_REAPPLY,
+-                        nm_streq(ipv4_method, NM_SETTING_IP4_CONFIG_METHOD_AUTO));
++                        nm_streq(ipv4_method, NM_SETTING_IP4_CONFIG_METHOD_AUTO) || preserve_dhcp_4);
++        priv->ip_data_4.preserve_dhcp = FALSE;
++        any_preserve_dhcp |= preserve_dhcp_4;
+     }
+     if (priv->ip_data_6.do_reapply) {
+-        _LOGD_ip(AF_INET6, "reapply...");
+-        priv->ip_data_6.do_reapply = FALSE;
++        gboolean preserve_dhcp_6     = priv->ip_data_6.preserve_dhcp;
++        priv->ip_data_6.do_reapply    = FALSE;
++        _LOGD_ip(AF_INET6, "reapply: preserve_dhcp=%d", preserve_dhcp_6);
+         _cleanup_ip_pre(self,
+                         AF_INET6,
+                         CLEANUP_TYPE_KEEP_REAPPLY,
+-                        nm_streq(ipv6_method, NM_SETTING_IP6_CONFIG_METHOD_AUTO));
++                        nm_streq(ipv6_method, NM_SETTING_IP6_CONFIG_METHOD_AUTO) || preserve_dhcp_6);
++        priv->ip_data_6.preserve_dhcp = FALSE;
++        any_preserve_dhcp |= preserve_dhcp_6;
+     }
+ 
+     /* Add the interface to the specified firewall zone */
+@@ -12512,6 +12541,24 @@ activate_stage3_ip_config(NMDevice *self
+         _dev_ipmanual_start(self);
+     }
+ 
++    if (any_preserve_dhcp) {
++        /* During reapply with PRESERVE_DHCP, the DHCP client and its l3cd
++         * are kept alive. However, the merge flags (including NO_DEFAULT_ROUTES)
++         * were recalculated above and only applied to MANUALIP. Re-register all
++         * existing l3cds so their merge_flags get updated too. */
++        L3ConfigDataType l3cd_type;
++
++        _LOGD(LOGD_DEVICE, "reapply: preserve-dhcp: re-register existing l3cds to update merge-flags");
++        for (l3cd_type = 0; l3cd_type < _L3_CONFIG_DATA_TYPE_NUM; l3cd_type++) {
++            if (l3cd_type != L3_CONFIG_DATA_TYPE_MANUALIP && priv->l3cds[l3cd_type].d) {
++                _LOGD(LOGD_DEVICE,
++                      "reapply: preserve-dhcp: re-register l3cd type=%d",
++                      l3cd_type);
++                _dev_l3_register_l3cds_set_one(self, l3cd_type, priv->l3cds[l3cd_type].d, FALSE);
++            }
++        }
++    }
++
+     activate_stage3_ip_config_for_addr_family(self, AF_INET, ipv4_method);
+     activate_stage3_ip_config_for_addr_family(self, AF_INET6, ipv6_method);
+ }
+@@ -13303,6 +13350,11 @@ check_and_reapply_connection(NMDevice
+             priv->ip_data_6.do_reapply = TRUE;
+         }
+ 
++        priv->ip_data_4.preserve_dhcp = NM_FLAGS_HAS(reapply_flags, NM_DEVICE_REAPPLY_FLAGS_PRESERVE_DHCP);
++        priv->ip_data_6.preserve_dhcp = NM_FLAGS_HAS(reapply_flags, NM_DEVICE_REAPPLY_FLAGS_PRESERVE_DHCP);
++        _LOGD(LOGD_DEVICE, "reapply: reapply_flags=0x%x, preserve_dhcp=%d, do_reapply_4=%d, do_reapply_6=%d",
++              (guint) reapply_flags, priv->ip_data_4.preserve_dhcp, priv->ip_data_4.do_reapply, priv->ip_data_6.do_reapply);
++
+         nm_device_activate_schedule_stage3_ip_config(self, FALSE);
+ 
+         _routing_rules_sync(self, NM_TERNARY_TRUE);
+@@ -13433,7 +13485,9 @@ impl_device_reapply(NMDBusObject
+ 
+     g_variant_get(parameters, "(@a{sa{sv}}tu)", &settings, &version_id, &reapply_flags_u);
+ 
+-    if (NM_FLAGS_ANY(reapply_flags_u, ~((guint32) NM_DEVICE_REAPPLY_FLAGS_PRESERVE_EXTERNAL_IP))) {
++    _LOGD(LOGD_DEVICE, "impl_device_reapply: flags=0x%x (PRESERVE_EXTERNAL_IP=0x1, PRESERVE_DHCP=0x2)", reapply_flags_u);
++
++    if (NM_FLAGS_ANY(reapply_flags_u, ~((guint32) (NM_DEVICE_REAPPLY_FLAGS_PRESERVE_EXTERNAL_IP | NM_DEVICE_REAPPLY_FLAGS_PRESERVE_DHCP)))) {
+         error =
+             g_error_new_literal(NM_DEVICE_ERROR, NM_DEVICE_ERROR_FAILED, "Invalid flags specified");
+         nm_audit_log_device_op(NM_AUDIT_OP_DEVICE_REAPPLY,
+Index: network-manager/src/libnm-core-public/nm-dbus-interface.h
+===================================================================
+--- network-manager.orig/src/libnm-core-public/nm-dbus-interface.h
++++ network-manager/src/libnm-core-public/nm-dbus-interface.h
+@@ -1168,6 +1168,10 @@ typedef enum /*< flags >*/ {
+  * @NM_DEVICE_REAPPLY_FLAGS_NONE: no flag set.
+  * @NM_DEVICE_REAPPLY_FLAGS_PRESERVE_EXTERNAL_IP: during reapply,
+  *   preserve external IP addresses and routes.
++ * @NM_DEVICE_REAPPLY_FLAGS_PRESERVE_DHCP: during reapply,
++ *   preserve the running DHCP client without restarting it. This is useful
++ *   when only never-default changes, where restarting DHCP is unnecessary
++ *   and can cause lease renegotiation timeouts.
+  *
+  * Flags for the Reapply() D-Bus call of a device and
+  * nm_device_reapply_async().
+@@ -1177,6 +1181,7 @@ typedef enum /*< flags >*/ {
+ typedef enum /*< flags >*/ {
+     NM_DEVICE_REAPPLY_FLAGS_NONE                 = 0,
+     NM_DEVICE_REAPPLY_FLAGS_PRESERVE_EXTERNAL_IP = 0x1,
++    NM_DEVICE_REAPPLY_FLAGS_PRESERVE_DHCP        = 0x2,
+ } NMDeviceReapplyFlags;
+ 
+ /**
+Index: network-manager/src/libnm-core-public/nm-dbus-types.xml
+===================================================================
+--- network-manager.orig/src/libnm-core-public/nm-dbus-types.xml
++++ network-manager/src/libnm-core-public/nm-dbus-types.xml
+@@ -1957,6 +1957,11 @@
+               <entry role="enum_member_value"><para>= <literal>0x1</literal></para><para></para></entry>
+               <entry role="enum_member_description"><para>during reapply, preserve external IP addresses and routes.</para><para></para></entry>
+             </row>
++            <row role="constant">
++              <entry role="enum_member_name"><para>NM_DEVICE_REAPPLY_FLAGS_PRESERVE_DHCP</para><para></para></entry>
++              <entry role="enum_member_value"><para>= <literal>0x2</literal></para><para></para></entry>
++              <entry role="enum_member_description"><para>during reapply, preserve the running DHCP client without restarting it.</para><para></para></entry>
++            </row>
+           </tbody>
+         </tgroup>
+       </informaltable>

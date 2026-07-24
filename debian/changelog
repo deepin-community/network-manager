@@ -1,3 +1,9 @@
+network-manager (1.44.2-7deepin11) unstable; urgency=medium
+
+  * fix(cve): CVE-2026-10805
+
+ -- deepin-ci-robot <packages@deepin.org>  Fri, 24 Jul 2026 13:06:30 +0800
+
 network-manager (1.44.2-7deepin10) unstable; urgency=medium
 
   * Non-maintainer upload.

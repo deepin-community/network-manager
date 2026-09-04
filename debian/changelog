@@ -1,6 +1,12 @@
 network-manager (1.44.2-7deepin11) unstable; urgency=medium
 
   * fix(cve): CVE-2026-10805
+  * fix(cve): CVE-2026-19685 (high) - core: 802.1x: reject ca-path for
+    private connections   Upstream:
+    https://gitlab.freedesktop.org/NetworkManager/NetworkManager/-
+    /commit/a8e87381a3e70060abd721d9a347f42b2ba68e6e,https://gitlab.free
+    desktop.org/NetworkManager/NetworkManager/-
+    /commit/15aa1a8963ee014f5eb8306b305b158293c10643
 
  -- deepin-ci-robot <packages@deepin.org>  Fri, 24 Jul 2026 13:06:30 +0800
 

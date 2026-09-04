@@ -14,3 +14,4 @@ uniontech005-hotspot-retry-when-failure.patch
 uniontech004-update-unittest.patch
 uniontech006-add-preserve-dhcp.patch
 CVE-2026-10805.patch
+CVE-2026-19685.patch

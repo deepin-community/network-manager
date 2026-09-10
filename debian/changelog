@@ -1,3 +1,9 @@
+network-manager (1.44.2-7deepin12) unstable; urgency=medium
+
+  * fix build: backport private_user support for CVE-2026-19685 on 1.44.2
+
+ -- deepin-ci-robot <packages@deepin.org>  Thu, 10 Sep 2026 20:40:45 +0800
+
 network-manager (1.44.2-7deepin11) unstable; urgency=medium
 
   * fix(cve): CVE-2026-10805

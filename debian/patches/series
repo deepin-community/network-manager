@@ -15,3 +15,4 @@ uniontech004-update-unittest.patch
 uniontech006-add-preserve-dhcp.patch
 CVE-2026-10805.patch
 CVE-2026-19685.patch
+CVE-2025-9615.patch

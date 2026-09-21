@@ -1,3 +1,14 @@
+network-manager (1.44.2-7deepin14) unstable; urgency=medium
+
+  * fix(cve): CVE-2025-9615 (low) - avoid that a non-admin user can use
+    other users' certificates and keys. Private connections may no longer
+    reference certificate/key files by path; the files are read as the
+    owning user instead.   Upstream:
+    https://gitlab.freedesktop.org/NetworkManager/NetworkManager/-
+    /merge_requests/2324
+
+ -- deepin-ci-robot <packages@deepin.org>  Mon, 21 Sep 2026 15:51:39 +0800
+
 network-manager (1.44.2-7deepin13) unstable; urgency=medium
 
   * Rebuild with LTO enabled (dpkg vendor feature optimize/lto).
